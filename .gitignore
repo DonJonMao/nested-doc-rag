@@ -1,0 +1,28 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Local data and generated artifacts are intentionally excluded.
+data/
+artifacts/
+tmp_ole_probe/
+
+# Local environments and credentials.
+.env
+.env.*
+*.key
+*.pem
+
+# Local vector stores / databases.
+qdrant/
+*.sqlite
+*.sqlite3
+*.db
+
+# Logs and temporary files.
+*.log
+*.tmp
+*.bak
+
