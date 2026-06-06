@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .config import load_app_config
+from .evaluation.field_metrics import evaluate_fields_from_files
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -15,6 +16,13 @@ def build_parser() -> argparse.ArgumentParser:
     show_parser = subparsers.add_parser("show-config", help="Print the merged application configuration.")
     show_parser.add_argument("--config", type=Path, default=None, help="Optional local YAML config path.")
     show_parser.add_argument("--json", action="store_true", help="Print JSON. This is currently the default output.")
+
+    eval_parser = subparsers.add_parser("eval-fields", help="Evaluate field-level gongkan predictions.")
+    eval_parser.add_argument("--gold", type=Path, required=True, help="Gold field JSONL path.")
+    eval_parser.add_argument("--pred", type=Path, required=True, help="Prediction field JSONL path.")
+    eval_parser.add_argument("--out-dir", type=Path, required=True, help="Directory for field evaluation reports.")
+    eval_parser.add_argument("--evidence-k", type=int, default=5, help="k for evidence_recall@k.")
+    eval_parser.add_argument("--human-review-threshold", type=float, default=0.55, help="Confidence below this threshold needs review.")
     return parser
 
 
@@ -24,6 +32,25 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.command == "show-config":
         config = load_app_config(args.config)
         print(json.dumps(config.to_dict(), ensure_ascii=False, indent=2))
+    elif args.command == "eval-fields":
+        result = evaluate_fields_from_files(
+            gold_path=args.gold,
+            pred_path=args.pred,
+            out_dir=args.out_dir,
+            evidence_k=args.evidence_k,
+            human_review_threshold=args.human_review_threshold,
+        )
+        print(
+            json.dumps(
+                {
+                    "field_count": result.metrics["field_count"],
+                    "field_semantic_match": result.metrics["field_semantic_match"],
+                    "correction_required_rate": result.metrics["correction_required_rate"],
+                    "out_dir": str(args.out_dir),
+                },
+                ensure_ascii=False,
+            )
+        )
 
 
 if __name__ == "__main__":

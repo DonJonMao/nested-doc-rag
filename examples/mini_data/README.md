@@ -11,4 +11,13 @@ Planned contents:
 - one gongkan-style eval item
 - a small Qdrant-free retrieval fixture
 
+Current field-eval fixture:
+
+```bash
+python -m nested_doc_rag.cli eval-fields \
+  --gold examples/mini_data/gold_fields.jsonl \
+  --pred examples/mini_data/predictions.jsonl \
+  --out-dir artifacts/evaluation
+```
+
 Private source documents and generated artifacts should stay outside Git.

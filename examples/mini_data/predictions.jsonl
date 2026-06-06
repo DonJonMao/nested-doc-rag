@@ -1,0 +1,5 @@
+{"field_id":"field_text","row_index":4,"target_cell":"C4","answer_value":"西咸四号楼301机房","answer_status":"answered","confidence":0.93,"source_chunk_ids":["chunk_room_name"],"evidence_attachment_ids":[],"validation":{}}
+{"field_id":"field_enum","row_index":5,"target_cell":"C5","answer_value":"是","answer_status":"answered","confidence":0.88,"source_chunk_ids":["chunk_power"],"evidence_attachment_ids":[],"validation":{}}
+{"field_id":"field_number","row_index":6,"target_cell":"C6","answer_value":"2000 W","answer_status":"answered","confidence":0.91,"source_chunk_ids":["chunk_ups"],"evidence_attachment_ids":[],"validation":{}}
+{"field_id":"field_date","row_index":7,"target_cell":"C7","answer_value":"2025年7月1日","answer_status":"answered","confidence":0.86,"source_chunk_ids":[],"evidence_attachment_ids":[],"validation":{}}
+{"field_id":"field_bool","row_index":8,"target_cell":"C8","answer_value":"true","answer_status":"answered","confidence":0.89,"source_chunk_ids":[],"evidence_attachment_ids":[],"validation":{}}
