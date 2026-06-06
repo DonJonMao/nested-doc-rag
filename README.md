@@ -110,6 +110,40 @@ python -m nested_doc_rag.cli writeback \
   --out artifacts/runs/demo/filled_form.xlsx
 ```
 
+## Lightweight Field Filling Agent
+
+`FieldFillingAgent` is a lightweight field-level runtime for controlled form
+filling. It is not a complex multi-agent system; it is a deterministic state
+machine:
+
+```text
+field -> query planning -> evidence retrieval -> evidence selection -> answer generation -> validation -> one-shot repair -> human review -> writeback
+```
+
+Offline mini-data run:
+
+```bash
+python -m nested_doc_rag.cli run-agent \
+  --config config/local.example.yaml \
+  --gold examples/mini_data/gold_fields.jsonl \
+  --corpus examples/mini_data/knowledge_chunks.jsonl \
+  --target-namespace xixian_4 \
+  --out-dir artifacts/runs/demo \
+  --no-writeback
+```
+
+Outputs:
+
+- `predictions.jsonl`
+- `trace.jsonl`
+- `trace_summary.json`
+- `trace.md`
+- `review_items.jsonl`
+- `run_summary.md`
+
+The mini-data mode is fully offline. It does not require Qdrant, LLM services,
+embedding/rerank endpoints, or API keys.
+
 Legacy wrappers are still available when a migrated numbered step is needed:
 
 ```bash

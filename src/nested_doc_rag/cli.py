@@ -5,6 +5,7 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
+from .agent.runner import FieldFillingAgent, load_corpus, load_fields
 from .config import load_app_config
 from .evaluation.experiment_runner import run_baseline_experiment
 from .evaluation.field_metrics import evaluate_fields_from_files
@@ -39,6 +40,18 @@ def build_parser() -> argparse.ArgumentParser:
     writeback_parser.add_argument("--evidence-map", type=Path, default=None, help="Optional input evidence map JSON path.")
     writeback_parser.add_argument("--mode", choices=["safe", "overwrite"], default="safe", help="Write mode.")
     writeback_parser.add_argument("--no-comments", action="store_true", help="Disable Excel cell comments.")
+
+    agent_parser = subparsers.add_parser("run-agent", help="Run the lightweight offline field-filling agent.")
+    agent_parser.add_argument("--config", type=Path, default=None, help="Optional local YAML config path.")
+    agent_parser.add_argument("--gold", type=Path, required=True, help="FieldGold JSONL path.")
+    agent_parser.add_argument("--corpus", type=Path, required=True, help="Mini corpus JSONL path.")
+    agent_parser.add_argument("--target-namespace", default=None, help="Target namespace for field retrieval.")
+    agent_parser.add_argument("--out-dir", type=Path, required=True, help="Run output directory.")
+    agent_parser.add_argument("--room-context", default=None, help="Optional known room context.")
+    agent_parser.add_argument("--template", type=Path, default=None, help="Optional Excel template for writeback.")
+    agent_parser.add_argument("--max-repair-attempts", type=int, default=1, help="Maximum repair attempts per field. Capped at 1.")
+    agent_parser.add_argument("--no-writeback", action="store_true", help="Disable Excel writeback even when a template is provided.")
+    agent_parser.add_argument("--trace-format", default="md,jsonl", help="Accepted for compatibility; both md and jsonl are written.")
     return parser
 
 
@@ -90,6 +103,30 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "method_count": len(summary["methods"]),
                     "target_namespace": summary["target_namespace"],
                     "out_dir": summary["output_dir"],
+                },
+                ensure_ascii=False,
+            )
+        )
+    elif args.command == "run-agent":
+        config = load_app_config(args.config)
+        agent = FieldFillingAgent(
+            target_namespace=args.target_namespace or config.retrieval.target_namespace,
+            corpus=load_corpus(args.corpus),
+            out_dir=args.out_dir,
+            config=config,
+            room_context=args.room_context,
+            max_repair_attempts=args.max_repair_attempts,
+            template_path=args.template,
+            writeback_enabled=not args.no_writeback,
+        )
+        predictions = agent.run(load_fields(args.gold))
+        print(
+            json.dumps(
+                {
+                    "field_count": len(predictions),
+                    "out_dir": str(args.out_dir),
+                    "run_id": agent.run_id,
+                    "writeback": agent.writeback_status,
                 },
                 ensure_ascii=False,
             )
