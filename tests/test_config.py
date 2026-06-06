@@ -78,8 +78,7 @@ def test_show_config_command_outputs_merged_config() -> None:
         [sys.executable, "-m", "nested_doc_rag.cli", "show-config", "--config", "config/local.example.yaml"],
         cwd=repo_root,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=True,
     )
     value = json.loads(completed.stdout)

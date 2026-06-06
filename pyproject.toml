@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nested-doc-rag"
+version = "0.2.0"
+description = "Nested document RAG pipeline for datacenter gongkan forms."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "qdrant-client>=1.9",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "ruff>=0.15",
+]
+
+[project.scripts]
+nested-doc-rag = "nested_doc_rag.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = [
+  "tests",
+  "01_file_registration",
+  "02_datacenter_routing",
+  "03_format_probe",
+  "04a_structure_parse",
+  "04b_embedded_object_parse",
+  "05_segment_extract",
+  "06_segmentation_audit",
+  "07_agent_need_audit",
+  "08_llm_structure_hint",
+  "09_table_candidate_resolution",
+  "10_semantic_segment_audit",
+  "11_embedding_build",
+  "12_gongkan_form_analysis",
+  "13_gongkan_rag_inputs",
+  "14_gongkan_rag_eval",
+  "15_vector_store",
+]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 140
+src = ["src", "tests", "apps", "nested_doc_rag"]
+exclude = [
+  ".git",
+  "artifacts",
+  "data",
+  "01_file_registration",
+  "02_datacenter_routing",
+  "03_format_probe",
+  "04a_structure_parse",
+  "04b_embedded_object_parse",
+  "05_segment_extract",
+  "06_segmentation_audit",
+  "07_agent_need_audit",
+  "08_llm_structure_hint",
+  "09_table_candidate_resolution",
+  "10_semantic_segment_audit",
+  "11_embedding_build",
+  "12_gongkan_form_analysis",
+  "13_gongkan_rag_inputs",
+  "14_gongkan_rag_eval",
+  "15_vector_store",
+  "tmp_ole_probe",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "F403"]

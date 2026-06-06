@@ -4,10 +4,10 @@ import copy
 import json
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
-
+from typing import Any
 
 CONFIG_ENV_PREFIX = "NESTED_DOC_RAG__"
 
@@ -210,6 +210,9 @@ def load_app_config(
         _deep_merge(merged, _drop_none(copy.deepcopy(dict(cli_overrides))))
 
     return app_config_from_dict(merged, project_root_base=project_root_base)
+
+
+load_config = load_app_config
 
 
 def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | None = None) -> AppConfig:

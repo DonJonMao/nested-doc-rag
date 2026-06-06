@@ -4,7 +4,6 @@ import json
 import subprocess
 from typing import Any
 
-
 DEFAULT_EMBEDDING_ENDPOINT = "http://localhost:8001/v1/embeddings"
 DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b"
 DEFAULT_RERANK_ENDPOINT = "http://localhost:8002/rerank"
@@ -36,8 +35,7 @@ class CurlJsonClient:
         completed = subprocess.run(
             command,
             input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             check=False,
         )
         if completed.returncode != 0:

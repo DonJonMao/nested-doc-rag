@@ -10,7 +10,6 @@ from typing import Any
 from .config import load_app_config
 from .io import display_text, read_jsonl
 
-
 BASE_CLOUD_FILE = "基地云机房信息调研表.xlsx"
 
 
@@ -84,8 +83,7 @@ def call_deepseek_json(
                 f"@{tmp_path}",
             ],
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             check=False,
         )
     finally:

@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*.egg-info/
 
 # Local data and generated artifacts are intentionally excluded.
 data/

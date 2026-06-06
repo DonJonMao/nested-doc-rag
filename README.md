@@ -10,6 +10,37 @@ The repository contains code and design documents only. Local source data,
 generated artifacts, vector stores, and evaluation outputs are excluded by
 `.gitignore`.
 
+## Quickstart
+
+Install the package in editable mode from the repository root:
+
+```bash
+conda activate datacenter
+python -m pip install -e .
+# For local development:
+python -m pip install -e ".[dev]"
+```
+
+Inspect the merged configuration:
+
+```bash
+python -m nested_doc_rag.cli show-config --config config/local.example.yaml
+```
+
+Run tests:
+
+```bash
+pytest
+```
+
+The historical `01_*` through `15_*` directories remain in place for continuity
+with the existing pipeline and artifacts. New reusable code lives under
+`src/nested_doc_rag`. Steps that are actively being refactored, such as
+`11_embedding_build`, `12_gongkan_form_analysis`, and
+`15_vector_store/evaluate_base_cloud_qdrant.py`, are now thin legacy wrappers
+around package modules. Equivalent wrapper entry points also live in
+`apps/legacy_wrappers`.
+
 ## Pipeline
 
 - `01_file_registration`: register files and basic metadata.
@@ -71,4 +102,3 @@ conda run -n datacenter python 15_vector_store/evaluate_base_cloud_qdrant.py \
   --deepseek-api-key "$DEEPSEEK_API_KEY" \
   --out-dir artifacts/15_vector_store/base_cloud_full_form_closed_book
 ```
-
