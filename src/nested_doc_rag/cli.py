@@ -8,6 +8,7 @@ from pathlib import Path
 from .config import load_app_config
 from .evaluation.experiment_runner import run_baseline_experiment
 from .evaluation.field_metrics import evaluate_fields_from_files
+from .excel.writeback import writeback_from_files
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,6 +30,15 @@ def build_parser() -> argparse.ArgumentParser:
     baseline_parser.add_argument("--config", type=Path, required=True, help="Experiment YAML config path.")
     baseline_parser.add_argument("--out-dir", type=Path, default=None, help="Override output directory.")
     baseline_parser.add_argument("--no-resume", action="store_true", help="Recompute predictions even if checkpoints exist.")
+
+    writeback_parser = subparsers.add_parser("writeback", help="Write field predictions back to an Excel workbook.")
+    writeback_parser.add_argument("--template", type=Path, required=True, help="Source Excel template path.")
+    writeback_parser.add_argument("--pred", type=Path, required=True, help="FieldPrediction JSONL path.")
+    writeback_parser.add_argument("--out", type=Path, required=True, help="Filled Excel output path.")
+    writeback_parser.add_argument("--trace", type=Path, default=None, help="Optional trace JSONL path.")
+    writeback_parser.add_argument("--evidence-map", type=Path, default=None, help="Optional input evidence map JSON path.")
+    writeback_parser.add_argument("--mode", choices=["safe", "overwrite"], default="safe", help="Write mode.")
+    writeback_parser.add_argument("--no-comments", action="store_true", help="Disable Excel cell comments.")
     return parser
 
 
@@ -57,6 +67,17 @@ def main(argv: Sequence[str] | None = None) -> None:
                 ensure_ascii=False,
             )
         )
+    elif args.command == "writeback":
+        summary = writeback_from_files(
+            template_path=args.template,
+            predictions_path=args.pred,
+            output_path=args.out,
+            trace_path=args.trace,
+            evidence_map_path=args.evidence_map,
+            mode=args.mode,
+            write_comments=not args.no_comments,
+        )
+        print(json.dumps(summary.to_dict(), ensure_ascii=False))
     elif args.command == "run-baselines":
         summary = run_baseline_experiment(
             args.config,

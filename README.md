@@ -41,6 +41,15 @@ python -m nested_doc_rag.cli run-baselines \
   --out-dir artifacts/experiments/baselines
 ```
 
+Write predictions back to an Excel form:
+
+```bash
+python -m nested_doc_rag.cli writeback \
+  --template examples/mini_data/survey_form.xlsx \
+  --pred artifacts/runs/demo/predictions.jsonl \
+  --out artifacts/runs/demo/filled_form.xlsx
+```
+
 The historical `01_*` through `15_*` directories remain in place for continuity
 with the existing pipeline and artifacts. New reusable code lives under
 `src/nested_doc_rag`. Steps that are actively being refactored, such as

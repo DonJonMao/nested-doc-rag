@@ -9,6 +9,7 @@ description = "Nested document RAG pipeline for datacenter gongkan forms."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "openpyxl>=3.1",
   "qdrant-client>=1.9",
 ]
 
