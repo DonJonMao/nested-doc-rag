@@ -33,6 +33,14 @@ Run tests:
 pytest
 ```
 
+Run the mini baseline comparison:
+
+```bash
+python -m nested_doc_rag.cli run-baselines \
+  --config experiments/form_filling_baselines.yaml \
+  --out-dir artifacts/experiments/baselines
+```
+
 The historical `01_*` through `15_*` directories remain in place for continuity
 with the existing pipeline and artifacts. New reusable code lives under
 `src/nested_doc_rag`. Steps that are actively being refactored, such as

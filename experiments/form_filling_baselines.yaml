@@ -1,0 +1,49 @@
+dataset:
+  name: mini_field_baselines
+  description: Mini field-level fixture for comparing form-filling RAG strategies.
+  gold_file: examples/mini_data/gold_fields.jsonl
+  corpus_file: examples/mini_data/knowledge_chunks.jsonl
+
+gold_file: examples/mini_data/gold_fields.jsonl
+corpus_file: examples/mini_data/knowledge_chunks.jsonl
+target_namespace: xixian_4
+global_namespace: global
+
+retrieval_modes:
+  - naive_fixed_chunk_vector
+  - flat_vector_rag
+  - layered_rag
+  - layered_rag_with_validation
+  - agentic_repair_rag
+
+top_k: 4
+rerank_top_n: 2
+fixed_chunk_chars: 96
+resume: true
+output_dir: artifacts/experiments/baselines
+max_repair_attempts: 2
+
+model_config:
+  embedding_model: deterministic-lexical
+  rerank_model: deterministic-lexical
+  answer_model: deterministic-template
+
+layered_plan:
+  - layer_name: target_main_fact
+    namespaces: target
+    corpus_layers: [fact, evidence]
+    source_types: [main_excel_capability]
+    vector_top_k: 4
+    rerank_top_n: 2
+  - layer_name: target_structured_detail
+    namespaces: target
+    corpus_layers: [fact]
+    source_types: [embedded_word_table, embedded_raw_segment]
+    vector_top_k: 4
+    rerank_top_n: 2
+  - layer_name: global_intro
+    namespaces: global
+    corpus_layers: [fact, intro_doc]
+    source_types: [intro_doc_paragraph, mini_fact]
+    vector_top_k: 4
+    rerank_top_n: 1

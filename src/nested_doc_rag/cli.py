@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .config import load_app_config
+from .evaluation.experiment_runner import run_baseline_experiment
 from .evaluation.field_metrics import evaluate_fields_from_files
 
 
@@ -23,6 +24,11 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument("--out-dir", type=Path, required=True, help="Directory for field evaluation reports.")
     eval_parser.add_argument("--evidence-k", type=int, default=5, help="k for evidence_recall@k.")
     eval_parser.add_argument("--human-review-threshold", type=float, default=0.55, help="Confidence below this threshold needs review.")
+
+    baseline_parser = subparsers.add_parser("run-baselines", help="Run form-filling RAG baseline experiments.")
+    baseline_parser.add_argument("--config", type=Path, required=True, help="Experiment YAML config path.")
+    baseline_parser.add_argument("--out-dir", type=Path, default=None, help="Override output directory.")
+    baseline_parser.add_argument("--no-resume", action="store_true", help="Recompute predictions even if checkpoints exist.")
     return parser
 
 
@@ -47,6 +53,22 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "field_semantic_match": result.metrics["field_semantic_match"],
                     "correction_required_rate": result.metrics["correction_required_rate"],
                     "out_dir": str(args.out_dir),
+                },
+                ensure_ascii=False,
+            )
+        )
+    elif args.command == "run-baselines":
+        summary = run_baseline_experiment(
+            args.config,
+            out_dir=args.out_dir,
+            resume=False if args.no_resume else None,
+        )
+        print(
+            json.dumps(
+                {
+                    "method_count": len(summary["methods"]),
+                    "target_namespace": summary["target_namespace"],
+                    "out_dir": summary["output_dir"],
                 },
                 ensure_ascii=False,
             )

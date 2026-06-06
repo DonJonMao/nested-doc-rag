@@ -90,6 +90,7 @@ class FieldPrediction:
     source_chunk_ids: list[str] = field(default_factory=list)
     evidence_attachment_ids: list[str] = field(default_factory=list)
     validation: dict[str, Any] = field(default_factory=dict)
+    method_name: str = ""
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> FieldPrediction:
@@ -103,6 +104,7 @@ class FieldPrediction:
             source_chunk_ids=[str(item) for item in value.get("source_chunk_ids") or []],
             evidence_attachment_ids=[str(item) for item in value.get("evidence_attachment_ids") or []],
             validation=dict(value.get("validation") or {}),
+            method_name=str(value.get("method_name") or ""),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -116,6 +118,7 @@ class FieldPrediction:
             "source_chunk_ids": self.source_chunk_ids,
             "evidence_attachment_ids": self.evidence_attachment_ids,
             "validation": self.validation,
+            "method_name": self.method_name,
         }
 
 
