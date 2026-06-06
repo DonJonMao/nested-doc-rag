@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 
-OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/04a_structure_parse")
+OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/04a_structure_parse"
 
 
 def load_report() -> dict:

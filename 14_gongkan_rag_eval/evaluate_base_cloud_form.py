@@ -5,7 +5,6 @@ import json
 import math
 import re
 import subprocess
-import sys
 import tempfile
 import time
 from array import array
@@ -13,17 +12,22 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+try:
+    from nested_doc_rag.embedding import EmbeddingClient, RerankClient
+except ModuleNotFoundError:
+    import site
 
-PROJECT_ROOT = Path("/Users/mao/projects/datacenter")
+    site.addsitedir(str(Path(__file__).resolve().parents[1]))
+    from nested_doc_rag.embedding import EmbeddingClient, RerankClient
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 STEP11_DIR = PROJECT_ROOT / "artifacts/11_embedding_build"
 STEP12_DIR = PROJECT_ROOT / "artifacts/12_gongkan_form_analysis"
 DEFAULT_OUT_DIR = PROJECT_ROOT / "artifacts/14_gongkan_rag_eval"
 
-sys.path.insert(0, str(PROJECT_ROOT / "11_embedding_build"))
-from embedding_pipeline import EmbeddingClient, RerankClient  # noqa: E402
 
-
-DEFAULT_DEEPSEEK_URL = "http://111.19.156.30:8006/v1/chat/completions"
+DEFAULT_DEEPSEEK_URL = "http://localhost:8006/v1/chat/completions"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 
 BASE_CLOUD_FILE = "基地云机房信息调研表.xlsx"

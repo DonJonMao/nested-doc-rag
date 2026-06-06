@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_HINTS = Path("/Users/mao/projects/datacenter/artifacts/08_llm_structure_hint/table_structure_hints.jsonl")
-DEFAULT_OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/08_llm_structure_hint")
+DEFAULT_HINTS = Path(__file__).resolve().parents[1] / "artifacts/08_llm_structure_hint/table_structure_hints.jsonl"
+DEFAULT_OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/08_llm_structure_hint"
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:

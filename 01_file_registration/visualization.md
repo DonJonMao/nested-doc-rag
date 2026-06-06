@@ -23,5 +23,5 @@ intro_doc：4
 查看完整可视化：
 
 ```bash
-open /Users/mao/projects/datacenter/artifacts/01_file_registration/visualization.md
+open <project_root>/artifacts/01_file_registration/visualization.md
 ```

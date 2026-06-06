@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_IN = Path("/Users/mao/projects/datacenter/artifacts/01_file_registration/file_manifest.jsonl")
-DEFAULT_OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/02_datacenter_routing")
+DEFAULT_IN = Path(__file__).resolve().parents[1] / "artifacts/01_file_registration/file_manifest.jsonl"
+DEFAULT_OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/02_datacenter_routing"
 
 XIXIAN_IDS = [f"xixian_{i}" for i in range(1, 7)]
 

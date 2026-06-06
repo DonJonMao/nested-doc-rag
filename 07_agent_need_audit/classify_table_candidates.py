@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/07_agent_need_audit")
+OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/07_agent_need_audit"
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:

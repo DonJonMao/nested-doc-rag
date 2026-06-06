@@ -24,5 +24,5 @@ unrouted：4
 查看完整可视化：
 
 ```bash
-open /Users/mao/projects/datacenter/artifacts/02_datacenter_routing/visualization.md
+open <project_root>/artifacts/02_datacenter_routing/visualization.md
 ```

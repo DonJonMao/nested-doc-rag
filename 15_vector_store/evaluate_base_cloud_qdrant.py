@@ -2,96 +2,60 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
+import os
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from qdrant_client import QdrantClient, models
 
+try:
+    from nested_doc_rag.config import load_app_config
+    from nested_doc_rag.embedding import EmbeddingClient, RerankClient
+    from nested_doc_rag.gongkan_eval import (
+        BASE_CLOUD_FILE,
+        build_judge_messages,
+        build_masked_query,
+        call_deepseek_json,
+        select_eval_items,
+    )
+    from nested_doc_rag.io import display_text, md, read_jsonl, write_json, write_jsonl
+except ModuleNotFoundError:
+    import site
 
-PROJECT_ROOT = Path("/Users/mao/projects/datacenter")
-DEFAULT_OUT_DIR = PROJECT_ROOT / "artifacts/15_vector_store/base_cloud_closed_book_eval"
-STEP15_DIR = PROJECT_ROOT / "artifacts/15_vector_store"
-DEFAULT_COLLECTION = "datacenter_chunks_v1"
-DEFAULT_TARGET_NAMESPACE = "xixian_4"
-DEFAULT_EVAL_ROWS = [4, 5, 13, 16, 25, 26, 31, 36, 53, 117]
-DEFAULT_QUERY_LAYERS = ["fact", "evidence", "intro_doc", "raw_text", "meta"]
-DEFAULT_RETRIEVAL_MODE = "flat"
+    site.addsitedir(str(Path(__file__).resolve().parents[1]))
+    from nested_doc_rag.config import load_app_config
+    from nested_doc_rag.embedding import EmbeddingClient, RerankClient
+    from nested_doc_rag.gongkan_eval import (
+        BASE_CLOUD_FILE,
+        build_judge_messages,
+        build_masked_query,
+        call_deepseek_json,
+        select_eval_items,
+    )
+    from nested_doc_rag.io import display_text, md, read_jsonl, write_json, write_jsonl
 
 
-LAYERED_RETRIEVAL_PLAN = [
-    {
-        "layer_name": "target_main_fact",
-        "description": "目标机房主知识库事实行，优先作为可填答案来源。",
-        "namespaces": "target",
-        "corpus_layers": ["fact", "evidence"],
-        "source_types": ["main_excel_capability"],
-        "vector_top_k": 16,
-        "rerank_top_n": 5,
-    },
-    {
-        "layer_name": "target_structured_detail",
-        "description": "目标机房下钻出来的结构化表格内容，用于补充主表不足。",
-        "namespaces": "target",
-        "corpus_layers": ["fact"],
-        "source_types": ["embedded_word_table"],
-        "vector_top_k": 12,
-        "rerank_top_n": 3,
-    },
-    {
-        "layer_name": "target_raw_detail",
-        "description": "目标机房下钻原文段落或表格行，只做补充线索。",
-        "namespaces": "target",
-        "corpus_layers": ["raw_text"],
-        "source_types": ["embedded_raw_segment"],
-        "vector_top_k": 12,
-        "rerank_top_n": 3,
-    },
-    {
-        "layer_name": "global_intro",
-        "description": "全局介绍文档，用于解释园区级背景，不应无理由覆盖目标机房主表。",
-        "namespaces": "global",
-        "corpus_layers": ["intro_doc"],
-        "source_types": ["intro_doc_paragraph", "intro_doc_table_row"],
-        "vector_top_k": 10,
-        "rerank_top_n": 3,
-    },
-    {
-        "layer_name": "global_detail",
-        "description": "全局下钻结构化或原文材料，只做低优先级补充。",
-        "namespaces": "global",
-        "corpus_layers": ["fact", "raw_text"],
-        "source_types": ["embedded_word_table", "embedded_raw_segment"],
-        "vector_top_k": 10,
-        "rerank_top_n": 2,
-    },
-]
+DEFAULT_CONFIG = load_app_config()
+PROJECT_ROOT = DEFAULT_CONFIG.paths.project_root
+DEFAULT_OUT_DIR = DEFAULT_CONFIG.paths.artifacts_dir / "15_vector_store/base_cloud_closed_book_eval"
+STEP12_DIR = DEFAULT_CONFIG.paths.artifacts_dir / "12_gongkan_form_analysis"
+STEP15_DIR = DEFAULT_CONFIG.paths.artifacts_dir / "15_vector_store"
+DEFAULT_COLLECTION = DEFAULT_CONFIG.qdrant.collection_name
+DEFAULT_TARGET_NAMESPACE = DEFAULT_CONFIG.retrieval.target_namespace
+DEFAULT_EVAL_ROWS = DEFAULT_CONFIG.evaluation.default_rows
+DEFAULT_QUERY_LAYERS = DEFAULT_CONFIG.retrieval.query_layers
+DEFAULT_RETRIEVAL_MODE = DEFAULT_CONFIG.retrieval.retrieval_mode
+DEFAULT_EMBEDDING_ENDPOINT = DEFAULT_CONFIG.services.embedding_endpoint
+DEFAULT_EMBEDDING_MODEL = DEFAULT_CONFIG.services.embedding_model
+DEFAULT_RERANK_ENDPOINT = DEFAULT_CONFIG.services.rerank_endpoint
+DEFAULT_RERANK_MODEL = DEFAULT_CONFIG.services.rerank_model
+DEFAULT_DEEPSEEK_URL = DEFAULT_CONFIG.services.chat_endpoint
+DEFAULT_DEEPSEEK_MODEL = DEFAULT_CONFIG.services.chat_model
+DEFAULT_CHAT_API_KEY_ENV = DEFAULT_CONFIG.services.chat_api_key_env
+DEFAULT_TIMEOUT = DEFAULT_CONFIG.evaluation.timeout_seconds
 
-sys.path.insert(0, str(PROJECT_ROOT / "11_embedding_build"))
-from embedding_pipeline import (  # noqa: E402
-    DEFAULT_EMBEDDING_ENDPOINT,
-    DEFAULT_EMBEDDING_MODEL,
-    RerankClient,
-    EmbeddingClient,
-)
-
-sys.path.insert(0, str(PROJECT_ROOT / "14_gongkan_rag_eval"))
-from evaluate_base_cloud_form import (  # noqa: E402
-    BASE_CLOUD_FILE,
-    DEFAULT_DEEPSEEK_MODEL,
-    DEFAULT_DEEPSEEK_URL,
-    STEP12_DIR,
-    build_judge_messages,
-    build_masked_query,
-    call_deepseek_json,
-    display_text,
-    md,
-    read_jsonl,
-    select_eval_items,
-    write_json,
-    write_jsonl,
-)
+LAYERED_RETRIEVAL_PLAN = DEFAULT_CONFIG.retrieval.layered_plan
 
 
 def add_room_context(query_text: str, room_context: str | None) -> str:
@@ -101,10 +65,10 @@ def add_room_context(query_text: str, room_context: str | None) -> str:
     return f"外部已知目标机房上下文：{context}。{query_text}"
 
 
-def all_base_cloud_rows() -> list[int]:
+def all_base_cloud_rows(step12_dir: Path = STEP12_DIR) -> list[int]:
     rows = [
         int(item["row_index"])
-        for item in read_jsonl(STEP12_DIR / "form_items.jsonl")
+        for item in read_jsonl(step12_dir / "form_items.jsonl")
         if item.get("file_name") == BASE_CLOUD_FILE
     ]
     return sorted(rows)
@@ -213,8 +177,10 @@ class QdrantRetriever:
         collection_name: str,
         embedding_endpoint: str,
         embedding_model: str,
+        prefer_grpc: bool = False,
+        timeout: int = 60,
     ) -> None:
-        self.client = QdrantClient(path=str(qdrant_path))
+        self.client = QdrantClient(path=str(qdrant_path), prefer_grpc=prefer_grpc, timeout=timeout)
         self.collection_name = collection_name
         self.embedder = EmbeddingClient(endpoint=embedding_endpoint, model=embedding_model)
 
@@ -325,8 +291,10 @@ def layered_rerank_hits(
     *,
     retriever: QdrantRetriever,
     target_namespace: str,
+    global_namespace: str,
     allowed_layers: list[str],
     reranker: RerankClient,
+    layered_plan: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     allowed_layer_set = set(allowed_layers)
     query_vector = retriever.embedder.embed_query(query_text)
@@ -334,11 +302,11 @@ def layered_rerank_hits(
     vector_hits: list[dict[str, Any]] = []
     seen_chunk_ids: set[str] = set()
 
-    for layer_priority, spec in enumerate(LAYERED_RETRIEVAL_PLAN, 1):
+    for layer_priority, spec in enumerate(layered_plan, 1):
         corpus_layers = [layer for layer in spec["corpus_layers"] if layer in allowed_layer_set]
         if not corpus_layers:
             continue
-        namespaces = [target_namespace] if spec["namespaces"] == "target" else ["global"]
+        namespaces = [target_namespace] if spec["namespaces"] == "target" else [global_namespace]
         layer_vector_hits = retriever.search_by_vector(
             query_vector,
             namespaces=namespaces,
@@ -374,9 +342,11 @@ def build_summary(
     collection_name: str,
     qdrant_path: Path,
     target_namespace: str,
+    global_namespace: str,
     layers: list[str],
     room_context: str | None,
     retrieval_mode: str,
+    layered_plan: list[dict[str, Any]],
 ) -> dict[str, Any]:
     label_counts = Counter(result["judge"].get("label") for result in results)
     status_counts = Counter((result.get("generated_answer") or {}).get("answer_status") for result in results)
@@ -386,10 +356,10 @@ def build_summary(
         "collection_name": collection_name,
         "qdrant_path": str(qdrant_path),
         "target_namespace": target_namespace,
-        "namespace_filter": [target_namespace, "global"],
+        "namespace_filter": [target_namespace, global_namespace],
         "layer_filter": layers,
         "retrieval_mode": retrieval_mode,
-        "layered_retrieval_plan": LAYERED_RETRIEVAL_PLAN if retrieval_mode == "layered" else [],
+        "layered_retrieval_plan": layered_plan if retrieval_mode == "layered" else [],
         "rows": rows,
         "completed_rows": [int(result["row_index"]) for result in results],
         "sample_count": len(results),
@@ -413,9 +383,11 @@ def write_checkpoint(
     collection_name: str,
     qdrant_path: Path,
     target_namespace: str,
+    global_namespace: str,
     layers: list[str],
     room_context: str | None,
     retrieval_mode: str,
+    layered_plan: list[dict[str, Any]],
 ) -> dict[str, Any]:
     summary = build_summary(
         results,
@@ -423,9 +395,11 @@ def write_checkpoint(
         collection_name=collection_name,
         qdrant_path=qdrant_path,
         target_namespace=target_namespace,
+        global_namespace=global_namespace,
         layers=layers,
         room_context=room_context,
         retrieval_mode=retrieval_mode,
+        layered_plan=layered_plan,
     )
     write_jsonl(out_dir / "masked_eval_inputs.jsonl", masked_inputs)
     write_jsonl(out_dir / "eval_results.jsonl", results)
@@ -438,37 +412,48 @@ def run(
     out_dir: Path = DEFAULT_OUT_DIR,
     *,
     target_namespace: str = DEFAULT_TARGET_NAMESPACE,
+    global_namespace: str = DEFAULT_CONFIG.retrieval.global_namespace,
     rows: list[int] | None = None,
     collection_name: str = DEFAULT_COLLECTION,
     qdrant_path: Path | None = None,
+    qdrant_prefer_grpc: bool = DEFAULT_CONFIG.qdrant.prefer_grpc,
+    qdrant_timeout: int = DEFAULT_CONFIG.qdrant.timeout,
     layers: list[str] | None = None,
     vector_top_k: int = 40,
     rerank_top_n: int = 10,
     embedding_endpoint: str = DEFAULT_EMBEDDING_ENDPOINT,
     embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+    rerank_endpoint: str = DEFAULT_RERANK_ENDPOINT,
+    rerank_model: str = DEFAULT_RERANK_MODEL,
     deepseek_url: str = DEFAULT_DEEPSEEK_URL,
     deepseek_model: str = DEFAULT_DEEPSEEK_MODEL,
     deepseek_api_key: str,
+    form_items_path: Path | None = None,
     room_context: str | None = None,
     retrieval_mode: str = DEFAULT_RETRIEVAL_MODE,
+    layered_plan: list[dict[str, Any]] | None = None,
     resume: bool = False,
-    timeout: int = 120,
+    timeout: int = DEFAULT_TIMEOUT,
 ) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
     rows = rows or DEFAULT_EVAL_ROWS
     layers = layers or DEFAULT_QUERY_LAYERS
     qdrant_path = qdrant_path or (STEP15_DIR / "qdrant")
+    form_items_path = form_items_path or (STEP12_DIR / "form_items.jsonl")
+    layered_plan = layered_plan or LAYERED_RETRIEVAL_PLAN
     if retrieval_mode not in {"flat", "layered"}:
         raise ValueError(f"unsupported retrieval_mode: {retrieval_mode}")
 
-    eval_items = select_eval_items(rows)
+    eval_items = select_eval_items(rows, form_items_path=form_items_path)
     retriever = QdrantRetriever(
         qdrant_path=qdrant_path,
         collection_name=collection_name,
         embedding_endpoint=embedding_endpoint,
         embedding_model=embedding_model,
+        prefer_grpc=qdrant_prefer_grpc,
+        timeout=qdrant_timeout,
     )
-    reranker = RerankClient()
+    reranker = RerankClient(endpoint=rerank_endpoint, model=rerank_model, timeout_seconds=timeout)
 
     masked_inputs: list[dict[str, Any]] = read_jsonl(out_dir / "masked_eval_inputs.jsonl") if resume else []
     results: list[dict[str, Any]] = read_jsonl(out_dir / "eval_results.jsonl") if resume else []
@@ -491,7 +476,7 @@ def run(
                     "answer_example_format_only": item.get("answer_example"),
                     "external_room_context": display_text(room_context),
                     "query_text": query_text,
-                    "namespace_filter": [target_namespace, "global"],
+                    "namespace_filter": [target_namespace, global_namespace],
                     "layer_filter": layers,
                 }
             )
@@ -500,13 +485,15 @@ def run(
                     query_text,
                     retriever=retriever,
                     target_namespace=target_namespace,
+                    global_namespace=global_namespace,
                     allowed_layers=layers,
                     reranker=reranker,
+                    layered_plan=layered_plan,
                 )
             else:
                 vector_hits = retriever.search(
                     query_text,
-                    namespaces=[target_namespace, "global"],
+                    namespaces=[target_namespace, global_namespace],
                     layers=layers,
                     top_k=vector_top_k,
                 )
@@ -536,7 +523,7 @@ def run(
                     "external_room_context": display_text(room_context),
                     "heldout_answer": heldout_answer,
                     "masked_query": query_text,
-                    "namespace_filter": [target_namespace, "global"],
+                    "namespace_filter": [target_namespace, global_namespace],
                     "layer_filter": layers,
                     "generated_answer": generated,
                     "judge": judge,
@@ -553,9 +540,11 @@ def run(
                 collection_name=collection_name,
                 qdrant_path=qdrant_path,
                 target_namespace=target_namespace,
+                global_namespace=global_namespace,
                 layers=layers,
                 room_context=room_context,
                 retrieval_mode=retrieval_mode,
+                layered_plan=layered_plan,
             )
     finally:
         retriever.close()
@@ -568,9 +557,11 @@ def run(
         collection_name=collection_name,
         qdrant_path=qdrant_path,
         target_namespace=target_namespace,
+        global_namespace=global_namespace,
         layers=layers,
         room_context=room_context,
         retrieval_mode=retrieval_mode,
+        layered_plan=layered_plan,
     )
 
 
@@ -656,46 +647,66 @@ def write_report(path: Path, results: list[dict[str, Any]], summary: dict[str, A
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate base cloud form with full Qdrant store.")
-    parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
-    parser.add_argument("--target-namespace", default=DEFAULT_TARGET_NAMESPACE)
-    parser.add_argument("--rows", default=",".join(str(row) for row in DEFAULT_EVAL_ROWS))
-    parser.add_argument("--collection", default=DEFAULT_COLLECTION)
-    parser.add_argument("--qdrant-path", type=Path, default=STEP15_DIR / "qdrant")
-    parser.add_argument("--layers", default=",".join(DEFAULT_QUERY_LAYERS))
-    parser.add_argument("--vector-top-k", type=int, default=40)
-    parser.add_argument("--rerank-top-n", type=int, default=10)
-    parser.add_argument("--embedding-endpoint", default=DEFAULT_EMBEDDING_ENDPOINT)
-    parser.add_argument("--embedding-model", default=DEFAULT_EMBEDDING_MODEL)
-    parser.add_argument("--deepseek-url", default=DEFAULT_DEEPSEEK_URL)
-    parser.add_argument("--deepseek-model", default=DEFAULT_DEEPSEEK_MODEL)
+    parser.add_argument("--config", type=Path, default=None)
+    parser.add_argument("--out-dir", type=Path, default=None)
+    parser.add_argument("--target-namespace", default=None)
+    parser.add_argument("--global-namespace", default=None)
+    parser.add_argument("--rows", default=None)
+    parser.add_argument("--collection", default=None)
+    parser.add_argument("--qdrant-path", type=Path, default=None)
+    parser.add_argument("--layers", default=None)
+    parser.add_argument("--vector-top-k", type=int, default=None)
+    parser.add_argument("--rerank-top-n", type=int, default=None)
+    parser.add_argument("--embedding-endpoint", default=None)
+    parser.add_argument("--embedding-model", default=None)
+    parser.add_argument("--rerank-endpoint", default=None)
+    parser.add_argument("--rerank-model", default=None)
+    parser.add_argument("--deepseek-url", default=None)
+    parser.add_argument("--deepseek-model", default=None)
     parser.add_argument("--deepseek-api-key", default="")
+    parser.add_argument("--deepseek-api-key-env", default=None)
     parser.add_argument("--room-context", default="")
-    parser.add_argument("--retrieval-mode", choices=["flat", "layered"], default=DEFAULT_RETRIEVAL_MODE)
-    parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--retrieval-mode", choices=["flat", "layered"], default=None)
+    parser.add_argument("--resume", action="store_true", default=None)
+    parser.add_argument("--timeout", type=int, default=None)
     args = parser.parse_args()
-    if not args.deepseek_api_key:
-        raise RuntimeError("--deepseek-api-key is required")
-    rows = all_base_cloud_rows() if args.rows.strip().lower() == "all" else [int(part) for part in args.rows.split(",") if part.strip()]
-    layers = [part.strip() for part in args.layers.split(",") if part.strip()]
+    config = load_app_config(args.config)
+    api_key_env = args.deepseek_api_key_env or config.services.chat_api_key_env
+    api_key = args.deepseek_api_key or os.environ.get(api_key_env, "")
+    if not api_key:
+        raise RuntimeError(f"--deepseek-api-key is required, or set ${api_key_env}")
+
+    out_dir = args.out_dir or (config.paths.artifacts_dir / "15_vector_store/base_cloud_closed_book_eval")
+    step12_dir = config.paths.artifacts_dir / "12_gongkan_form_analysis"
+    rows_text = args.rows or ",".join(str(row) for row in config.evaluation.default_rows)
+    rows = all_base_cloud_rows(step12_dir) if rows_text.strip().lower() == "all" else [int(part) for part in rows_text.split(",") if part.strip()]
+    layers_text = args.layers or ",".join(config.retrieval.query_layers)
+    layers = [part.strip() for part in layers_text.split(",") if part.strip()]
     summary = run(
-        out_dir=args.out_dir,
-        target_namespace=args.target_namespace,
+        out_dir=out_dir,
+        target_namespace=args.target_namespace or config.retrieval.target_namespace,
+        global_namespace=args.global_namespace or config.retrieval.global_namespace,
         rows=rows,
-        collection_name=args.collection,
-        qdrant_path=args.qdrant_path,
+        collection_name=args.collection or config.qdrant.collection_name,
+        qdrant_path=args.qdrant_path or config.paths.qdrant_path,
+        qdrant_prefer_grpc=config.qdrant.prefer_grpc,
+        qdrant_timeout=config.qdrant.timeout,
         layers=layers,
-        vector_top_k=args.vector_top_k,
-        rerank_top_n=args.rerank_top_n,
-        embedding_endpoint=args.embedding_endpoint,
-        embedding_model=args.embedding_model,
-        deepseek_url=args.deepseek_url,
-        deepseek_model=args.deepseek_model,
-        deepseek_api_key=args.deepseek_api_key,
+        vector_top_k=args.vector_top_k or config.retrieval.vector_top_k,
+        rerank_top_n=args.rerank_top_n or config.retrieval.rerank_top_n,
+        embedding_endpoint=args.embedding_endpoint or config.services.embedding_endpoint,
+        embedding_model=args.embedding_model or config.services.embedding_model,
+        rerank_endpoint=args.rerank_endpoint or config.services.rerank_endpoint,
+        rerank_model=args.rerank_model or config.services.rerank_model,
+        deepseek_url=args.deepseek_url or config.services.chat_endpoint,
+        deepseek_model=args.deepseek_model or config.services.chat_model,
+        deepseek_api_key=api_key,
+        form_items_path=step12_dir / "form_items.jsonl",
         room_context=args.room_context,
-        retrieval_mode=args.retrieval_mode,
-        resume=args.resume,
-        timeout=args.timeout,
+        retrieval_mode=args.retrieval_mode or config.retrieval.retrieval_mode,
+        layered_plan=config.retrieval.layered_plan,
+        resume=config.evaluation.resume if args.resume is None else bool(args.resume),
+        timeout=args.timeout or config.evaluation.timeout_seconds,
     )
     print(
         f"qdrant evaluated {summary['sample_count']}/{summary['requested_sample_count']} masked rows: "

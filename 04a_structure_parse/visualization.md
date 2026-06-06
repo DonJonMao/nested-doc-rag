@@ -30,5 +30,5 @@ WPS DISPIMG 公式：1209
 查看完整可视化：
 
 ```bash
-open /Users/mao/projects/datacenter/artifacts/04a_structure_parse/visualization.md
+open <project_root>/artifacts/04a_structure_parse/visualization.md
 ```

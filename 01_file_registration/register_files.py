@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_DATA_DIR = Path("/Users/mao/projects/datacenter/data")
-DEFAULT_OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/01_file_registration")
+DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+DEFAULT_OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/01_file_registration"
 
 SUPPORTED_EXTENSIONS = {".xlsx", ".xls", ".docx", ".doc", ".pdf", ".png", ".jpg", ".jpeg"}
 

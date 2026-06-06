@@ -15,6 +15,6 @@
 运行命令：
 
 ```bash
-conda run -n datacenter python /Users/mao/projects/datacenter/04b_embedded_object_parse/parse_embedded_objects.py
-conda run -n datacenter python /Users/mao/projects/datacenter/04b_embedded_object_parse/test_parse_embedded_objects.py
+conda run -n datacenter python <project_root>/04b_embedded_object_parse/parse_embedded_objects.py
+conda run -n datacenter python <project_root>/04b_embedded_object_parse/test_parse_embedded_objects.py
 ```

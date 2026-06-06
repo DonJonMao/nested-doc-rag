@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Any
 
 
-PROJECT_ROOT = Path("/Users/mao/projects/datacenter")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 STEP12_DIR = PROJECT_ROOT / "artifacts/12_gongkan_form_analysis"
 DEFAULT_OUT_DIR = PROJECT_ROOT / "artifacts/13_gongkan_rag_inputs"
 
-DEFAULT_LLM_URL = "http://111.19.156.30:8006/v1/chat/completions"
+DEFAULT_LLM_URL = "http://localhost:8006/v1/chat/completions"
 DEFAULT_LLM_MODEL = "deepseek-v4-flash"
 
 DEFAULT_VECTOR_TOP_K = 30

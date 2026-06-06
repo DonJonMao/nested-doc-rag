@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 
-SEGMENTS = Path("/Users/mao/projects/datacenter/artifacts/09_table_candidate_resolution/resolved_table_segments.jsonl")
-OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/10_semantic_segment_audit")
+SEGMENTS = Path(__file__).resolve().parents[1] / "artifacts/09_table_candidate_resolution/resolved_table_segments.jsonl"
+OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/10_semantic_segment_audit"
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:

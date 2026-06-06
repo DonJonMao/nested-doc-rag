@@ -8,10 +8,10 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_STRUCTURE_DIR = Path("/Users/mao/projects/datacenter/artifacts/04a_structure_parse")
-DEFAULT_EMBEDDED_DIR = Path("/Users/mao/projects/datacenter/artifacts/04b_embedded_object_parse")
-DEFAULT_SEGMENT_DIR = Path("/Users/mao/projects/datacenter/artifacts/05_segment_extract")
-DEFAULT_OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/07_agent_need_audit")
+DEFAULT_STRUCTURE_DIR = Path(__file__).resolve().parents[1] / "artifacts/04a_structure_parse"
+DEFAULT_EMBEDDED_DIR = Path(__file__).resolve().parents[1] / "artifacts/04b_embedded_object_parse"
+DEFAULT_SEGMENT_DIR = Path(__file__).resolve().parents[1] / "artifacts/05_segment_extract"
+DEFAULT_OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/07_agent_need_audit"
 
 HEADER_KEYWORDS = {
     "序号",

@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_STRUCTURE_DIR = Path("/Users/mao/projects/datacenter/artifacts/04a_structure_parse")
-DEFAULT_OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/05_segment_extract")
+DEFAULT_STRUCTURE_DIR = Path(__file__).resolve().parents[1] / "artifacts/04a_structure_parse"
+DEFAULT_OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/05_segment_extract"
 
 CELL_RE = re.compile(r"^([A-Z]+)([0-9]+)$")
 

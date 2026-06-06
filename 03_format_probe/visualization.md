@@ -28,5 +28,5 @@ docx_ooxml：4
 查看完整可视化：
 
 ```bash
-open /Users/mao/projects/datacenter/artifacts/03_format_probe/visualization.md
+open <project_root>/artifacts/03_format_probe/visualization.md
 ```

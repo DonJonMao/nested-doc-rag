@@ -14,6 +14,6 @@
 运行命令：
 
 ```bash
-conda run -n datacenter python /Users/mao/projects/datacenter/07_agent_need_audit/audit_agent_need.py
-conda run -n datacenter python /Users/mao/projects/datacenter/07_agent_need_audit/test_audit_agent_need.py
+conda run -n datacenter python <project_root>/07_agent_need_audit/audit_agent_need.py
+conda run -n datacenter python <project_root>/07_agent_need_audit/test_audit_agent_need.py
 ```

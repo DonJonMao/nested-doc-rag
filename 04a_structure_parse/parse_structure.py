@@ -14,8 +14,8 @@ from xml.etree import ElementTree as ET
 from docx import Document
 
 
-DEFAULT_IN = Path("/Users/mao/projects/datacenter/artifacts/03_format_probe/probed_manifest.jsonl")
-DEFAULT_OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/04a_structure_parse")
+DEFAULT_IN = Path(__file__).resolve().parents[1] / "artifacts/03_format_probe/probed_manifest.jsonl"
+DEFAULT_OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/04a_structure_parse"
 
 NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 NS_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"

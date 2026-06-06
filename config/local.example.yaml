@@ -1,0 +1,86 @@
+# Copy this file to config/local.yaml and replace localhost endpoints with your
+# private model service addresses. Do not commit config/local.yaml.
+paths:
+  project_root: ..
+  data_dir: data
+  artifacts_dir: artifacts
+  qdrant_path: artifacts/15_vector_store/qdrant
+  temp_dir: tmp
+
+services:
+  embedding_endpoint: http://localhost:8001/v1/embeddings
+  embedding_model: qwen3-embedding-8b
+  rerank_endpoint: http://localhost:8002/rerank
+  rerank_model: ""
+  chat_endpoint: http://localhost:8006/v1/chat/completions
+  chat_model: deepseek-v4-flash
+  chat_api_key_env: DEEPSEEK_API_KEY
+
+qdrant:
+  collection_name: datacenter_chunks_v1
+  prefer_grpc: false
+  timeout: 60
+
+retrieval:
+  target_namespace: xixian_4
+  global_namespace: global
+  query_layers: [fact, evidence, intro_doc, raw_text, meta]
+  retrieval_mode: layered
+  vector_top_k: 40
+  rerank_top_n: 10
+  layered_plan:
+    - layer_name: target_main_fact
+      description: 目标机房主知识库事实行，优先作为可填答案来源。
+      namespaces: target
+      corpus_layers: [fact, evidence]
+      source_types: [main_excel_capability]
+      vector_top_k: 16
+      rerank_top_n: 5
+    - layer_name: target_structured_detail
+      description: 目标机房下钻出来的结构化表格内容，用于补充主表不足。
+      namespaces: target
+      corpus_layers: [fact]
+      source_types: [embedded_word_table]
+      vector_top_k: 12
+      rerank_top_n: 3
+    - layer_name: target_raw_detail
+      description: 目标机房下钻原文段落或表格行，只做补充线索。
+      namespaces: target
+      corpus_layers: [raw_text]
+      source_types: [embedded_raw_segment]
+      vector_top_k: 12
+      rerank_top_n: 3
+    - layer_name: global_intro
+      description: 全局介绍文档，用于解释园区级背景，不应无理由覆盖目标机房主表。
+      namespaces: global
+      corpus_layers: [intro_doc]
+      source_types: [intro_doc_paragraph, intro_doc_table_row]
+      vector_top_k: 10
+      rerank_top_n: 3
+    - layer_name: global_detail
+      description: 全局下钻结构化或原文材料，只做低优先级补充。
+      namespaces: global
+      corpus_layers: [fact, raw_text]
+      source_types: [embedded_word_table, embedded_raw_segment]
+      vector_top_k: 10
+      rerank_top_n: 2
+
+evaluation:
+  default_rows: [4, 5, 13, 16, 25, 26, 31, 36, 53, 117]
+  timeout_seconds: 120
+  resume: false
+  judge_model: deepseek-v4-flash
+  metrics_output: artifacts/15_vector_store/base_cloud_closed_book_eval/summary.json
+
+excel:
+  template_path: data/工勘单/基地云机房信息调研表.xlsx
+  output_path: artifacts/excel_outputs/base_cloud_filled.xlsx
+  write_mode: copy
+  write_comments: true
+  preserve_styles: true
+
+agent:
+  max_repair_attempts: 2
+  confidence_threshold: 0.72
+  require_evidence_for_answer: true
+  human_review_threshold: 0.55

@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_IN = Path("/Users/mao/projects/datacenter/artifacts/02_datacenter_routing/routed_manifest.jsonl")
-DEFAULT_OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/03_format_probe")
+DEFAULT_IN = Path(__file__).resolve().parents[1] / "artifacts/02_datacenter_routing/routed_manifest.jsonl"
+DEFAULT_OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/03_format_probe"
 
 OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 

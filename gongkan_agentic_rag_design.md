@@ -269,7 +269,7 @@ pandas 容易丢失单元格坐标、公式、合并单元格、图片关系；
 ```json
 {
   "file_id": "file_xixian_2_kb",
-  "source_path": "/Users/mao/projects/datacenter/data/西咸数据中心2号楼维护能力知识库.xlsx",
+  "source_path": "<project_root>/data/西咸数据中心2号楼维护能力知识库.xlsx",
   "file_name": "西咸数据中心2号楼维护能力知识库.xlsx",
   "declared_ext": ".xlsx",
   "document_role": "knowledge_base",
@@ -297,7 +297,7 @@ unknown
 目录结构：
 
 ```text
-/Users/mao/projects/datacenter/artifacts/4a_structure/
+<project_root>/artifacts/4a_structure/
   files.jsonl
   parse_report.json
   workbooks/
@@ -365,8 +365,8 @@ CLI 示例：
 ```bash
 conda run -n datacenter python -m gongkan_rag.structure.cli \
   parse \
-  --manifest /Users/mao/projects/datacenter/artifacts/file_manifest.jsonl \
-  --out /Users/mao/projects/datacenter/artifacts/4a_structure
+  --manifest <project_root>/artifacts/file_manifest.jsonl \
+  --out <project_root>/artifacts/4a_structure
 ```
 
 ---

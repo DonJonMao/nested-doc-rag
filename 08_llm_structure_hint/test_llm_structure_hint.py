@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 
-OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/08_llm_structure_hint")
+OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/08_llm_structure_hint"
 APPLIED_SEGMENTS = OUT_DIR / "hinted_table_segments.jsonl"
 
 

@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import json
 import shutil
-import sys
 import time
 import uuid
 from collections import Counter
@@ -13,8 +12,16 @@ from typing import Any
 
 from qdrant_client import QdrantClient, models
 
+try:
+    from nested_doc_rag.embedding import DEFAULT_EMBEDDING_ENDPOINT, DEFAULT_EMBEDDING_MODEL, QUERY_INSTRUCTION, EmbeddingClient
+except ModuleNotFoundError:
+    import site
 
-PROJECT_ROOT = Path("/Users/mao/projects/datacenter")
+    site.addsitedir(str(Path(__file__).resolve().parents[1]))
+    from nested_doc_rag.embedding import DEFAULT_EMBEDDING_ENDPOINT, DEFAULT_EMBEDDING_MODEL, QUERY_INSTRUCTION, EmbeddingClient
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 STEP01_FILES = PROJECT_ROOT / "artifacts/01_file_registration/file_manifest.jsonl"
 STEP02_ROUTED = PROJECT_ROOT / "artifacts/02_datacenter_routing/routed_manifest.jsonl"
 STEP04A_REPORT = PROJECT_ROOT / "artifacts/04a_structure_parse/parse_report.json"
@@ -23,14 +30,6 @@ STEP11_MANIFEST = PROJECT_ROOT / "artifacts/11_embedding_build/ingestion_manifes
 DEFAULT_OUT_DIR = PROJECT_ROOT / "artifacts/15_vector_store"
 DEFAULT_COLLECTION = "datacenter_chunks_v1"
 MAX_EMBEDDING_TEXT_CHARS = 3500
-
-sys.path.insert(0, str(PROJECT_ROOT / "11_embedding_build"))
-from embedding_pipeline import (  # noqa: E402
-    DEFAULT_EMBEDDING_ENDPOINT,
-    DEFAULT_EMBEDDING_MODEL,
-    QUERY_INSTRUCTION,
-    EmbeddingClient,
-)
 
 
 EXCLUDED_EMBEDDED_FILE_TYPES = {"dwg"}

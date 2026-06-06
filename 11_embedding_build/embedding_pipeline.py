@@ -4,25 +4,34 @@ import argparse
 import hashlib
 import json
 import math
-import subprocess
 import time
 from array import array
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+try:
+    from nested_doc_rag.config import load_app_config
+    from nested_doc_rag.embedding import EmbeddingClient, QUERY_INSTRUCTION, RerankClient
+except ModuleNotFoundError:
+    import site
 
-PROJECT_ROOT = Path("/Users/mao/projects/datacenter")
+    site.addsitedir(str(Path(__file__).resolve().parents[1]))
+    from nested_doc_rag.config import load_app_config
+    from nested_doc_rag.embedding import EmbeddingClient, QUERY_INSTRUCTION, RerankClient
+
+
+DEFAULT_CONFIG = load_app_config()
+PROJECT_ROOT = DEFAULT_CONFIG.paths.project_root
 STEP05_SEGMENTS = PROJECT_ROOT / "artifacts/05_segment_extract/segments.jsonl"
 STEP09_SEGMENTS = PROJECT_ROOT / "artifacts/09_table_candidate_resolution/resolved_table_segments.jsonl"
 STEP10_AUDIT = PROJECT_ROOT / "artifacts/10_semantic_segment_audit/semantic_audit.jsonl"
-DEFAULT_OUT_DIR = PROJECT_ROOT / "artifacts/11_embedding_build"
+DEFAULT_OUT_DIR = DEFAULT_CONFIG.paths.artifacts_dir / "11_embedding_build"
 
-DEFAULT_EMBEDDING_ENDPOINT = "http://111.19.156.74:8001/v1/embeddings"
-DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b"
-DEFAULT_RERANK_ENDPOINT = "http://111.19.156.74:8002/rerank"
-
-QUERY_INSTRUCTION = "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "
+DEFAULT_EMBEDDING_ENDPOINT = DEFAULT_CONFIG.services.embedding_endpoint
+DEFAULT_EMBEDDING_MODEL = DEFAULT_CONFIG.services.embedding_model
+DEFAULT_RERANK_ENDPOINT = DEFAULT_CONFIG.services.rerank_endpoint
+DEFAULT_RERANK_MODEL = DEFAULT_CONFIG.services.rerank_model
 
 DEFAULT_INDEX_POLICIES = {
     "embed",
@@ -249,21 +258,27 @@ def make_embedded_table_manifest_record(
     }
 
 
-def build_manifest(out_dir: Path = DEFAULT_OUT_DIR) -> dict[str, Any]:
+def build_manifest(
+    out_dir: Path = DEFAULT_OUT_DIR,
+    *,
+    segments_path: Path = STEP05_SEGMENTS,
+    resolved_segments_path: Path = STEP09_SEGMENTS,
+    semantic_audit_path: Path = STEP10_AUDIT,
+) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     audit_by_segment_id = {
         record.get("segment_id"): record
-        for record in read_jsonl(STEP10_AUDIT)
+        for record in read_jsonl(semantic_audit_path)
         if record.get("segment_id")
     }
 
     records: list[dict[str, Any]] = []
-    for segment in read_jsonl(STEP05_SEGMENTS):
+    for segment in read_jsonl(segments_path):
         records.append(make_main_excel_manifest_record(segment))
 
     missing_audit = 0
-    for segment in read_jsonl(STEP09_SEGMENTS):
+    for segment in read_jsonl(resolved_segments_path):
         audit = audit_by_segment_id.get(segment.get("segment_id"))
         if not audit:
             missing_audit += 1
@@ -332,102 +347,6 @@ def write_manifest_visualization(path: Path, records: list[dict[str, Any]], summ
         )
 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-class CurlJsonClient:
-    def __init__(self, timeout_seconds: int = 120) -> None:
-        self.timeout_seconds = timeout_seconds
-
-    def post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        command = [
-            "curl",
-            "--noproxy",
-            "*",
-            "--silent",
-            "--show-error",
-            "--max-time",
-            str(self.timeout_seconds),
-            "-X",
-            "POST",
-            url,
-            "-H",
-            "Content-Type: application/json",
-            "-d",
-            "@-",
-        ]
-        completed = subprocess.run(
-            command,
-            input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if completed.returncode != 0:
-            stderr = completed.stderr.decode("utf-8", errors="replace")
-            raise RuntimeError(f"curl failed with exit code {completed.returncode}: {stderr}")
-        stdout = completed.stdout.decode("utf-8", errors="replace")
-        try:
-            value = json.loads(stdout)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"curl returned non-JSON response: {stdout[:500]}") from exc
-        if isinstance(value, dict) and value.get("error"):
-            raise RuntimeError(f"remote service error: {value['error']}")
-        return value
-
-
-class EmbeddingClient:
-    def __init__(
-        self,
-        endpoint: str = DEFAULT_EMBEDDING_ENDPOINT,
-        model: str = DEFAULT_EMBEDDING_MODEL,
-        timeout_seconds: int = 180,
-    ) -> None:
-        self.endpoint = endpoint
-        self.model = model
-        self.http = CurlJsonClient(timeout_seconds=timeout_seconds)
-
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        payload = {"model": self.model, "input": texts}
-        response = self.http.post_json(self.endpoint, payload)
-        data = response.get("data")
-        if not isinstance(data, list):
-            raise RuntimeError(f"embedding response missing data list: {response}")
-        ordered = sorted(data, key=lambda item: item.get("index", 0))
-        embeddings: list[list[float]] = []
-        for item in ordered:
-            vector = item.get("embedding")
-            if not isinstance(vector, list) or not vector:
-                raise RuntimeError(f"bad embedding item: {item}")
-            embeddings.append([float(value) for value in vector])
-        if len(embeddings) != len(texts):
-            raise RuntimeError(f"embedding count mismatch: expected {len(texts)}, got {len(embeddings)}")
-        return embeddings
-
-    def embed_query(self, query: str) -> list[float]:
-        return self.embed([QUERY_INSTRUCTION + query])[0]
-
-
-class RerankClient:
-    def __init__(self, endpoint: str = DEFAULT_RERANK_ENDPOINT, timeout_seconds: int = 120) -> None:
-        self.endpoint = endpoint
-        self.http = CurlJsonClient(timeout_seconds=timeout_seconds)
-
-    def rerank(self, query: str, documents: list[str], top_n: int = 5) -> list[dict[str, Any]]:
-        if not documents:
-            return []
-        response = self.http.post_json(
-            self.endpoint,
-            {
-                "query": query,
-                "documents": documents,
-                "top_n": min(top_n, len(documents)),
-                "return_documents": True,
-            },
-        )
-        results = response.get("results")
-        if not isinstance(results, list):
-            raise RuntimeError(f"rerank response missing results list: {response}")
-        return results
 
 
 def smoke_priority(record: dict[str, Any]) -> int:
@@ -647,8 +566,9 @@ def retrieval_smoke_test(
     rerank_endpoint: str = DEFAULT_RERANK_ENDPOINT,
     embedding_endpoint: str = DEFAULT_EMBEDDING_ENDPOINT,
     model: str = DEFAULT_EMBEDDING_MODEL,
+    rerank_model: str = DEFAULT_RERANK_MODEL,
 ) -> dict[str, Any]:
-    reranker = RerankClient(endpoint=rerank_endpoint)
+    reranker = RerankClient(endpoint=rerank_endpoint, model=rerank_model)
     report: list[dict[str, Any]] = []
     for item in SMOKE_QUERIES:
         query = item["query"]
@@ -722,8 +642,17 @@ def run_all(
     embedding_endpoint: str = DEFAULT_EMBEDDING_ENDPOINT,
     embedding_model: str = DEFAULT_EMBEDDING_MODEL,
     rerank_endpoint: str = DEFAULT_RERANK_ENDPOINT,
+    rerank_model: str = DEFAULT_RERANK_MODEL,
+    segments_path: Path = STEP05_SEGMENTS,
+    resolved_segments_path: Path = STEP09_SEGMENTS,
+    semantic_audit_path: Path = STEP10_AUDIT,
 ) -> dict[str, Any]:
-    manifest_summary = build_manifest(out_dir)
+    manifest_summary = build_manifest(
+        out_dir,
+        segments_path=segments_path,
+        resolved_segments_path=resolved_segments_path,
+        semantic_audit_path=semantic_audit_path,
+    )
     index_meta = build_index(
         out_dir / "ingestion_manifest.jsonl",
         out_dir=out_dir,
@@ -737,6 +666,7 @@ def run_all(
         rerank_endpoint=rerank_endpoint,
         embedding_endpoint=embedding_endpoint,
         model=embedding_model,
+        rerank_model=rerank_model,
     )
     final_summary = {
         "manifest": manifest_summary,
@@ -750,52 +680,88 @@ def run_all(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Step 11: build RAG ingestion manifest, local embedding index, and smoke retrieval report.")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    config_parent = argparse.ArgumentParser(add_help=False)
+    config_parent.add_argument("--config", type=Path, default=None)
 
-    manifest_parser = subparsers.add_parser("manifest")
-    manifest_parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    manifest_parser = subparsers.add_parser("manifest", parents=[config_parent])
+    manifest_parser.add_argument("--out-dir", type=Path, default=None)
 
-    index_parser = subparsers.add_parser("index")
-    index_parser.add_argument("--manifest", type=Path, default=DEFAULT_OUT_DIR / "ingestion_manifest.jsonl")
-    index_parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    index_parser = subparsers.add_parser("index", parents=[config_parent])
+    index_parser.add_argument("--manifest", type=Path, default=None)
+    index_parser.add_argument("--out-dir", type=Path, default=None)
     index_parser.add_argument("--limit", type=int, default=160, help="0 or negative means full default index.")
     index_parser.add_argument("--batch-size", type=int, default=16)
-    index_parser.add_argument("--endpoint", default=DEFAULT_EMBEDDING_ENDPOINT)
-    index_parser.add_argument("--model", default=DEFAULT_EMBEDDING_MODEL)
+    index_parser.add_argument("--endpoint", default=None)
+    index_parser.add_argument("--model", default=None)
 
-    smoke_parser = subparsers.add_parser("smoke")
-    smoke_parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
-    smoke_parser.add_argument("--embedding-endpoint", default=DEFAULT_EMBEDDING_ENDPOINT)
-    smoke_parser.add_argument("--embedding-model", default=DEFAULT_EMBEDDING_MODEL)
-    smoke_parser.add_argument("--rerank-endpoint", default=DEFAULT_RERANK_ENDPOINT)
+    smoke_parser = subparsers.add_parser("smoke", parents=[config_parent])
+    smoke_parser.add_argument("--out-dir", type=Path, default=None)
+    smoke_parser.add_argument("--embedding-endpoint", default=None)
+    smoke_parser.add_argument("--embedding-model", default=None)
+    smoke_parser.add_argument("--rerank-endpoint", default=None)
+    smoke_parser.add_argument("--rerank-model", default=None)
 
-    run_parser = subparsers.add_parser("run")
-    run_parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    run_parser = subparsers.add_parser("run", parents=[config_parent])
+    run_parser.add_argument("--out-dir", type=Path, default=None)
     run_parser.add_argument("--limit", type=int, default=160, help="0 or negative means full default index.")
     run_parser.add_argument("--batch-size", type=int, default=16)
-    run_parser.add_argument("--embedding-endpoint", default=DEFAULT_EMBEDDING_ENDPOINT)
-    run_parser.add_argument("--embedding-model", default=DEFAULT_EMBEDDING_MODEL)
-    run_parser.add_argument("--rerank-endpoint", default=DEFAULT_RERANK_ENDPOINT)
+    run_parser.add_argument("--embedding-endpoint", default=None)
+    run_parser.add_argument("--embedding-model", default=None)
+    run_parser.add_argument("--rerank-endpoint", default=None)
+    run_parser.add_argument("--rerank-model", default=None)
 
     args = parser.parse_args()
+    config = load_app_config(args.config)
+    step11_out_dir = config.paths.artifacts_dir / "11_embedding_build"
+    segments_path = config.paths.artifacts_dir / "05_segment_extract/segments.jsonl"
+    resolved_segments_path = config.paths.artifacts_dir / "09_table_candidate_resolution/resolved_table_segments.jsonl"
+    semantic_audit_path = config.paths.artifacts_dir / "10_semantic_segment_audit/semantic_audit.jsonl"
     if args.command == "manifest":
-        summary = build_manifest(args.out_dir)
-        print(f"built ingestion manifest: {summary['total_records']} records -> {args.out_dir}")
+        out_dir = args.out_dir or step11_out_dir
+        summary = build_manifest(
+            out_dir,
+            segments_path=segments_path,
+            resolved_segments_path=resolved_segments_path,
+            semantic_audit_path=semantic_audit_path,
+        )
+        print(f"built ingestion manifest: {summary['total_records']} records -> {out_dir}")
     elif args.command == "index":
         limit = None if args.limit <= 0 else args.limit
-        meta = build_index(args.manifest, args.out_dir, limit, args.batch_size, args.endpoint, args.model)
-        print(f"built embedding index: {meta['record_count']} records, dim={meta['dimension']} -> {args.out_dir}")
+        out_dir = args.out_dir or step11_out_dir
+        manifest_path = args.manifest or (out_dir / "ingestion_manifest.jsonl")
+        meta = build_index(
+            manifest_path,
+            out_dir,
+            limit,
+            args.batch_size,
+            args.endpoint or config.services.embedding_endpoint,
+            args.model or config.services.embedding_model,
+        )
+        print(f"built embedding index: {meta['record_count']} records, dim={meta['dimension']} -> {out_dir}")
     elif args.command == "smoke":
-        output = retrieval_smoke_test(args.out_dir, args.rerank_endpoint, args.embedding_endpoint, args.embedding_model)
-        print(f"ran retrieval smoke test: {output['query_count']} queries -> {args.out_dir}")
+        out_dir = args.out_dir or step11_out_dir
+        output = retrieval_smoke_test(
+            out_dir,
+            args.rerank_endpoint or config.services.rerank_endpoint,
+            args.embedding_endpoint or config.services.embedding_endpoint,
+            args.embedding_model or config.services.embedding_model,
+            args.rerank_model or config.services.rerank_model,
+        )
+        print(f"ran retrieval smoke test: {output['query_count']} queries -> {out_dir}")
     elif args.command == "run":
         limit = None if args.limit <= 0 else args.limit
+        out_dir = args.out_dir or step11_out_dir
         summary = run_all(
-            out_dir=args.out_dir,
+            out_dir=out_dir,
             limit=limit,
             batch_size=args.batch_size,
-            embedding_endpoint=args.embedding_endpoint,
-            embedding_model=args.embedding_model,
-            rerank_endpoint=args.rerank_endpoint,
+            embedding_endpoint=args.embedding_endpoint or config.services.embedding_endpoint,
+            embedding_model=args.embedding_model or config.services.embedding_model,
+            rerank_endpoint=args.rerank_endpoint or config.services.rerank_endpoint,
+            rerank_model=args.rerank_model or config.services.rerank_model,
+            segments_path=segments_path,
+            resolved_segments_path=resolved_segments_path,
+            semantic_audit_path=semantic_audit_path,
         )
         print(
             "step 11 complete: "

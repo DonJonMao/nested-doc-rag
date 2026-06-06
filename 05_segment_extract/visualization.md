@@ -26,6 +26,6 @@
 运行命令：
 
 ```bash
-conda run -n datacenter python /Users/mao/projects/datacenter/05_segment_extract/extract_segments.py
-conda run -n datacenter python /Users/mao/projects/datacenter/05_segment_extract/test_extract_segments.py
+conda run -n datacenter python <project_root>/05_segment_extract/extract_segments.py
+conda run -n datacenter python <project_root>/05_segment_extract/test_extract_segments.py
 ```

@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_CLASSIFICATION = Path("/Users/mao/projects/datacenter/artifacts/07_agent_need_audit/table_candidate_classification.json")
-DEFAULT_EMBEDDED_SEGMENTS = Path("/Users/mao/projects/datacenter/artifacts/04b_embedded_object_parse/embedded_segments.jsonl")
-DEFAULT_HINTS = Path("/Users/mao/projects/datacenter/artifacts/08_llm_structure_hint/table_structure_hints.jsonl")
-DEFAULT_OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/09_table_candidate_resolution")
+DEFAULT_CLASSIFICATION = Path(__file__).resolve().parents[1] / "artifacts/07_agent_need_audit/table_candidate_classification.json"
+DEFAULT_EMBEDDED_SEGMENTS = Path(__file__).resolve().parents[1] / "artifacts/04b_embedded_object_parse/embedded_segments.jsonl"
+DEFAULT_HINTS = Path(__file__).resolve().parents[1] / "artifacts/08_llm_structure_hint/table_structure_hints.jsonl"
+DEFAULT_OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/09_table_candidate_resolution"
 
 LLM_HINT_CATEGORIES = {
     "绩效考核-年度考核明细",

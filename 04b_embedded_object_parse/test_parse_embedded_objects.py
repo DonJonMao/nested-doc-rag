@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 
-OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/04b_embedded_object_parse")
+OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/04b_embedded_object_parse"
 
 
 def read_jsonl(path: Path) -> list[dict]:

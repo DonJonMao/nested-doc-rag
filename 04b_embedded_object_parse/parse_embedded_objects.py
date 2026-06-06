@@ -24,9 +24,9 @@ from docx.text.paragraph import Paragraph
 from openpyxl import load_workbook
 
 
-DEFAULT_PROBED_MANIFEST = Path("/Users/mao/projects/datacenter/artifacts/03_format_probe/probed_manifest.jsonl")
-DEFAULT_STRUCTURE_DIR = Path("/Users/mao/projects/datacenter/artifacts/04a_structure_parse")
-DEFAULT_OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/04b_embedded_object_parse")
+DEFAULT_PROBED_MANIFEST = Path(__file__).resolve().parents[1] / "artifacts/03_format_probe/probed_manifest.jsonl"
+DEFAULT_STRUCTURE_DIR = Path(__file__).resolve().parents[1] / "artifacts/04a_structure_parse"
+DEFAULT_OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/04b_embedded_object_parse"
 
 CELL_RE = re.compile(r"^([A-Z]+)([0-9]+)$")
 

@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_CLASSIFICATION = Path("/Users/mao/projects/datacenter/artifacts/07_agent_need_audit/table_candidate_classification.json")
-DEFAULT_SEGMENTS = Path("/Users/mao/projects/datacenter/artifacts/04b_embedded_object_parse/embedded_segments.jsonl")
-DEFAULT_OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/08_llm_structure_hint")
-DEFAULT_URL = "http://111.19.156.30:8006/v1/chat/completions"
+DEFAULT_CLASSIFICATION = Path(__file__).resolve().parents[1] / "artifacts/07_agent_need_audit/table_candidate_classification.json"
+DEFAULT_SEGMENTS = Path(__file__).resolve().parents[1] / "artifacts/04b_embedded_object_parse/embedded_segments.jsonl"
+DEFAULT_OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/08_llm_structure_hint"
+DEFAULT_URL = "http://localhost:8006/v1/chat/completions"
 DEFAULT_MODEL = "deepseek-v4-flash"
 
 RECOMMENDED_CATEGORIES = {

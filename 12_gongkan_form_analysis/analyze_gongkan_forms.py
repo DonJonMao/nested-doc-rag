@@ -11,12 +11,23 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+try:
+    from nested_doc_rag.config import load_app_config
+except ModuleNotFoundError:
+    import site
 
-PROJECT_ROOT = Path("/Users/mao/projects/datacenter")
-DEFAULT_STRUCTURE_DIR = PROJECT_ROOT / "artifacts/04a_structure_parse"
-DEFAULT_OUT_DIR = PROJECT_ROOT / "artifacts/12_gongkan_form_analysis"
-DEFAULT_LLM_URL = "http://111.19.156.30:8006/v1/chat/completions"
-DEFAULT_LLM_MODEL = "deepseek-v4-flash"
+    site.addsitedir(str(Path(__file__).resolve().parents[1]))
+    from nested_doc_rag.config import load_app_config
+
+
+DEFAULT_CONFIG = load_app_config()
+PROJECT_ROOT = DEFAULT_CONFIG.paths.project_root
+DEFAULT_STRUCTURE_DIR = DEFAULT_CONFIG.paths.artifacts_dir / "04a_structure_parse"
+DEFAULT_OUT_DIR = DEFAULT_CONFIG.paths.artifacts_dir / "12_gongkan_form_analysis"
+DEFAULT_LLM_URL = DEFAULT_CONFIG.services.chat_endpoint
+DEFAULT_LLM_MODEL = DEFAULT_CONFIG.services.chat_model
+DEFAULT_API_KEY_ENV = DEFAULT_CONFIG.services.chat_api_key_env
+DEFAULT_TIMEOUT = DEFAULT_CONFIG.evaluation.timeout_seconds
 
 CELL_RE = re.compile(r"^([A-Z]+)([0-9]+)$")
 BLANK_MARKERS = {"", "\\", "/", "／", "-", "—", "－"}
@@ -887,8 +898,8 @@ def run(
     use_llm: bool = False,
     llm_url: str = DEFAULT_LLM_URL,
     llm_model: str = DEFAULT_LLM_MODEL,
-    api_key_env: str = "DEEPSEEK_API_KEY",
-    timeout: int = 120,
+    api_key_env: str = DEFAULT_API_KEY_ENV,
+    timeout: int = DEFAULT_TIMEOUT,
 ) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
     survey_files = [record for record in file_records(structure_dir) if record.get("document_role") == "survey_form"]
@@ -936,26 +947,30 @@ def run(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Step 12: analyze survey/gongkan forms and decide RAG return formats.")
-    parser.add_argument("--structure-dir", type=Path, default=DEFAULT_STRUCTURE_DIR)
-    parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
-    parser.add_argument("--use-llm", action="store_true")
-    parser.add_argument("--llm-url", default=DEFAULT_LLM_URL)
-    parser.add_argument("--llm-model", default=DEFAULT_LLM_MODEL)
-    parser.add_argument("--api-key-env", default="DEEPSEEK_API_KEY")
-    parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--config", type=Path, default=None)
+    parser.add_argument("--structure-dir", type=Path, default=None)
+    parser.add_argument("--out-dir", type=Path, default=None)
+    parser.add_argument("--use-llm", action="store_true", default=None)
+    parser.add_argument("--llm-url", default=None)
+    parser.add_argument("--llm-model", default=None)
+    parser.add_argument("--api-key-env", default=None)
+    parser.add_argument("--timeout", type=int, default=None)
     args = parser.parse_args()
+    config = load_app_config(args.config)
+    structure_dir = args.structure_dir or (config.paths.artifacts_dir / "04a_structure_parse")
+    out_dir = args.out_dir or (config.paths.artifacts_dir / "12_gongkan_form_analysis")
     summary = run(
-        args.structure_dir,
-        args.out_dir,
-        use_llm=args.use_llm,
-        llm_url=args.llm_url,
-        llm_model=args.llm_model,
-        api_key_env=args.api_key_env,
-        timeout=args.timeout,
+        structure_dir,
+        out_dir,
+        use_llm=bool(args.use_llm),
+        llm_url=args.llm_url or config.services.chat_endpoint,
+        llm_model=args.llm_model or config.services.chat_model,
+        api_key_env=args.api_key_env or config.services.chat_api_key_env,
+        timeout=args.timeout or config.evaluation.timeout_seconds,
     )
     print(
         f"analyzed {summary['survey_file_count']} gongkan files, "
-        f"{summary['sheet_count']} sheets, {summary['form_item_count']} form items -> {args.out_dir}"
+        f"{summary['sheet_count']} sheets, {summary['form_item_count']} form items -> {out_dir}"
     )
 
 

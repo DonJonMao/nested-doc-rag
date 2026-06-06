@@ -5,7 +5,7 @@ from collections import Counter
 from pathlib import Path
 
 
-OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/10_semantic_segment_audit")
+OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/10_semantic_segment_audit"
 
 
 def read_json(path: Path):

@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_STRUCTURE_DIR = Path("/Users/mao/projects/datacenter/artifacts/04a_structure_parse")
-DEFAULT_SEGMENT_DIR = Path("/Users/mao/projects/datacenter/artifacts/05_segment_extract")
-DEFAULT_OUT_DIR = Path("/Users/mao/projects/datacenter/artifacts/06_segmentation_audit")
+DEFAULT_STRUCTURE_DIR = Path(__file__).resolve().parents[1] / "artifacts/04a_structure_parse"
+DEFAULT_SEGMENT_DIR = Path(__file__).resolve().parents[1] / "artifacts/05_segment_extract"
+DEFAULT_OUT_DIR = Path(__file__).resolve().parents[1] / "artifacts/06_segmentation_audit"
 
 EXCEL_SAMPLES = [
     "西咸数据中心6号楼维护能力知识库.xlsx",

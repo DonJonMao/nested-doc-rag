@@ -12,6 +12,7 @@ tmp_ole_probe/
 # Local environments and credentials.
 .env
 .env.*
+!.env.example
 *.key
 *.pem
 
@@ -25,4 +26,3 @@ qdrant/
 *.log
 *.tmp
 *.bak
-
