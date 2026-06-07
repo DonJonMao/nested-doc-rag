@@ -15,6 +15,7 @@ services:
   chat_endpoint: http://localhost:8006/v1/chat/completions
   chat_model: deepseek-v4-flash
   chat_api_key_env: DEEPSEEK_API_KEY
+  timeout_seconds: 120
 
 qdrant:
   collection_name: datacenter_chunks_v1
@@ -80,7 +81,13 @@ excel:
   preserve_styles: true
 
 agent:
-  max_repair_attempts: 2
-  confidence_threshold: 0.72
+  retrieval_backend: mini
+  generation_backend: deterministic
+  enable_rerank: false
+  max_repair_attempts: 1
+  confidence_threshold: 0.65
   require_evidence_for_answer: true
   human_review_threshold: 0.55
+  skip_generation_when_no_evidence: true
+  human_review_on_conflict: true
+  llm_json_repair: true

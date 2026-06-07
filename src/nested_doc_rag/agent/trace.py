@@ -39,9 +39,13 @@ class TraceEvent:
 
 
 class TraceRecorder:
-    def __init__(self, run_id: str):
+    def __init__(self, run_id: str, metadata: dict[str, Any] | None = None):
         self.run_id = run_id
+        self.metadata = metadata or {}
         self.events: list[TraceEvent] = []
+
+    def set_metadata(self, metadata: dict[str, Any]) -> None:
+        self.metadata.update(metadata)
 
     def record(self, field_id: str | None, step: str, payload: dict[str, Any] | None = None) -> None:
         self.events.append(
@@ -72,7 +76,13 @@ class TraceRecorder:
             status = (event.payload.get("final_prediction") or {}).get("answer_status")
             if status in status_counts:
                 status_counts[status] += 1
+        qdrant_hit_total = 0
+        for event in self.events:
+            if event.step == "evidence_retrieved":
+                metadata = event.payload.get("retrieval_metadata") or {}
+                qdrant_hit_total += int(metadata.get("qdrant_hit_count") or 0)
         return {
+            **self.metadata,
             "run_id": self.run_id,
             "total_events": len(self.events),
             "total_fields": len(field_ids),
@@ -82,6 +92,9 @@ class TraceRecorder:
             "conflict_unresolved_count": status_counts["conflict_unresolved"],
             "human_review_count": sum(1 for event in self.events if event.step == "human_review_required"),
             "repaired_count": sum(1 for event in self.events if event.step == "repaired"),
+            "generation_called_count": sum(1 for event in self.events if event.step == "answer_generated" and event.payload.get("generation_called")),
+            "generation_skipped_count": sum(1 for event in self.events if event.step == "answer_skipped" or event.payload.get("generation_called") is False),
+            "qdrant_hit_total": qdrant_hit_total,
         }
 
 
@@ -131,6 +144,9 @@ def render_trace_markdown(events: list[TraceEvent], summary: dict[str, Any]) -> 
         f"- conflict_unresolved: {summary['conflict_unresolved_count']}",
         f"- human_review: {summary['human_review_count']}",
         f"- repaired: {summary['repaired_count']}",
+        f"- generation_called: {summary.get('generation_called_count', 0)}",
+        f"- generation_skipped: {summary.get('generation_skipped_count', 0)}",
+        f"- qdrant_hit_total: {summary.get('qdrant_hit_total', 0)}",
         "",
         "## Fields",
         "",

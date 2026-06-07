@@ -15,7 +15,7 @@ class CurlJsonClient:
     def __init__(self, timeout_seconds: int = 120) -> None:
         self.timeout_seconds = timeout_seconds
 
-    def post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def post_json(self, url: str, payload: dict[str, Any], *, headers: dict[str, str] | None = None) -> dict[str, Any]:
         command = [
             "curl",
             "--noproxy",
@@ -29,9 +29,10 @@ class CurlJsonClient:
             url,
             "-H",
             "Content-Type: application/json",
-            "-d",
-            "@-",
         ]
+        for name, value in (headers or {}).items():
+            command.extend(["-H", f"{name}: {value}"])
+        command.extend(["-d", "@-"])
         completed = subprocess.run(
             command,
             input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),

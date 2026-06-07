@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections.abc import Sequence
 from pathlib import Path
+
+from nested_doc_rag.agent.backends import DeterministicAnswerGenerator, LLMAnswerGenerator, MiniCorpusRetriever, QdrantEvidenceRetriever
+from nested_doc_rag.embedding import RerankClient
+from nested_doc_rag.retrieval import QdrantRetriever
 
 from .agent.runner import FieldFillingAgent, load_corpus, load_fields
 from .config import load_app_config
@@ -41,10 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
     writeback_parser.add_argument("--mode", choices=["safe", "overwrite"], default="safe", help="Write mode.")
     writeback_parser.add_argument("--no-comments", action="store_true", help="Disable Excel cell comments.")
 
-    agent_parser = subparsers.add_parser("run-agent", help="Run the lightweight offline field-filling agent.")
+    agent_parser = subparsers.add_parser("run-agent", help="Run the lightweight field-filling agent with mini or real backends.")
     agent_parser.add_argument("--config", type=Path, default=None, help="Optional local YAML config path.")
-    agent_parser.add_argument("--gold", type=Path, required=True, help="FieldGold JSONL path.")
-    agent_parser.add_argument("--corpus", type=Path, required=True, help="Mini corpus JSONL path.")
+    agent_parser.add_argument("--gold", type=Path, default=None, help="FieldGold JSONL path. Kept for eval-compatible mini demos.")
+    agent_parser.add_argument("--fields", type=Path, default=None, help="Field input JSONL path. Preferred for real runs.")
+    agent_parser.add_argument("--corpus", type=Path, default=None, help="Mini corpus JSONL path.")
     agent_parser.add_argument("--target-namespace", default=None, help="Target namespace for field retrieval.")
     agent_parser.add_argument("--out-dir", type=Path, required=True, help="Run output directory.")
     agent_parser.add_argument("--room-context", default=None, help="Optional known room context.")
@@ -52,6 +58,20 @@ def build_parser() -> argparse.ArgumentParser:
     agent_parser.add_argument("--max-repair-attempts", type=int, default=1, help="Maximum repair attempts per field. Capped at 1.")
     agent_parser.add_argument("--no-writeback", action="store_true", help="Disable Excel writeback even when a template is provided.")
     agent_parser.add_argument("--trace-format", default="md,jsonl", help="Accepted for compatibility; both md and jsonl are written.")
+    agent_parser.add_argument("--retrieval-backend", choices=["mini", "qdrant"], default=None, help="Evidence retrieval backend.")
+    agent_parser.add_argument("--generation-backend", choices=["deterministic", "llm"], default=None, help="Answer generation backend.")
+    agent_parser.add_argument("--enable-rerank", action="store_true", help="Enable rerank for qdrant retrieval.")
+    agent_parser.add_argument("--qdrant-path", type=Path, default=None, help="Qdrant local path.")
+    agent_parser.add_argument("--qdrant-collection", default=None, help="Qdrant collection name.")
+    agent_parser.add_argument("--embedding-endpoint", default=None, help="Embedding service endpoint.")
+    agent_parser.add_argument("--embedding-model", default=None, help="Embedding model name.")
+    agent_parser.add_argument("--rerank-endpoint", default=None, help="Rerank service endpoint.")
+    agent_parser.add_argument("--rerank-model", default=None, help="Rerank model name.")
+    agent_parser.add_argument("--chat-endpoint", default=None, help="OpenAI-compatible chat completion endpoint.")
+    agent_parser.add_argument("--chat-model", default=None, help="Chat model name.")
+    agent_parser.add_argument("--chat-api-key-env", default=None, help="Environment variable containing chat API key.")
+    agent_parser.add_argument("--vector-top-k", type=int, default=None, help="Vector retrieval top-k.")
+    agent_parser.add_argument("--rerank-top-n", type=int, default=None, help="Rerank top-n.")
     return parser
 
 
@@ -109,17 +129,36 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
     elif args.command == "run-agent":
         config = load_app_config(args.config)
+        fields_path = args.fields or args.gold
+        if not fields_path:
+            parser.error("run-agent requires --fields or --gold")
+        retrieval_backend = args.retrieval_backend or config.agent.retrieval_backend
+        generation_backend = args.generation_backend or config.agent.generation_backend
+        target_namespace = args.target_namespace or config.retrieval.target_namespace
+        enable_rerank = bool(args.enable_rerank or config.agent.enable_rerank)
+        vector_top_k = args.vector_top_k or config.retrieval.vector_top_k
+        rerank_top_n = args.rerank_top_n or config.retrieval.rerank_top_n
+        try:
+            retriever = build_agent_retriever(args, config, retrieval_backend, target_namespace, enable_rerank, vector_top_k, rerank_top_n)
+            generator = build_agent_generator(args, config, generation_backend)
+        except RuntimeError as exc:
+            parser.error(str(exc))
         agent = FieldFillingAgent(
-            target_namespace=args.target_namespace or config.retrieval.target_namespace,
-            corpus=load_corpus(args.corpus),
+            target_namespace=target_namespace,
+            corpus=load_corpus(args.corpus) if args.corpus else [],
             out_dir=args.out_dir,
             config=config,
             room_context=args.room_context,
             max_repair_attempts=args.max_repair_attempts,
             template_path=args.template,
             writeback_enabled=not args.no_writeback,
+            retriever=retriever,
+            answer_generator=generator,
+            retrieval_backend=retrieval_backend,
+            generation_backend=generation_backend,
+            enable_rerank=enable_rerank,
         )
-        predictions = agent.run(load_fields(args.gold))
+        predictions = agent.run(load_fields(fields_path))
         print(
             json.dumps(
                 {
@@ -131,6 +170,80 @@ def main(argv: Sequence[str] | None = None) -> None:
                 ensure_ascii=False,
             )
         )
+
+
+def build_agent_retriever(
+    args: argparse.Namespace,
+    config,
+    retrieval_backend: str,
+    target_namespace: str,
+    enable_rerank: bool,
+    vector_top_k: int,
+    rerank_top_n: int,
+):
+    del target_namespace
+    if retrieval_backend == "mini":
+        if not args.corpus:
+            raise RuntimeError("retrieval-backend=mini requires --corpus")
+        return MiniCorpusRetriever(load_corpus(args.corpus))
+    qdrant_path = args.qdrant_path or config.paths.qdrant_path
+    collection_name = args.qdrant_collection or config.qdrant.collection_name
+    embedding_endpoint = args.embedding_endpoint or config.services.embedding_endpoint
+    embedding_model = args.embedding_model or config.services.embedding_model
+    missing = [
+        name
+        for name, value in [
+            ("qdrant_path", qdrant_path),
+            ("collection_name", collection_name),
+            ("embedding_endpoint", embedding_endpoint),
+            ("embedding_model", embedding_model),
+        ]
+        if not value
+    ]
+    if missing:
+        raise RuntimeError("retrieval-backend=qdrant requires qdrant_path, collection_name, embedding_endpoint, embedding_model")
+    qdrant_retriever = QdrantRetriever(
+        qdrant_path=qdrant_path,
+        collection_name=collection_name,
+        embedding_endpoint=embedding_endpoint,
+        embedding_model=embedding_model,
+        prefer_grpc=config.qdrant.prefer_grpc,
+        timeout=config.qdrant.timeout,
+    )
+    rerank_client = None
+    if enable_rerank:
+        rerank_endpoint = args.rerank_endpoint or config.services.rerank_endpoint
+        if not rerank_endpoint:
+            raise RuntimeError("enable-rerank requires rerank_endpoint")
+        rerank_client = RerankClient(
+            endpoint=rerank_endpoint,
+            model=args.rerank_model or config.services.rerank_model,
+            timeout_seconds=config.services.timeout_seconds,
+        )
+    return QdrantEvidenceRetriever(
+        qdrant_retriever=qdrant_retriever,
+        enable_rerank=enable_rerank,
+        rerank_client=rerank_client,
+        rerank_top_n=rerank_top_n,
+        vector_top_k=vector_top_k,
+        query_layers=config.retrieval.query_layers,
+    )
+
+
+def build_agent_generator(args: argparse.Namespace, config, generation_backend: str):
+    if generation_backend == "deterministic":
+        return DeterministicAnswerGenerator()
+    chat_endpoint = args.chat_endpoint or config.services.chat_endpoint
+    chat_model = args.chat_model or config.services.chat_model
+    if not chat_endpoint or not chat_model:
+        raise RuntimeError("generation-backend=llm requires chat_endpoint and chat_model")
+    api_key_env = args.chat_api_key_env or config.services.chat_api_key_env
+    return LLMAnswerGenerator(
+        chat_endpoint=chat_endpoint,
+        chat_model=chat_model,
+        api_key=os.environ.get(api_key_env, ""),
+        timeout_seconds=config.services.timeout_seconds,
+    )
 
 
 if __name__ == "__main__":

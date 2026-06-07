@@ -80,6 +80,7 @@ class ServicesConfig:
     chat_endpoint: str = "http://localhost:8006/v1/chat/completions"
     chat_model: str = "deepseek-v4-flash"
     chat_api_key_env: str = "DEEPSEEK_API_KEY"
+    timeout_seconds: int = 120
 
 
 @dataclass(frozen=True)
@@ -124,6 +125,12 @@ class AgentConfig:
     confidence_threshold: float = 0.72
     require_evidence_for_answer: bool = True
     human_review_threshold: float = 0.55
+    retrieval_backend: str = "mini"
+    generation_backend: str = "deterministic"
+    enable_rerank: bool = False
+    skip_generation_when_no_evidence: bool = True
+    human_review_on_conflict: bool = True
+    llm_json_repair: bool = True
 
 
 @dataclass(frozen=True)
@@ -236,6 +243,7 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         chat_endpoint=str(services_data.get("chat_endpoint", "http://localhost:8006/v1/chat/completions")),
         chat_model=str(services_data.get("chat_model", "deepseek-v4-flash")),
         chat_api_key_env=str(services_data.get("chat_api_key_env", "DEEPSEEK_API_KEY")),
+        timeout_seconds=_as_int(services_data.get("timeout_seconds", 120)),
     )
     qdrant = QdrantConfig(
         collection_name=str(_section(data, "qdrant", QdrantConfig()).get("collection_name", "datacenter_chunks_v1")),
@@ -274,6 +282,12 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         confidence_threshold=_as_float(agent_data.get("confidence_threshold", 0.72)),
         require_evidence_for_answer=_as_bool(agent_data.get("require_evidence_for_answer", True)),
         human_review_threshold=_as_float(agent_data.get("human_review_threshold", 0.55)),
+        retrieval_backend=str(agent_data.get("retrieval_backend", "mini")),
+        generation_backend=str(agent_data.get("generation_backend", "deterministic")),
+        enable_rerank=_as_bool(agent_data.get("enable_rerank", False)),
+        skip_generation_when_no_evidence=_as_bool(agent_data.get("skip_generation_when_no_evidence", True)),
+        human_review_on_conflict=_as_bool(agent_data.get("human_review_on_conflict", True)),
+        llm_json_repair=_as_bool(agent_data.get("llm_json_repair", True)),
     )
     return AppConfig(paths=paths, services=services, qdrant=qdrant, retrieval=retrieval, evaluation=evaluation, excel=excel, agent=agent)
 
@@ -334,12 +348,24 @@ def _env_aliases() -> dict[str, tuple[str, str]]:
         "CHAT_ENDPOINT": ("services", "chat_endpoint"),
         "CHAT_MODEL": ("services", "chat_model"),
         "CHAT_API_KEY_ENV": ("services", "chat_api_key_env"),
+        "NDR_CHAT_ENDPOINT": ("services", "chat_endpoint"),
+        "NDR_CHAT_MODEL": ("services", "chat_model"),
+        "NDR_CHAT_API_KEY_ENV": ("services", "chat_api_key_env"),
+        "NDR_EMBEDDING_ENDPOINT": ("services", "embedding_endpoint"),
+        "NDR_EMBEDDING_MODEL": ("services", "embedding_model"),
+        "NDR_RERANK_ENDPOINT": ("services", "rerank_endpoint"),
+        "NDR_RERANK_MODEL": ("services", "rerank_model"),
         "DEEPSEEK_BASE_URL": ("services", "chat_endpoint"),
         "DEEPSEEK_MODEL": ("services", "chat_model"),
         "QDRANT_COLLECTION": ("qdrant", "collection_name"),
         "QDRANT_PATH": ("paths", "qdrant_path"),
+        "NDR_QDRANT_PATH": ("paths", "qdrant_path"),
+        "NDR_QDRANT_COLLECTION": ("qdrant", "collection_name"),
         "TARGET_NAMESPACE": ("retrieval", "target_namespace"),
         "RETRIEVAL_MODE": ("retrieval", "retrieval_mode"),
+        "NDR_AGENT_RETRIEVAL_BACKEND": ("agent", "retrieval_backend"),
+        "NDR_AGENT_GENERATION_BACKEND": ("agent", "generation_backend"),
+        "NDR_AGENT_ENABLE_RERANK": ("agent", "enable_rerank"),
     }
 
 

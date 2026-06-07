@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from nested_doc_rag.agent.backends import AnswerGenerator, DeterministicAnswerGenerator, EvidenceRetriever, MiniCorpusRetriever
 from nested_doc_rag.excel.writeback import patch_workbook
 from nested_doc_rag.io import read_jsonl, write_json, write_jsonl
 from nested_doc_rag.schemas.eval import FieldGold, FieldPrediction
@@ -11,7 +12,6 @@ from nested_doc_rag.schemas.eval import FieldGold, FieldPrediction
 from .policies import (
     build_query_plan,
     make_prediction_from_evidence,
-    retrieve_from_mini_corpus,
     select_evidence,
     should_generate_answer,
     should_human_review,
@@ -33,24 +33,34 @@ class FieldFillingAgent:
         self,
         *,
         target_namespace: str,
-        corpus: list[dict[str, Any]],
+        corpus: list[dict[str, Any]] | None = None,
         out_dir: Path,
         config: Any | None = None,
         room_context: str | None = None,
         max_repair_attempts: int = 1,
         template_path: Path | None = None,
         writeback_enabled: bool = True,
+        retriever: EvidenceRetriever | None = None,
+        answer_generator: AnswerGenerator | None = None,
+        retrieval_backend: str = "mini",
+        generation_backend: str = "deterministic",
+        enable_rerank: bool = False,
     ):
         self.target_namespace = target_namespace
-        self.corpus = corpus
+        self.corpus = corpus or []
         self.out_dir = out_dir
         self.config = config
         self.room_context = room_context
         self.max_repair_attempts = max(0, min(max_repair_attempts, 1))
         self.template_path = template_path
         self.writeback_enabled = writeback_enabled
+        self.retriever = retriever or MiniCorpusRetriever(self.corpus)
+        self.answer_generator = answer_generator or DeterministicAnswerGenerator()
+        self.retrieval_backend = retrieval_backend
+        self.generation_backend = generation_backend
+        self.enable_rerank = enable_rerank
         self.run_id = f"agent_{uuid4().hex[:12]}"
-        self.trace = TraceRecorder(self.run_id)
+        self.trace = TraceRecorder(self.run_id, metadata=self.run_metadata())
         self.field_states: list[FieldState] = []
         self.review_items: list[dict[str, Any]] = []
         self.writeback_status = WRITEBACK_SKIPPED_NO_TEMPLATE
@@ -65,93 +75,177 @@ class FieldFillingAgent:
             fields_total=len(fields),
             started_at=now_iso(),
         )
+        self.trace.record(None, "run_started", self.run_metadata())
         predictions: list[FieldPrediction] = []
 
         for field in fields:
-            state = self.create_field_state(field)
-            self.trace.record(field.field_id, "field_started", {"field": minimal_field_view(field)})
+            try:
+                prediction, state, human_review = self.process_field(field)
+            except Exception as exc:  # noqa: BLE001 - keep one field failure from aborting the whole run
+                prediction, state, human_review = self.failed_field_prediction(field, exc)
+                run_state.fields_failed += 1
 
-            state.query_plan = build_query_plan(
-                field,
-                target_namespace=self.target_namespace,
-                room_context=self.room_context,
-                config=self.config,
-            )
-            state.status = "planned"
-            self.trace.record(field.field_id, "query_planned", {"query_plan": state.query_plan.to_dict()})
-
-            state.retrieved_chunks = retrieve_from_mini_corpus(state.query_plan, self.corpus, field)
-            state.status = "retrieved"
-            self.trace.record(field.field_id, "evidence_retrieved", {"chunks": state.retrieved_chunks})
-
-            state.evidence_bundle = select_evidence(state.retrieved_chunks, field, state.query_plan)
-            state.status = "evidence_selected"
-            self.trace.record(field.field_id, "evidence_selected", {"evidence_bundle": state.evidence_bundle.to_dict()})
-
-            state.draft_prediction = make_prediction_from_evidence(field, state.evidence_bundle)
-            if should_generate_answer(state.evidence_bundle):
-                state.status = "generated"
-                self.trace.record(field.field_id, "answer_generated", {"prediction": state.draft_prediction.to_dict()})
-            else:
-                state.status = "human_review"
-                self.trace.record(field.field_id, "answer_skipped", {"prediction": state.draft_prediction.to_dict()})
-
-            validation = validate_prediction_light(field, state.draft_prediction, self.config)
-            state.draft_prediction = with_validation(state.draft_prediction, validation)
-            state.validation_result = validation
-            state.status = "validated"
-            self.trace.record(field.field_id, "validated", {"validation_result": validation.to_dict()})
-
-            repair_decision = should_repair(validation, state, max_attempts=self.max_repair_attempts)
-            final_prediction = state.draft_prediction
-            if repair_decision.should_repair:
-                repaired_prediction, repair_log = repair_prediction_once(field, state.draft_prediction, validation)
-                state.repair_attempts.append(repair_log)
-                repaired_validation = validate_prediction_light(field, repaired_prediction, self.config)
-                final_prediction = with_validation(repaired_prediction, repaired_validation)
-                state.validation_result = repaired_validation
-                state.status = "repaired"
-                self.trace.record(
-                    field.field_id,
-                    "repaired",
-                    {
-                        "repair_decision": repair_decision.to_dict(),
-                        "repair_log": repair_log,
-                        "validation_result": repaired_validation.to_dict(),
-                    },
-                )
-            else:
-                self.trace.record(field.field_id, "repair_skipped", {"repair_decision": repair_decision.to_dict()})
-
-            state.final_prediction = final_prediction
-            human_review = should_human_review(state)
             if human_review:
-                state.status = "human_review"
                 run_state.fields_human_review += 1
-                review_item = make_review_item(state)
-                self.review_items.append(review_item)
-                self.trace.record(field.field_id, "human_review_required", {"reason": review_item["reason"], "review_item": review_item})
-            else:
-                state.status = "completed"
-                self.trace.record(field.field_id, "human_review_skipped", {"reason": "direct evidence validated"})
-
             run_state.fields_completed += 1
             self.field_states.append(state)
-            predictions.append(final_prediction)
+            predictions.append(prediction)
+
+        run_state.finished_at = now_iso()
+        self.trace.record(None, "run_completed", run_state.to_dict())
+        self.write_outputs(predictions, run_state)
+        return predictions
+
+    def process_field(self, field: FieldGold) -> tuple[FieldPrediction, FieldState, bool]:
+        state = self.create_field_state(field)
+        self.trace.record(field.field_id, "field_started", {"field": minimal_field_view(field)})
+
+        state.query_plan = build_query_plan(
+            field,
+            target_namespace=self.target_namespace,
+            room_context=self.room_context,
+            config=self.config,
+        )
+        state.status = "planned"
+        self.trace.record(field.field_id, "query_planned", {"query_plan": state.query_plan.to_dict()})
+
+        retrieval_started = perf_counter_ms()
+        state.retrieved_chunks = self.retriever.retrieve(state.query_plan, field)
+        retrieval_latency_ms = round(perf_counter_ms() - retrieval_started, 3)
+        retrieval_metadata = dict(getattr(self.retriever, "last_metadata", {}) or {})
+        state.status = "retrieved"
+        self.trace.record(
+            field.field_id,
+            "evidence_retrieved",
+            {
+                "retrieval_backend": self.retrieval_backend,
+                "retrieval_latency_ms": retrieval_latency_ms,
+                "retrieval_hit_count": len(state.retrieved_chunks),
+                "retrieval_metadata": retrieval_metadata,
+                "chunks": state.retrieved_chunks,
+            },
+        )
+
+        state.evidence_bundle = select_evidence(state.retrieved_chunks, field, state.query_plan)
+        state.status = "evidence_selected"
+        self.trace.record(
+            field.field_id,
+            "evidence_selected",
+            {
+                "evidence_bundle": state.evidence_bundle.to_dict(),
+                "selected_chunk_ids": chunk_ids(state.evidence_bundle.selected_chunks),
+                "reference_chunk_ids": chunk_ids(state.evidence_bundle.reference_chunks),
+                "ignored_chunk_ids": chunk_ids(state.evidence_bundle.ignored_chunks),
+            },
+        )
+
+        generation_called = should_generate_answer(state.evidence_bundle)
+        generation_started = perf_counter_ms()
+        if generation_called:
+            state.draft_prediction = self.answer_generator.generate(
+                field,
+                state.evidence_bundle,
+                state.query_plan,
+                trace_context={"run_id": self.run_id, "field_id": field.field_id},
+            )
+            generation_latency_ms = round(perf_counter_ms() - generation_started, 3)
+            state.status = "generated"
             self.trace.record(
                 field.field_id,
-                "field_completed",
+                "answer_generated",
                 {
-                    "status": state.status,
-                    "final_prediction": final_prediction.to_dict(),
-                    "human_review": human_review,
-                    "repair_attempts": state.repair_attempts,
+                    "generation_backend": self.generation_backend,
+                    "generation_called": True,
+                    "generation_latency_ms": generation_latency_ms,
+                    "prediction": state.draft_prediction.to_dict(),
+                },
+            )
+        else:
+            state.draft_prediction = make_prediction_from_evidence(field, state.evidence_bundle)
+            state.status = "human_review"
+            self.trace.record(
+                field.field_id,
+                "answer_skipped",
+                {
+                    "generation_backend": self.generation_backend,
+                    "generation_called": False,
+                    "reason": state.evidence_bundle.decision,
+                    "prediction": state.draft_prediction.to_dict(),
                 },
             )
 
-        run_state.finished_at = now_iso()
-        self.write_outputs(predictions, run_state)
-        return predictions
+        validation = validate_prediction_light(field, state.draft_prediction, self.config)
+        state.draft_prediction = with_validation(state.draft_prediction, validation)
+        state.validation_result = validation
+        state.status = "validated"
+        self.trace.record(field.field_id, "validated", {"validation_result": validation.to_dict()})
+
+        repair_decision = should_repair(validation, state, max_attempts=self.max_repair_attempts)
+        final_prediction = state.draft_prediction
+        if repair_decision.should_repair:
+            repaired_prediction, repair_log = repair_prediction_once(field, state.draft_prediction, validation)
+            state.repair_attempts.append(repair_log)
+            repaired_validation = validate_prediction_light(field, repaired_prediction, self.config)
+            final_prediction = with_validation(repaired_prediction, repaired_validation)
+            state.validation_result = repaired_validation
+            state.status = "repaired"
+            self.trace.record(
+                field.field_id,
+                "repaired",
+                {
+                    "repair_decision": repair_decision.to_dict(),
+                    "repair_log": repair_log,
+                    "validation_result": repaired_validation.to_dict(),
+                },
+            )
+        else:
+            self.trace.record(field.field_id, "repair_skipped", {"repair_decision": repair_decision.to_dict()})
+
+        state.final_prediction = final_prediction
+        human_review = should_human_review(state)
+        if human_review:
+            state.status = "human_review"
+            review_item = make_review_item(state)
+            self.review_items.append(review_item)
+            self.trace.record(field.field_id, "human_review_required", {"reason": review_item["reason"], "review_item": review_item})
+        else:
+            state.status = "completed"
+            self.trace.record(field.field_id, "human_review_skipped", {"reason": "direct evidence validated"})
+
+        self.trace.record(
+            field.field_id,
+            "field_completed",
+            {
+                "status": state.status,
+                "final_prediction": final_prediction.to_dict(),
+                "human_review": human_review,
+                "repair_attempts": state.repair_attempts,
+            },
+        )
+        return final_prediction, state, human_review
+
+    def failed_field_prediction(self, field: FieldGold, exc: Exception) -> tuple[FieldPrediction, FieldState, bool]:
+        state = self.create_field_state(field)
+        state.status = "failed"
+        prediction = FieldPrediction(
+            field_id=field.field_id,
+            row_index=field.row_index,
+            target_cell=field.target_cell,
+            answer_value="未找到",
+            answer_status="conflict_unresolved",
+            confidence=0.0,
+            source_chunk_ids=[],
+            evidence_attachment_ids=[],
+            validation={"error": str(exc), "failed_step": state.status, "needs_human_review": True},
+            method_name="field_filling_agent_failed",
+        )
+        state.final_prediction = prediction
+        review_item = make_review_item(state)
+        self.review_items.append(review_item)
+        self.trace.record(field.field_id, "field_failed", {"error": str(exc), "final_prediction": prediction.to_dict()})
+        self.trace.record(field.field_id, "human_review_required", {"reason": review_item["reason"], "review_item": review_item})
+        self.trace.record(field.field_id, "field_completed", {"status": state.status, "final_prediction": prediction.to_dict(), "human_review": True})
+        return prediction, state, True
 
     def create_field_state(self, field: FieldGold) -> FieldState:
         return FieldState(
@@ -213,6 +307,17 @@ class FieldFillingAgent:
         write_jsonl(review_items_path, merged_review_items)
         self.writeback_status = "completed"
         self.writeback_summary = summary.to_dict()
+
+    def run_metadata(self) -> dict[str, Any]:
+        return {
+            "retrieval_backend": self.retrieval_backend,
+            "generation_backend": self.generation_backend,
+            "enable_rerank": self.enable_rerank,
+            "target_namespace": self.target_namespace,
+            "qdrant_collection": getattr(getattr(self.retriever, "qdrant_retriever", None), "collection_name", ""),
+            "chat_model": getattr(self.answer_generator, "chat_model", ""),
+            "rerank_enabled": self.enable_rerank,
+        }
 
 
 def load_fields(path: Path) -> list[FieldGold]:
@@ -297,6 +402,11 @@ def build_run_summary(
         "",
         f"- run_id: `{run_state.run_id}`",
         f"- target_namespace: `{run_state.target_namespace}`",
+        f"- retrieval_backend: `{trace_summary.get('retrieval_backend', '')}`",
+        f"- generation_backend: `{trace_summary.get('generation_backend', '')}`",
+        f"- enable_rerank: `{trace_summary.get('enable_rerank', False)}`",
+        f"- qdrant_collection: `{trace_summary.get('qdrant_collection', '')}`",
+        f"- chat_model: `{trace_summary.get('chat_model', '')}`",
         f"- started_at: `{run_state.started_at}`",
         f"- finished_at: `{run_state.finished_at}`",
         f"- total_fields: {run_state.fields_total}",
@@ -306,6 +416,8 @@ def build_run_summary(
         f"- conflict_unresolved: {trace_summary['conflict_unresolved_count']}",
         f"- human_review: {review_count}",
         f"- repaired: {trace_summary['repaired_count']}",
+        f"- generation_called: {trace_summary.get('generation_called_count', 0)}",
+        f"- generation_skipped: {trace_summary.get('generation_skipped_count', 0)}",
         f"- writeback: {writeback_status}",
         "",
         "## Evidence Strategy",
@@ -320,3 +432,13 @@ def build_run_summary(
     if writeback_summary:
         lines.extend(["", "## Writeback", "", f"- filled_form: `{writeback_summary.get('output_path')}`"])
     return "\n".join(lines).rstrip() + "\n"
+
+
+def perf_counter_ms() -> float:
+    from time import perf_counter
+
+    return perf_counter() * 1000
+
+
+def chunk_ids(chunks: list[dict[str, Any]]) -> list[str]:
+    return [str(chunk.get("chunk_id")) for chunk in chunks if chunk.get("chunk_id")]

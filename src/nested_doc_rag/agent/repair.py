@@ -44,13 +44,12 @@ def repair_prediction_once(
 
 def repair_enum_value(field: FieldGold, value: Any) -> Any:
     normalized = normalize_enum(value)
-    alias_map = {normalize_enum(alias): field.expected_value for alias in field.accepted_aliases}
-    if normalized in alias_map:
-        return alias_map[normalized]
     for enum_value in field.constraints.enum_values:
         enum_normalized = normalize_enum(enum_value)
         if normalized == enum_normalized or normalized in enum_normalized or enum_normalized in normalized:
             return enum_value
+    if normalized in {normalize_enum(alias) for alias in field.accepted_aliases} and len(field.constraints.enum_values) == 1:
+        return field.constraints.enum_values[0]
     return value
 
 

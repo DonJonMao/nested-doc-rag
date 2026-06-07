@@ -120,7 +120,11 @@ machine:
 field -> query planning -> evidence retrieval -> evidence selection -> answer generation -> validation -> one-shot repair -> human review -> writeback
 ```
 
-Offline mini-data run:
+### Two execution modes
+
+Offline mini mode uses the bundled mini corpus plus the deterministic generator.
+It has no Qdrant, embedding, rerank, LLM, or API key dependency, so it is suitable
+for tests and reproducible demos:
 
 ```bash
 python -m nested_doc_rag.cli run-agent \
@@ -128,9 +132,31 @@ python -m nested_doc_rag.cli run-agent \
   --gold examples/mini_data/gold_fields.jsonl \
   --corpus examples/mini_data/knowledge_chunks.jsonl \
   --target-namespace xixian_4 \
+  --retrieval-backend mini \
+  --generation-backend deterministic \
   --out-dir artifacts/runs/demo \
   --no-writeback
 ```
+
+Real backend mode uses Qdrant retrieval, an embedding service, optional rerank,
+and LLM answer generation. Use `--fields` for real filling inputs; `--gold` is
+kept for eval-compatible demo data. If a FieldGold-compatible file is reused,
+`expected_value` is only evaluation gold and is not used for generation:
+
+```bash
+python -m nested_doc_rag.cli run-agent \
+  --config config/local.yaml \
+  --fields artifacts/form/form_fields.jsonl \
+  --target-namespace xixian_4 \
+  --retrieval-backend qdrant \
+  --generation-backend llm \
+  --enable-rerank \
+  --template data/forms/survey_form.xlsx \
+  --out-dir artifacts/runs/real_qdrant_llm
+```
+
+The LLM sees only selected direct evidence. `no_evidence`, `clue_only`, and
+`conflict_unresolved` fields do not call the LLM and are sent to review.
 
 Outputs:
 
@@ -140,9 +166,6 @@ Outputs:
 - `trace.md`
 - `review_items.jsonl`
 - `run_summary.md`
-
-The mini-data mode is fully offline. It does not require Qdrant, LLM services,
-embedding/rerank endpoints, or API keys.
 
 Legacy wrappers are still available when a migrated numbered step is needed:
 

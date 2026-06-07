@@ -147,16 +147,24 @@ def make_prediction_from_evidence(
     }
     if bundle.decision == "use_direct_evidence":
         selected = bundle.selected_chunks[0]
+        answer_value = selected.get("answer_value")
+        validation = dict(validation_base)
+        if not answer_value:
+            answer_value = selected.get("short_answer") or selected.get("raw_text") or selected.get("text_for_embedding") or selected.get("text") or ""
+            answer_value = str(answer_value or "").strip()
+            if len(answer_value) > 120:
+                answer_value = answer_value[:119] + "..."
+            validation["deterministic_from_raw_text"] = True
         return FieldPrediction(
             field_id=field.field_id,
             row_index=field.row_index,
             target_cell=field.target_cell,
-            answer_value=selected.get("answer_value"),
+            answer_value=answer_value,
             answer_status="answered",
             confidence=0.9,
             source_chunk_ids=chunk_source_ids(bundle.selected_chunks),
             evidence_attachment_ids=chunk_attachment_ids(bundle.selected_chunks),
-            validation=validation_base,
+            validation=validation,
             method_name=method_name,
         )
     if bundle.decision == "clue_only":
@@ -327,21 +335,21 @@ def same_priority_conflict(chunks: list[dict[str, Any]], query_plan: QueryPlan) 
     for chunk in chunks:
         buckets.setdefault(source_priority(chunk, query_plan), []).append(chunk)
     for bucket in buckets.values():
-        values = {answer_key(chunk.get("answer_value")) for chunk in bucket if usable_answer(chunk)}
+        values = {answer_key(chunk.get("answer_value")) for chunk in bucket if chunk_has_answer_value(chunk) and usable_answer(chunk)}
         if len(values) > 1:
             return bucket
     return []
 
 
 def choose_target_direct_chunk(chunks: list[dict[str, Any]], field: FieldGold, query_plan: QueryPlan) -> dict[str, Any] | None:
-    main_chunks = [chunk for chunk in chunks if chunk.get("source_type") == "main_excel_capability" and usable_answer(chunk)]
-    embedded_chunks = [chunk for chunk in chunks if chunk.get("source_type") == "embedded_word_table" and usable_answer(chunk)]
+    main_chunks = [chunk for chunk in chunks if chunk.get("source_type") == "main_excel_capability" and direct_evidence_candidate(chunk)]
+    embedded_chunks = [chunk for chunk in chunks if chunk.get("source_type") == "embedded_word_table" and direct_evidence_candidate(chunk)]
     if normalize_enum(field.field_type) == "bool" and main_chunks and embedded_chunks and all(is_uncertain_answer(chunk) for chunk in main_chunks):
         explicit_embedded = [chunk for chunk in embedded_chunks if normalize_bool(chunk.get("answer_value")) is not None]
         if explicit_embedded:
             return explicit_embedded[0]
     for chunk in chunks:
-        if usable_answer(chunk) and not is_uncertain_answer(chunk):
+        if direct_evidence_candidate(chunk) and not is_uncertain_answer(chunk):
             return chunk
     return None
 
@@ -350,7 +358,20 @@ def usable_answer(chunk: dict[str, Any]) -> bool:
     return chunk.get("answer_status", ANSWERED) == ANSWERED and normalize_text(chunk.get("answer_value")) not in {"", "未找到"}
 
 
+def direct_evidence_candidate(chunk: dict[str, Any]) -> bool:
+    if chunk_has_answer_value(chunk):
+        return usable_answer(chunk)
+    text = chunk.get("raw_text") or chunk.get("text_for_embedding") or chunk.get("text")
+    return chunk.get("answer_status", ANSWERED) == ANSWERED and normalize_text(text) != ""
+
+
+def chunk_has_answer_value(chunk: dict[str, Any]) -> bool:
+    return "answer_value" in chunk and normalize_text(chunk.get("answer_value")) != ""
+
+
 def is_uncertain_answer(chunk: dict[str, Any]) -> bool:
+    if not chunk_has_answer_value(chunk):
+        return False
     return normalize_enum(chunk.get("answer_value")) in {normalize_enum(item) for item in UNCERTAIN_VALUES}
 
 
@@ -376,7 +397,7 @@ def chunk_source_ids(chunks: list[dict[str, Any]]) -> list[str]:
 def chunk_attachment_ids(chunks: list[dict[str, Any]]) -> list[str]:
     output: list[str] = []
     for chunk in chunks:
-        output.extend(str(item) for item in chunk.get("evidence_attachment_ids") or [] if item)
+        output.extend(str(item) for item in chunk.get("evidence_attachment_ids") or chunk.get("proof_attachment_ids") or [] if item)
     return list(dict.fromkeys(output))
 
 
