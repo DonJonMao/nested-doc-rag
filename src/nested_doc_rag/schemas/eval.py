@@ -89,6 +89,9 @@ class FieldPrediction:
     confidence: float = 0.0
     source_chunk_ids: list[str] = field(default_factory=list)
     evidence_attachment_ids: list[str] = field(default_factory=list)
+    reference_chunk_ids: list[str] = field(default_factory=list)
+    reference_source_documents: list[dict[str, Any]] = field(default_factory=list)
+    reference_snippets: list[str] = field(default_factory=list)
     validation: dict[str, Any] = field(default_factory=dict)
     method_name: str = ""
 
@@ -103,6 +106,9 @@ class FieldPrediction:
             confidence=float(value.get("confidence") or 0.0),
             source_chunk_ids=[str(item) for item in value.get("source_chunk_ids") or []],
             evidence_attachment_ids=[str(item) for item in value.get("evidence_attachment_ids") or []],
+            reference_chunk_ids=[str(item) for item in value.get("reference_chunk_ids") or []],
+            reference_source_documents=[dict(item) for item in value.get("reference_source_documents") or [] if isinstance(item, dict)],
+            reference_snippets=[str(item) for item in value.get("reference_snippets") or []],
             validation=dict(value.get("validation") or {}),
             method_name=str(value.get("method_name") or ""),
         )
@@ -117,6 +123,9 @@ class FieldPrediction:
             "confidence": self.confidence,
             "source_chunk_ids": self.source_chunk_ids,
             "evidence_attachment_ids": self.evidence_attachment_ids,
+            "reference_chunk_ids": self.reference_chunk_ids,
+            "reference_source_documents": self.reference_source_documents,
+            "reference_snippets": self.reference_snippets,
             "validation": self.validation,
             "method_name": self.method_name,
         }

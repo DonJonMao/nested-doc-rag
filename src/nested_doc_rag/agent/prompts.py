@@ -19,6 +19,7 @@ def build_field_answer_messages(
         "answer_status": "answered | partial_clue | not_found | conflict_unresolved",
         "confidence": 0.0,
         "source_chunk_ids": ["chunk_id"],
+        "reference_chunk_ids": ["chunk_id"],
         "evidence_attachment_ids": [],
         "reason": "简短说明",
     }
@@ -37,19 +38,24 @@ def build_field_answer_messages(
         "target_namespace": query_plan.target_namespace,
         "intent": query_plan.intent,
     }
-    evidence_view = [format_evidence_chunk(chunk) for chunk in evidence_bundle.selected_chunks]
+    selected_evidence_view = [format_evidence_chunk(chunk) for chunk in evidence_bundle.selected_chunks]
+    reference_evidence_view = [format_evidence_chunk(chunk) for chunk in evidence_bundle.reference_chunks]
     user_prompt = (
         "请为单个工勘单字段生成可写入 Excel 的短答案。\n"
         "强制规则：\n"
-        "1. 只能基于 selected_evidence 回答，不得使用常识或编造。\n"
-        "2. 不得使用 expected_value、gold answer、heldout answer 或样例作为事实来源。\n"
-        "3. answered 必须提供 source_chunk_ids，且只能来自 selected_evidence。\n"
-        "4. 如果 selected_evidence 不能直接支撑答案，返回 not_found 或 partial_clue。\n"
-        "5. 如果证据冲突，返回 conflict_unresolved。\n"
-        "6. 输出必须是 JSON，不要 markdown。\n\n"
+        "1. answered 只能基于 selected_evidence，不得使用常识或编造。\n"
+        "2. reference_evidence 只能作为上下文或 partial_clue 线索，不能作为 answered 的 source_chunk_ids。\n"
+        "3. 不得使用 expected_value、gold answer、heldout answer 或样例作为事实来源。\n"
+        "4. answered 必须提供 source_chunk_ids，且只能来自 selected_evidence。\n"
+        "5. partial_clue 可以提供 reference_chunk_ids，且只能来自 reference_evidence。\n"
+        "6. 如果 selected_evidence 不能直接支撑答案，返回 partial_clue 或 not_found。\n"
+        "7. not found 不等于不涉及；只有 selected_evidence 明确写出不涉及/无/否/未配置/无法提供时，才能输出这些值。\n"
+        "8. 如果证据冲突，返回 conflict_unresolved。\n"
+        "9. 输出必须是 JSON，不要 markdown。\n\n"
         f"field:\n{json.dumps(field_view, ensure_ascii=False, indent=2)}\n\n"
         f"query_plan:\n{json.dumps(query_view, ensure_ascii=False, indent=2)}\n\n"
-        f"selected_evidence:\n{json.dumps(evidence_view, ensure_ascii=False, indent=2)}\n\n"
+        f"selected_evidence:\n{json.dumps(selected_evidence_view, ensure_ascii=False, indent=2)}\n\n"
+        f"reference_evidence:\n{json.dumps(reference_evidence_view, ensure_ascii=False, indent=2)}\n\n"
         f"output_schema:\n{json.dumps(schema, ensure_ascii=False, indent=2)}"
     )
     return [

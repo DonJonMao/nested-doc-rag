@@ -46,6 +46,9 @@ class EvidenceBundle:
     reason: str
     conflict_detected: bool = False
     answer_status_hint: str = "answered"
+    support_level: str = "direct"
+    directness_reason: str = ""
+    retrieval_layers_seen: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -57,6 +60,9 @@ class EvidenceBundle:
             "reason": self.reason,
             "conflict_detected": self.conflict_detected,
             "answer_status_hint": self.answer_status_hint,
+            "support_level": self.support_level,
+            "directness_reason": self.directness_reason,
+            "retrieval_layers_seen": self.retrieval_layers_seen,
         }
 
 
@@ -141,6 +147,8 @@ class RunState:
     fields_failed: int = 0
     started_at: str = ""
     finished_at: str | None = None
+    resumed_count: int = 0
+    skipped_completed_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -153,6 +161,8 @@ class RunState:
             "fields_failed": self.fields_failed,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "resumed_count": self.resumed_count,
+            "skipped_completed_count": self.skipped_completed_count,
         }
 
 

@@ -120,6 +120,20 @@ machine:
 field -> query planning -> evidence retrieval -> evidence selection -> answer generation -> validation -> one-shot repair -> human review -> writeback
 ```
 
+FieldFillingAgent v1.2 adds:
+
+- Step 15-style layered Qdrant retrieval for real backend runs.
+- Selected/reference evidence channels.
+- Direct evidence vs. reference clue policy.
+- `partial_clue` output with `reference_chunk_ids` and `reference_source_documents`.
+- Generation gating: LLM generation only runs when direct selected evidence exists.
+- One-shot repair, field-level checkpoint/resume, trace, and review queue.
+
+Evidence channels:
+
+- Selected evidence can support `answered` and can be cited in `source_chunk_ids`.
+- Reference evidence can support `partial_clue`, cannot support `answered`, and is written to `reference_chunk_ids` / `reference_source_documents`.
+
 ### Two execution modes
 
 Offline mini mode uses the bundled mini corpus plus the deterministic generator.
@@ -148,11 +162,15 @@ python -m nested_doc_rag.cli run-agent \
   --config config/local.yaml \
   --fields artifacts/form/form_fields.jsonl \
   --target-namespace xixian_4 \
+  --room-context "西咸4号楼 301机房" \
   --retrieval-backend qdrant \
+  --retrieval-plan layered \
   --generation-backend llm \
   --enable-rerank \
-  --template data/forms/survey_form.xlsx \
-  --out-dir artifacts/runs/real_qdrant_llm
+  --resume \
+  --checkpoint-every 1 \
+  --template data/forms/基地云机房信息调研表.xlsx \
+  --out-dir artifacts/runs/agent_v1_2_xixian4
 ```
 
 The LLM sees only selected direct evidence. `no_evidence`, `clue_only`, and
@@ -166,6 +184,7 @@ Outputs:
 - `trace.md`
 - `review_items.jsonl`
 - `run_summary.md`
+- checkpoint/resume sidecars: `predictions.checkpoint.jsonl`, `trace.checkpoint.jsonl`, `review_items.checkpoint.jsonl`, `run_state.json`
 
 Legacy wrappers are still available when a migrated numbered step is needed:
 

@@ -10,7 +10,7 @@ from nested_doc_rag.embedding import CurlJsonClient, RerankClient
 from nested_doc_rag.retrieval import QdrantRetriever, rerank_hits
 from nested_doc_rag.schemas.eval import FieldGold, FieldPrediction
 
-from .policies import make_prediction_from_evidence, retrieve_from_mini_corpus
+from .policies import make_prediction_from_evidence, reference_snippets, reference_source_documents, retrieve_from_mini_corpus
 from .prompts import build_field_answer_messages
 from .state import EvidenceBundle, QueryPlan
 
@@ -36,6 +36,7 @@ class AnswerGenerator(Protocol):
 
 class MiniCorpusRetriever:
     backend_name = "mini"
+    retrieval_plan = "flat"
 
     def __init__(self, corpus: list[dict[str, Any]]):
         self.corpus = corpus
@@ -56,6 +57,7 @@ class MiniCorpusRetriever:
 
 class QdrantEvidenceRetriever:
     backend_name = "qdrant"
+    retrieval_plan = "flat"
 
     def __init__(
         self,
@@ -134,6 +136,114 @@ class QdrantEvidenceRetriever:
         return hits
 
 
+class LayeredQdrantEvidenceRetriever:
+    backend_name = "qdrant"
+    retrieval_plan = "layered"
+
+    def __init__(
+        self,
+        *,
+        qdrant_retriever: QdrantRetriever,
+        layered_plan: list[dict[str, Any]],
+        global_namespace: str = "global",
+        enable_rerank: bool = False,
+        rerank_client: RerankClient | None = None,
+        vector_top_k: int = 20,
+        rerank_top_n: int = 8,
+        max_reference_chunks: int = 5,
+    ):
+        self.qdrant_retriever = qdrant_retriever
+        self.layered_plan = layered_plan
+        self.global_namespace = global_namespace
+        self.enable_rerank = enable_rerank
+        self.rerank_client = rerank_client
+        self.vector_top_k = vector_top_k
+        self.rerank_top_n = rerank_top_n
+        self.max_reference_chunks = max_reference_chunks
+        self.last_metadata: dict[str, Any] = {}
+
+    def retrieve(self, query_plan: QueryPlan, field: FieldGold) -> list[dict[str, Any]]:
+        del field
+        started = time.perf_counter()
+        queries = list(dict.fromkeys(item for item in [query_plan.primary_query, *query_plan.fallback_queries] if item))
+        hits: list[dict[str, Any]] = []
+        vector_hit_count = 0
+        namespaces_queried: list[str] = []
+        layer_counts: dict[str, int] = {}
+        fallback_used = False
+
+        for query_index, query in enumerate(queries):
+            query_hits: list[dict[str, Any]] = []
+            for layer_priority, spec in enumerate(self.layered_plan, 1):
+                layer_name = str(spec.get("layer_name") or f"layer_{layer_priority}")
+                namespaces = self.layer_namespaces(spec, query_plan)
+                if any(namespace != query_plan.target_namespace for namespace in namespaces):
+                    fallback_used = True
+                namespaces_queried.extend(namespaces)
+                raw_hits = self.qdrant_retriever.search(
+                    query,
+                    namespaces=namespaces,
+                    layers=[str(item) for item in spec.get("corpus_layers") or DEFAULT_QUERY_LAYERS],
+                    source_types=[str(item) for item in spec.get("source_types") or []] or None,
+                    top_k=int(spec.get("vector_top_k") or self.vector_top_k),
+                )
+                vector_hit_count += len(raw_hits)
+                normalized = [
+                    annotate_layer_hit(
+                        normalize_hit(hit),
+                        layer_name=layer_name,
+                        layer_priority=layer_priority,
+                        layer_rank=rank,
+                        query_used=query,
+                    )
+                    for rank, hit in enumerate(raw_hits, 1)
+                ]
+                if self.enable_rerank and self.rerank_client and normalized:
+                    normalized = rerank_hits(
+                        query,
+                        normalized,
+                        int(spec.get("rerank_top_n") or self.rerank_top_n),
+                        self.rerank_client,
+                    )
+                    for rank, hit in enumerate(normalized, 1):
+                        hit["layer_rank"] = rank
+                        hit["layer_score"] = hit.get("rerank_score") or hit.get("layer_score") or hit.get("vector_score") or hit.get("score")
+                layer_counts[layer_name] = layer_counts.get(layer_name, 0) + len(normalized)
+                query_hits.extend(normalized)
+            hits.extend(query_hits)
+            if query_index == 0 and query_hits:
+                break
+
+        deduped = dedupe_hits(hits)
+        for final_rank, hit in enumerate(deduped, 1):
+            hit["final_rank"] = final_rank
+        self.last_metadata = {
+            "retrieval_backend": self.backend_name,
+            "retrieval_plan": "layered",
+            "hit_count": len(deduped),
+            "qdrant_hit_count": vector_hit_count,
+            "rerank_enabled": self.enable_rerank,
+            "rerank_top_n": self.rerank_top_n,
+            "fallback_used": fallback_used,
+            "namespaces_queried": sorted(set(namespaces_queried)),
+            "layer_counts": layer_counts,
+            "latency_ms": round((time.perf_counter() - started) * 1000, 3),
+            "collection_name": getattr(self.qdrant_retriever, "collection_name", ""),
+            "max_reference_chunks": self.max_reference_chunks,
+        }
+        return deduped
+
+    def layer_namespaces(self, spec: dict[str, Any], query_plan: QueryPlan) -> list[str]:
+        namespace_spec = spec.get("namespaces") or "target"
+        if namespace_spec == "target":
+            return [query_plan.target_namespace]
+        if namespace_spec == "global":
+            return [self.global_namespace]
+        if isinstance(namespace_spec, list):
+            return [query_plan.target_namespace if item == "target" else self.global_namespace if item == "global" else str(item) for item in namespace_spec]
+        return [str(namespace_spec)]
+
+
 class DeterministicAnswerGenerator:
     backend_name = "deterministic"
     chat_model = ""
@@ -186,6 +296,7 @@ class LLMAnswerGenerator:
 
         started = time.perf_counter()
         selected_chunk_ids = chunk_ids(evidence_bundle.selected_chunks)
+        reference_chunk_ids = chunk_ids(evidence_bundle.reference_chunks)
         try:
             response = self.http.post_json(
                 self.chat_endpoint,
@@ -202,6 +313,7 @@ class LLMAnswerGenerator:
             return generation_error_prediction(field, str(exc), self.chat_model, selected_chunk_ids)
 
         valid_sources, invalid_sources = validate_llm_sources(parsed.get("source_chunk_ids") or [], selected_chunk_ids)
+        valid_references, invalid_references = validate_llm_sources(parsed.get("reference_chunk_ids") or [], reference_chunk_ids)
         answer_status = str(parsed.get("answer_status") or "not_found")
         if answer_status not in {"answered", "partial_clue", "not_found", "conflict_unresolved"}:
             answer_status = "conflict_unresolved"
@@ -210,13 +322,21 @@ class LLMAnswerGenerator:
             "chat_model": self.chat_model,
             "llm_reason": parsed.get("reason") or "",
             "selected_chunk_ids": selected_chunk_ids,
+            "reference_chunk_ids": reference_chunk_ids,
             "generation_latency_ms": round((time.perf_counter() - started) * 1000, 3),
         }
         if invalid_sources:
             validation["invalid_source_reference"] = invalid_sources
+        if invalid_references:
+            validation["invalid_reference_chunk_ids"] = invalid_references
         if answer_status == "answered" and not valid_sources:
             answer_status = "partial_clue"
             validation["missing_evidence"] = True
+            valid_references = list(dict.fromkeys([*valid_references, *reference_chunk_ids]))
+        if answer_status == "answered":
+            valid_references = reference_chunk_ids
+        elif answer_status == "partial_clue" and not valid_references:
+            valid_references = reference_chunk_ids
         return FieldPrediction(
             field_id=field.field_id,
             row_index=field.row_index,
@@ -226,6 +346,9 @@ class LLMAnswerGenerator:
             confidence=min(float(parsed.get("confidence") or 0.0), 0.95),
             source_chunk_ids=valid_sources if answer_status == "answered" else [],
             evidence_attachment_ids=valid_attachment_ids(parsed.get("evidence_attachment_ids") or [], evidence_bundle.selected_chunks),
+            reference_chunk_ids=valid_references,
+            reference_source_documents=reference_source_documents(evidence_bundle.reference_chunks),
+            reference_snippets=reference_snippets(evidence_bundle.reference_chunks),
             validation=validation,
             method_name="field_filling_agent_llm",
         )
@@ -246,11 +369,32 @@ def normalize_hit(hit: dict[str, Any]) -> dict[str, Any]:
         "text_for_embedding": text_for_embedding,
         "raw_text": raw_text,
         "score": hit.get("score", hit.get("vector_score")),
+        "vector_score": hit.get("vector_score", hit.get("score")),
         "rerank_score": hit.get("rerank_score"),
         "source": payload.get("source") or hit.get("source") or {},
+        "source_anchor": payload.get("source_anchor") or payload.get("anchor") or hit.get("source_anchor") or hit.get("anchor") or payload.get("source") or hit.get("source") or {},
         "anchor": payload.get("anchor") or hit.get("anchor"),
         "file_name": payload.get("file_name") or hit.get("file_name"),
         "evidence_attachment_ids": payload.get("evidence_attachment_ids") or payload.get("proof_attachment_ids") or hit.get("evidence_attachment_ids") or [],
+    }
+
+
+def annotate_layer_hit(
+    hit: dict[str, Any],
+    *,
+    layer_name: str,
+    layer_priority: int,
+    layer_rank: int,
+    query_used: str,
+) -> dict[str, Any]:
+    layer_score = hit.get("rerank_score") or hit.get("vector_score") or hit.get("score") or 0.0
+    return {
+        **hit,
+        "retrieval_layer": layer_name,
+        "layer_priority": layer_priority,
+        "layer_rank": layer_rank,
+        "layer_score": layer_score,
+        "query_used": query_used,
     }
 
 
@@ -297,7 +441,13 @@ def parse_json_object(content: str) -> dict[str, Any]:
     return value
 
 
-def validate_llm_sources(raw_sources: list[Any], selected_chunk_ids: list[str]) -> tuple[list[str], list[str]]:
+def validate_llm_sources(raw_sources: Any, selected_chunk_ids: list[str]) -> tuple[list[str], list[str]]:
+    if raw_sources is None:
+        raw_sources = []
+    elif isinstance(raw_sources, str):
+        raw_sources = [raw_sources]
+    elif not isinstance(raw_sources, list):
+        raw_sources = [raw_sources]
     selected = set(selected_chunk_ids)
     valid: list[str] = []
     invalid: list[str] = []

@@ -96,8 +96,12 @@ class RetrievalConfig:
     global_namespace: str = "global"
     query_layers: list[str] = field(default_factory=lambda: ["fact", "evidence", "intro_doc", "raw_text", "meta"])
     retrieval_mode: str = "flat"
+    retrieval_plan: str = "layered"
     vector_top_k: int = 40
     rerank_top_n: int = 10
+    layer_top_k: int = 8
+    layer_rerank_top_n: int = 5
+    max_reference_chunks: int = 5
     layered_plan: list[dict[str, Any]] = field(default_factory=_default_layered_plan)
 
 
@@ -256,8 +260,12 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         global_namespace=str(retrieval_data.get("global_namespace", "global")),
         query_layers=[str(item) for item in _as_list(retrieval_data.get("query_layers"))],
         retrieval_mode=str(retrieval_data.get("retrieval_mode", "flat")),
+        retrieval_plan=str(retrieval_data.get("retrieval_plan", retrieval_data.get("retrieval_mode", "layered"))),
         vector_top_k=_as_int(retrieval_data.get("vector_top_k", 40)),
         rerank_top_n=_as_int(retrieval_data.get("rerank_top_n", 10)),
+        layer_top_k=_as_int(retrieval_data.get("layer_top_k", 8)),
+        layer_rerank_top_n=_as_int(retrieval_data.get("layer_rerank_top_n", 5)),
+        max_reference_chunks=_as_int(retrieval_data.get("max_reference_chunks", 5)),
         layered_plan=copy.deepcopy(_as_list(retrieval_data.get("layered_plan"))),
     )
     evaluation_data = _section(data, "evaluation", EvaluationConfig())
@@ -363,6 +371,7 @@ def _env_aliases() -> dict[str, tuple[str, str]]:
         "NDR_QDRANT_COLLECTION": ("qdrant", "collection_name"),
         "TARGET_NAMESPACE": ("retrieval", "target_namespace"),
         "RETRIEVAL_MODE": ("retrieval", "retrieval_mode"),
+        "NDR_RETRIEVAL_PLAN": ("retrieval", "retrieval_plan"),
         "NDR_AGENT_RETRIEVAL_BACKEND": ("agent", "retrieval_backend"),
         "NDR_AGENT_GENERATION_BACKEND": ("agent", "generation_backend"),
         "NDR_AGENT_ENABLE_RERANK": ("agent", "enable_rerank"),

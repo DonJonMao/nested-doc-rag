@@ -5,6 +5,7 @@ from dataclasses import replace
 from typing import Any
 
 from nested_doc_rag.evaluation.field_metrics import normalize_bool, normalize_enum, normalize_text, validate_constraints
+from nested_doc_rag.io import display_text
 from nested_doc_rag.schemas.eval import FieldGold, FieldPrediction
 
 from .state import EvidenceBundle, FieldState, QueryPlan, RepairDecision, ValidationResult
@@ -13,6 +14,14 @@ PREFERRED_SOURCE_TYPES = ["main_excel_capability", "embedded_word_table", "intro
 UNCERTAIN_VALUES = {"可能", "待复核", "不确定", "未知", "待确认", "需确认"}
 ANSWERED = "answered"
 ABSTAIN_STATUSES = {"partial_clue", "not_found", "conflict_unresolved"}
+MAX_REFERENCE_CHUNKS = 5
+
+
+class EvidenceSupportLevel:
+    DIRECT = "direct"
+    REFERENCE = "reference"
+    NONE = "none"
+    CONFLICT = "conflict"
 
 
 def build_query_plan(
@@ -37,7 +46,7 @@ def build_query_plan(
         fallback_namespaces=[global_namespace],
         preferred_source_types=PREFERRED_SOURCE_TYPES.copy(),
         required_evidence=field.must_have_evidence,
-        intent=intent_for_question(field.question_text),
+        intent=classify_field_intent(field),
         reason="deterministic keyword query plan",
     )
 
@@ -67,6 +76,7 @@ def retrieve_from_mini_corpus(query_plan: QueryPlan, corpus: list[dict[str, Any]
 
 
 def select_evidence(candidates: list[dict[str, Any]], field: FieldGold, query_plan: QueryPlan) -> EvidenceBundle:
+    layers_seen = retrieval_layers(candidates, query_plan)
     if not candidates:
         return EvidenceBundle(
             field_id=field.field_id,
@@ -76,59 +86,93 @@ def select_evidence(candidates: list[dict[str, Any]], field: FieldGold, query_pl
             decision="no_evidence",
             reason="no candidate chunks matched the field",
             answer_status_hint="not_found",
+            support_level=EvidenceSupportLevel.NONE,
+            directness_reason="no candidates",
+            retrieval_layers_seen=layers_seen,
         )
 
-    target_chunks = [chunk for chunk in candidates if chunk.get("namespace") == query_plan.target_namespace]
-    global_chunks = [chunk for chunk in candidates if chunk.get("namespace") != query_plan.target_namespace]
-    if not target_chunks:
-        return EvidenceBundle(
-            field_id=field.field_id,
-            selected_chunks=[],
-            reference_chunks=global_chunks,
-            ignored_chunks=[],
-            decision="clue_only",
-            reason="only global/reference evidence was found; global evidence cannot be filled as direct answer",
-            answer_status_hint="partial_clue",
-        )
+    direct_candidates: list[dict[str, Any]] = []
+    reference_candidates: list[dict[str, Any]] = []
+    ignored_chunks: list[dict[str, Any]] = []
+    directness_reasons: list[str] = []
+    for chunk in candidates:
+        support_level, reason = classify_evidence_support(field, chunk, query_plan)
+        annotated = {**chunk, "support_level": support_level, "directness_reason": reason}
+        if support_level == EvidenceSupportLevel.DIRECT:
+            direct_candidates.append(annotated)
+        elif support_level == EvidenceSupportLevel.REFERENCE:
+            reference_candidates.append(annotated)
+        else:
+            ignored_chunks.append(annotated)
+        if reason:
+            directness_reasons.append(f"{chunk.get('chunk_id')}: {reason}")
 
-    target_chunks = sorted(target_chunks, key=lambda chunk: (source_priority(chunk, query_plan), -float(chunk.get("deterministic_score") or 0)))
-    conflict = same_priority_conflict(target_chunks, query_plan)
+    direct_candidates = sorted(direct_candidates, key=lambda chunk: ranking_key(chunk, query_plan))
+    reference_candidates = sorted(reference_candidates, key=lambda chunk: ranking_key(chunk, query_plan))
+    ignored_chunks = sorted(ignored_chunks, key=lambda chunk: ranking_key(chunk, query_plan))
+
+    conflict = same_priority_conflict(direct_candidates, query_plan)
     if conflict:
         return EvidenceBundle(
             field_id=field.field_id,
             selected_chunks=[],
-            reference_chunks=conflict,
-            ignored_chunks=[chunk for chunk in candidates if chunk not in conflict],
+            reference_chunks=dedupe_chunks([*conflict, *reference_candidates])[:MAX_REFERENCE_CHUNKS],
+            ignored_chunks=[chunk for chunk in candidates if chunk.get("chunk_id") not in set(chunk_ids(conflict))],
             decision="conflict_unresolved",
-            reason="same-priority target evidence has conflicting answer values",
+            reason="same-priority direct evidence has conflicting answer values",
             conflict_detected=True,
             answer_status_hint="conflict_unresolved",
+            support_level=EvidenceSupportLevel.CONFLICT,
+            directness_reason="same-priority direct answer_value conflict",
+            retrieval_layers_seen=layers_seen,
         )
 
-    selected = choose_target_direct_chunk(target_chunks, field, query_plan)
-    if selected is None:
+    selected = choose_target_direct_chunk(direct_candidates, field, query_plan)
+    if selected is not None:
+        suppressed = [chunk for chunk in direct_candidates if chunk.get("chunk_id") != selected.get("chunk_id")]
+        references = dedupe_chunks(reference_candidates)[:MAX_REFERENCE_CHUNKS]
+        ignored = dedupe_chunks([*suppressed, *ignored_chunks])
+        reason = "selected highest-priority direct evidence"
+        if is_uncertain_answer(next((chunk for chunk in candidates if chunk.get("source_type") == "main_excel_capability"), {})):
+            reason = "selected explicit embedded evidence because main table value was uncertain"
+        return EvidenceBundle(
+            field_id=field.field_id,
+            selected_chunks=[selected],
+            reference_chunks=references,
+            ignored_chunks=ignored,
+            decision="use_direct_evidence",
+            reason=reason,
+            answer_status_hint="answered",
+            support_level=EvidenceSupportLevel.DIRECT,
+            directness_reason=selected.get("directness_reason") or "; ".join(directness_reasons[:3]),
+            retrieval_layers_seen=layers_seen,
+        )
+
+    if reference_candidates:
         return EvidenceBundle(
             field_id=field.field_id,
             selected_chunks=[],
-            reference_chunks=target_chunks + global_chunks,
-            ignored_chunks=[],
-            decision="no_evidence",
-            reason="target candidates did not contain a usable direct answer",
-            answer_status_hint="not_found",
+            reference_chunks=dedupe_chunks(reference_candidates)[:MAX_REFERENCE_CHUNKS],
+            ignored_chunks=ignored_chunks,
+            decision="clue_only",
+            reason="related evidence was found but it is not direct enough to fill the field automatically",
+            answer_status_hint="partial_clue",
+            support_level=EvidenceSupportLevel.REFERENCE,
+            directness_reason="; ".join(directness_reasons[:5]),
+            retrieval_layers_seen=layers_seen,
         )
 
-    ignored = [chunk for chunk in candidates if chunk is not selected]
-    reason = "selected highest-priority target namespace evidence"
-    if is_uncertain_answer(next((chunk for chunk in target_chunks if chunk.get("source_type") == "main_excel_capability"), {})):
-        reason = "selected explicit embedded evidence because main table value was uncertain"
     return EvidenceBundle(
         field_id=field.field_id,
-        selected_chunks=[selected],
+        selected_chunks=[],
         reference_chunks=[],
-        ignored_chunks=ignored,
-        decision="use_direct_evidence",
-        reason=reason,
-        answer_status_hint="answered",
+        ignored_chunks=ignored_chunks,
+        decision="no_evidence",
+        reason="candidate chunks did not contain usable direct or reference evidence",
+        answer_status_hint="not_found",
+        support_level=EvidenceSupportLevel.NONE,
+        directness_reason="; ".join(directness_reasons[:5]),
+        retrieval_layers_seen=layers_seen,
     )
 
 
@@ -164,22 +208,14 @@ def make_prediction_from_evidence(
             confidence=0.9,
             source_chunk_ids=chunk_source_ids(bundle.selected_chunks),
             evidence_attachment_ids=chunk_attachment_ids(bundle.selected_chunks),
+            reference_chunk_ids=chunk_ids(bundle.reference_chunks),
+            reference_source_documents=reference_source_documents(bundle.reference_chunks),
+            reference_snippets=reference_snippets(bundle.reference_chunks),
             validation=validation,
             method_name=method_name,
         )
     if bundle.decision == "clue_only":
-        return FieldPrediction(
-            field_id=field.field_id,
-            row_index=field.row_index,
-            target_cell=field.target_cell,
-            answer_value="未找到",
-            answer_status="partial_clue",
-            confidence=0.4,
-            source_chunk_ids=[],
-            evidence_attachment_ids=[],
-            validation={**validation_base, "reference_chunk_ids": chunk_ids(bundle.reference_chunks)},
-            method_name=method_name,
-        )
+        return make_partial_clue_prediction(field, bundle, method_name="field_filling_agent_reference")
     if bundle.decision == "conflict_unresolved":
         return FieldPrediction(
             field_id=field.field_id,
@@ -190,6 +226,9 @@ def make_prediction_from_evidence(
             confidence=0.2,
             source_chunk_ids=[],
             evidence_attachment_ids=[],
+            reference_chunk_ids=chunk_ids(bundle.reference_chunks),
+            reference_source_documents=reference_source_documents(bundle.reference_chunks),
+            reference_snippets=reference_snippets(bundle.reference_chunks),
             validation={**validation_base, "conflict_chunk_ids": chunk_ids(bundle.reference_chunks)},
             method_name=method_name,
         )
@@ -203,6 +242,37 @@ def make_prediction_from_evidence(
         source_chunk_ids=[],
         evidence_attachment_ids=[],
         validation=validation_base,
+        method_name=method_name,
+    )
+
+
+def make_partial_clue_prediction(
+    field: FieldGold,
+    bundle: EvidenceBundle,
+    method_name: str = "field_filling_agent_reference",
+) -> FieldPrediction:
+    reference_ids = chunk_ids(bundle.reference_chunks)
+    return FieldPrediction(
+        field_id=field.field_id,
+        row_index=field.row_index,
+        target_cell=field.target_cell,
+        answer_value="未找到可直接填写的证据；检索到以下相关线索，请人工复核。",
+        answer_status="partial_clue",
+        confidence=0.45 if reference_ids else 0.35,
+        source_chunk_ids=[],
+        evidence_attachment_ids=[],
+        reference_chunk_ids=reference_ids,
+        reference_source_documents=reference_source_documents(bundle.reference_chunks),
+        reference_snippets=reference_snippets(bundle.reference_chunks),
+        validation={
+            "evidence_decision": "clue_only",
+            "evidence_reason": bundle.reason,
+            "selected_chunk_ids": [],
+            "reference_chunk_ids": reference_ids,
+            "needs_human_review": True,
+            "support_level": bundle.support_level,
+            "directness_reason": bundle.directness_reason,
+        },
         method_name=method_name,
     )
 
@@ -292,18 +362,286 @@ def aliases_for_question(question_text: str) -> list[str]:
 
 
 def intent_for_question(question_text: str) -> str:
+    return classify_field_intent_text(question_text)
+
+
+def classify_field_intent(field: FieldGold) -> str:
+    return classify_field_intent_text(field.question_text)
+
+
+def classify_field_intent_text(question_text: str) -> str:
     text = question_text or ""
-    if any(key in text for key in ["市电", "供电", "双路"]):
-        return "power_supply"
+    upper = text.upper()
+    if any(key in text for key in ["液冷", "冷板", "CDU", "冷却液"]):
+        return "liquid_cooling"
+    if "UPS" in upper or any(key in text for key in ["电池", "不间断电源"]):
+        return "ups"
+    if any(key in text for key in ["油机", "柴油", "发电", "市电", "供电", "双路", "AB路", "A路", "B路", "空开", "容量"]):
+        return "power_capacity"
+    if any(key in text for key in ["空调", "制冷", "冷量", "冷却"]):
+        return "cooling"
+    if any(key in text for key in ["机柜", "U位", "尺寸", "承重"]):
+        return "cabinet"
+    if any(key in text for key in ["网络", "带宽", "专线", "交换机", "路由"]):
+        return "network"
     if "UPS" in text.upper():
         return "ups"
-    if "门禁" in text:
+    if any(key in text for key in ["门禁", "出入", "进出", "权限"]):
         return "access_control"
-    if "机房名称" in text:
+    if any(key in text for key in ["拍照", "管理制度", "制度", "禁止", "审批", "流程"]):
+        return "security_policy"
+    if any(key in text for key in ["巡检", "检查", "验收"]):
+        return "inspection_report"
+    if any(key in text for key in ["维护", "检修", "保养", "归档"]):
+        return "maintenance_record"
+    if any(key in text for key in ["报告", "记录", "附件", "证明", "测试"]):
+        return "attachment_report"
+    if any(key in text for key in ["机房名称", "楼", "房间", "地址", "位置", "名称"]):
         return "room_identity"
-    if any(key in text for key in ["日期", "巡检"]):
-        return "inspection"
+    if any(key in text for key in ["日期", "时间"]):
+        return "inspection_report"
     return "general"
+
+
+def classify_evidence_support(
+    field: FieldGold,
+    chunk: dict[str, Any],
+    query_plan: QueryPlan,
+) -> tuple[str, str]:
+    text = chunk_text(chunk)
+    answer_text = normalize_text(chunk.get("answer_value"))
+    layer = infer_retrieval_layer(chunk, query_plan)
+    namespace = str(chunk.get("namespace") or "")
+    source_type = str(chunk.get("source_type") or "")
+    intent = query_plan.intent or classify_field_intent(field)
+    is_target = namespace == query_plan.target_namespace
+    is_global = namespace in set(query_plan.fallback_namespaces) or namespace != query_plan.target_namespace
+    relevant = field_relevance(field, text, answer_text)
+    explicit_negative = detect_negative_or_not_applicable(" ".join([answer_text, text]))
+
+    if intent == "liquid_cooling" and not contains_liquid_cooling_term(" ".join([text, answer_text])):
+        return EvidenceSupportLevel.NONE, "liquid cooling field but evidence has no liquid-cooling term"
+
+    if is_uncertain_answer(chunk):
+        return EvidenceSupportLevel.REFERENCE, "answer is uncertain and requires review"
+
+    if chunk_has_answer_value(chunk) and usable_answer(chunk) and chunk.get("field_id") == field.field_id and is_target:
+        return EvidenceSupportLevel.DIRECT, "field_id-matched target answer_value"
+
+    if explicit_negative and is_negative_capable_field(field, intent):
+        if is_target and layer in {"target_main_fact", "target_structured_detail"}:
+            return EvidenceSupportLevel.DIRECT, f"direct target evidence explicitly says {explicit_negative}"
+        if policy_intent_can_use_global(intent) and policy_text_is_direct(text, field):
+            return EvidenceSupportLevel.DIRECT, f"policy evidence explicitly says {explicit_negative}"
+
+    if is_target:
+        if layer in {"target_main_fact", "target_structured_detail"}:
+            if chunk_has_answer_value(chunk) and usable_answer(chunk):
+                return EvidenceSupportLevel.DIRECT, "target structured answer_value"
+            if relevant and source_type in {"main_excel_capability", "embedded_word_table"}:
+                return EvidenceSupportLevel.DIRECT, "target structured text matches field semantics"
+            if relevant:
+                return EvidenceSupportLevel.REFERENCE, "target structured evidence is relevant but not explicit enough"
+            return EvidenceSupportLevel.REFERENCE, "target structured evidence lacks clear field semantics"
+        if layer == "target_raw_detail":
+            if relevant and has_explicit_answer_signal(field, text):
+                return EvidenceSupportLevel.DIRECT, "target raw detail contains explicit field answer"
+            if relevant or source_type:
+                return EvidenceSupportLevel.REFERENCE, "target raw detail is related but not direct"
+            return EvidenceSupportLevel.NONE, "target raw detail is not relevant"
+        if relevant:
+            return EvidenceSupportLevel.REFERENCE, "target evidence is relevant but from low-priority layer"
+        return EvidenceSupportLevel.NONE, "target evidence is not relevant"
+
+    if is_global:
+        if policy_intent_can_use_global(intent) and policy_text_is_direct(text, field):
+            return EvidenceSupportLevel.DIRECT, "global policy/process evidence directly answers a policy field"
+        if relevant or answer_text:
+            return EvidenceSupportLevel.REFERENCE, "global evidence is a reference clue only"
+        return EvidenceSupportLevel.NONE, "global evidence is not relevant"
+
+    return EvidenceSupportLevel.NONE, "unsupported evidence namespace"
+
+
+def detect_negative_or_not_applicable(text: str) -> str | None:
+    normalized = normalize_enum(text)
+    phrase_patterns = [
+        "不涉及",
+        "无法提供",
+        "未配置",
+        "未建设",
+        "不支持",
+        "不具备",
+        "暂无",
+        "没有",
+    ]
+    for pattern in phrase_patterns:
+        if normalize_enum(pattern) in normalized:
+            return pattern
+    single_negative = re.search(r"(?:^|[:：,，;；、\s])(无|否)(?:$|[。；;，,\s])", str(text))
+    if single_negative:
+        return single_negative.group(1)
+    if normalized in {"无", "否", "na", "n/a"}:
+        return str(text).strip()
+    if re.search(r"\bN/?A\b", str(text), re.IGNORECASE):
+        return "N/A"
+    return None
+
+
+def infer_retrieval_layer(chunk: dict[str, Any], query_plan: QueryPlan) -> str:
+    layer = str(chunk.get("retrieval_layer") or "")
+    if layer:
+        return layer
+    namespace = str(chunk.get("namespace") or "")
+    source_type = str(chunk.get("source_type") or "")
+    corpus_layer = str(chunk.get("corpus_layer") or "")
+    is_target = namespace == query_plan.target_namespace
+    if is_target and source_type == "main_excel_capability":
+        return "target_main_fact"
+    if is_target and source_type in {"embedded_word_table", "structured_detail", "detail_table"}:
+        return "target_structured_detail"
+    if is_target and (source_type in {"intro_doc_paragraph", "embedded_raw_segment", "raw paragraph", "detail"} or corpus_layer == "raw_text"):
+        return "target_raw_detail"
+    if not is_target and source_type in {"intro_doc_paragraph", "intro_doc_table_row"}:
+        return "global_intro"
+    if not is_target:
+        return "global_detail"
+    return "target_raw_detail"
+
+
+def field_relevance(field: FieldGold, text: str, answer_text: str = "") -> bool:
+    haystack = normalize_enum(" ".join([text, answer_text]))
+    if not haystack:
+        return False
+    question = field.question_text or ""
+    if normalize_enum(question) and normalize_enum(question) in haystack:
+        return True
+    important_terms = field_terms(field)
+    if not important_terms:
+        return False
+    matches = sum(1 for term in important_terms if normalize_enum(term) in haystack)
+    return matches >= 1 if len(important_terms) <= 2 else matches >= 2
+
+
+def field_terms(field: FieldGold) -> list[str]:
+    question = field.question_text or ""
+    terms: list[str] = []
+    keyword_groups = [
+        ["液冷", "冷板", "CDU", "液冷机柜"],
+        ["UPS", "电池", "不间断电源"],
+        ["油机", "柴油", "发电"],
+        ["市电", "供电", "双路", "AB路", "空开"],
+        ["门禁", "出入", "进出"],
+        ["拍照", "禁止", "制度", "审批", "管理"],
+        ["巡检", "检查", "报告", "记录", "归档", "测试"],
+        ["机柜", "U位", "尺寸", "承重"],
+        ["网络", "带宽", "专线", "交换机"],
+        ["机房", "名称", "位置", "地址", "楼"],
+    ]
+    for group in keyword_groups:
+        if any(term.upper() in question.upper() for term in group):
+            terms.extend(group)
+    tokens = [item for item in re.split(r"[\s,，;；:：/()（）？?、]+", question) if len(item) >= 2]
+    terms.extend(tokens)
+    return list(dict.fromkeys(term for term in terms if term))
+
+
+def contains_liquid_cooling_term(text: str) -> bool:
+    return any(term in text for term in ["液冷", "冷板", "CDU", "液冷机柜", "冷却液"])
+
+
+def is_negative_capable_field(field: FieldGold, intent: str) -> bool:
+    if normalize_enum(field.field_type) in {"bool", "enum"}:
+        return True
+    text = field.question_text or ""
+    return intent in {
+        "power_capacity",
+        "ups",
+        "cooling",
+        "liquid_cooling",
+        "cabinet",
+        "network",
+        "access_control",
+        "security_policy",
+        "inspection_report",
+        "maintenance_record",
+        "attachment_report",
+        "general",
+    } or any(key in text for key in ["是否", "有无", "配置", "提供", "支持", "涉及", "报告", "记录", "能力"])
+
+
+def policy_intent_can_use_global(intent: str) -> bool:
+    return intent in {"security_policy", "access_control", "inspection_report", "maintenance_record", "attachment_report"}
+
+
+def policy_text_is_direct(text: str, field: FieldGold) -> bool:
+    if not text:
+        return False
+    policy_terms = ["制度", "流程", "禁止", "审批", "管理", "记录", "报告", "归档", "测试", "巡检", "维护", "检修", "出入", "门禁", "拍照"]
+    return any(term in text for term in policy_terms) and field_relevance(field, text)
+
+
+def has_explicit_answer_signal(field: FieldGold, text: str) -> bool:
+    if not text:
+        return False
+    if chunk_value_like_signal(text):
+        return True
+    if normalize_enum(field.field_type) == "bool" and normalize_bool(text) is not None:
+        return True
+    return bool(detect_negative_or_not_applicable(text))
+
+
+def chunk_value_like_signal(text: str) -> bool:
+    return bool(re.search(r"[:：]\s*[\w一-龥]+", text) or re.search(r"\d+(?:\.\d+)?\s*(?:kW|KW|千瓦|U|台|个|A|V|℃|平米|平方米)", text))
+
+
+def chunk_text(chunk: dict[str, Any]) -> str:
+    return str(chunk.get("raw_text") or chunk.get("text_for_embedding") or chunk.get("text") or chunk.get("content") or "")
+
+
+def retrieval_layers(chunks: list[dict[str, Any]], query_plan: QueryPlan) -> list[str]:
+    return list(dict.fromkeys(infer_retrieval_layer(chunk, query_plan) for chunk in chunks))
+
+
+def ranking_key(chunk: dict[str, Any], query_plan: QueryPlan) -> tuple[int, int, float, float, int]:
+    layer_priority = int(chunk.get("layer_priority") or chunk.get("layer_rank") or source_priority(chunk, query_plan))
+    score = float(chunk.get("rerank_score") or chunk.get("layer_score") or chunk.get("vector_score") or chunk.get("score") or chunk.get("deterministic_score") or 0)
+    retrieval_index = int(chunk.get("_retrieval_index") or 0)
+    return (source_priority(chunk, query_plan), layer_priority, -score, -float(chunk.get("deterministic_score") or 0), retrieval_index)
+
+
+def dedupe_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, chunk in enumerate(chunks):
+        key = str(chunk.get("chunk_id") or f"chunk_index_{index}")
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(chunk)
+    return output
+
+
+def reference_source_documents(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    documents: list[dict[str, Any]] = []
+    for chunk in chunks:
+        text = chunk_text(chunk)
+        documents.append(
+            {
+                "chunk_id": chunk.get("chunk_id"),
+                "namespace": chunk.get("namespace"),
+                "source_type": chunk.get("source_type"),
+                "corpus_layer": chunk.get("corpus_layer"),
+                "retrieval_layer": chunk.get("retrieval_layer"),
+                "source_anchor": chunk.get("source_anchor") or chunk.get("anchor") or chunk.get("source") or {},
+                "text_preview": display_text(text, 180),
+            }
+        )
+    return documents
+
+
+def reference_snippets(chunks: list[dict[str, Any]]) -> list[str]:
+    return [display_text(chunk_text(chunk), 180) for chunk in chunks if chunk_text(chunk)]
 
 
 def coarse_question_match(question_text: str, chunk: dict[str, Any]) -> bool:

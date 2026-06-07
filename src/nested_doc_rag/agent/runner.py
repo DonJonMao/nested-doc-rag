@@ -45,6 +45,9 @@ class FieldFillingAgent:
         retrieval_backend: str = "mini",
         generation_backend: str = "deterministic",
         enable_rerank: bool = False,
+        resume: bool = False,
+        checkpoint_every: int = 1,
+        checkpoint_path: Path | None = None,
     ):
         self.target_namespace = target_namespace
         self.corpus = corpus or []
@@ -59,6 +62,9 @@ class FieldFillingAgent:
         self.retrieval_backend = retrieval_backend
         self.generation_backend = generation_backend
         self.enable_rerank = enable_rerank
+        self.resume = resume
+        self.checkpoint_every = max(1, checkpoint_every)
+        self.checkpoint_path = checkpoint_path
         self.run_id = f"agent_{uuid4().hex[:12]}"
         self.trace = TraceRecorder(self.run_id, metadata=self.run_metadata())
         self.field_states: list[FieldState] = []
@@ -68,17 +74,37 @@ class FieldFillingAgent:
 
     def run(self, fields: list[FieldGold]) -> list[FieldPrediction]:
         self.out_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_predictions = self.load_checkpoint_predictions() if self.resume else {}
+        if self.resume:
+            self.load_checkpoint_sidecars()
+        skipped_completed_count = sum(1 for field in fields if field.field_id in checkpoint_predictions)
         run_state = RunState(
             run_id=self.run_id,
             target_namespace=self.target_namespace,
             out_dir=self.out_dir,
             fields_total=len(fields),
+            fields_completed=skipped_completed_count,
             started_at=now_iso(),
+            resumed_count=1 if self.resume and checkpoint_predictions else 0,
+            skipped_completed_count=skipped_completed_count,
         )
         self.trace.record(None, "run_started", self.run_metadata())
-        predictions: list[FieldPrediction] = []
+        if self.resume and checkpoint_predictions:
+            self.trace.record(
+                None,
+                "resume_started",
+                {
+                    "prediction_checkpoint": str(self.predictions_checkpoint_path()),
+                    "skipped_completed_count": skipped_completed_count,
+                    "completed_field_ids": sorted(checkpoint_predictions),
+                },
+            )
+        predictions_by_field_id: dict[str, FieldPrediction] = dict(checkpoint_predictions)
+        processed_since_checkpoint = 0
 
         for field in fields:
+            if field.field_id in checkpoint_predictions:
+                continue
             try:
                 prediction, state, human_review = self.process_field(field)
             except Exception as exc:  # noqa: BLE001 - keep one field failure from aborting the whole run
@@ -89,12 +115,18 @@ class FieldFillingAgent:
                 run_state.fields_human_review += 1
             run_state.fields_completed += 1
             self.field_states.append(state)
-            predictions.append(prediction)
+            predictions_by_field_id[field.field_id] = prediction
+            processed_since_checkpoint += 1
+            if processed_since_checkpoint >= self.checkpoint_every:
+                self.write_checkpoint(fields, predictions_by_field_id, run_state)
+                processed_since_checkpoint = 0
 
         run_state.finished_at = now_iso()
         self.trace.record(None, "run_completed", run_state.to_dict())
-        self.write_outputs(predictions, run_state)
-        return predictions
+        ordered_predictions = ordered_predictions_for_fields(fields, predictions_by_field_id)
+        self.write_checkpoint(fields, predictions_by_field_id, run_state)
+        self.write_outputs(ordered_predictions, run_state)
+        return ordered_predictions
 
     def process_field(self, field: FieldGold) -> tuple[FieldPrediction, FieldState, bool]:
         state = self.create_field_state(field)
@@ -140,6 +172,7 @@ class FieldFillingAgent:
         )
 
         generation_called = should_generate_answer(state.evidence_bundle)
+        generation_skip_reason = generation_skip_reason_for_bundle(state.evidence_bundle)
         generation_started = perf_counter_ms()
         if generation_called:
             state.draft_prediction = self.answer_generator.generate(
@@ -156,6 +189,7 @@ class FieldFillingAgent:
                 {
                     "generation_backend": self.generation_backend,
                     "generation_called": True,
+                    "generation_skip_reason": "direct_evidence_llm_called" if self.generation_backend == "llm" else "deterministic_generation",
                     "generation_latency_ms": generation_latency_ms,
                     "prediction": state.draft_prediction.to_dict(),
                 },
@@ -169,6 +203,7 @@ class FieldFillingAgent:
                 {
                     "generation_backend": self.generation_backend,
                     "generation_called": False,
+                    "generation_skip_reason": generation_skip_reason,
                     "reason": state.evidence_bundle.decision,
                     "prediction": state.draft_prediction.to_dict(),
                 },
@@ -259,6 +294,43 @@ class FieldFillingAgent:
             constraints=field.constraints,
         )
 
+    def load_checkpoint_predictions(self) -> dict[str, FieldPrediction]:
+        checkpoint = self.predictions_checkpoint_path()
+        if not checkpoint.exists():
+            return {}
+        predictions: dict[str, FieldPrediction] = {}
+        for record in read_jsonl(checkpoint):
+            prediction = FieldPrediction.from_dict(record)
+            predictions[prediction.field_id] = prediction
+        return predictions
+
+    def load_checkpoint_sidecars(self) -> None:
+        review_path = self.review_checkpoint_path()
+        if review_path.exists():
+            self.review_items = read_jsonl(review_path)
+        self.trace.load_jsonl(self.trace_checkpoint_path())
+
+    def write_checkpoint(
+        self,
+        fields: list[FieldGold],
+        predictions_by_field_id: dict[str, FieldPrediction],
+        run_state: RunState,
+    ) -> None:
+        predictions = ordered_predictions_for_fields(fields, predictions_by_field_id)
+        write_jsonl(self.predictions_checkpoint_path(), [prediction.to_dict() for prediction in predictions])
+        write_jsonl(self.review_checkpoint_path(), self.review_items)
+        self.trace.write_jsonl(self.trace_checkpoint_path())
+        write_json(self.out_dir / "run_state.json", run_state.to_dict())
+
+    def predictions_checkpoint_path(self) -> Path:
+        return self.checkpoint_path or self.out_dir / "predictions.checkpoint.jsonl"
+
+    def trace_checkpoint_path(self) -> Path:
+        return self.out_dir / "trace.checkpoint.jsonl"
+
+    def review_checkpoint_path(self) -> Path:
+        return self.out_dir / "review_items.checkpoint.jsonl"
+
     def write_outputs(self, predictions: list[FieldPrediction], run_state: RunState) -> None:
         predictions_path = self.out_dir / "predictions.jsonl"
         trace_path = self.out_dir / "trace.jsonl"
@@ -311,6 +383,7 @@ class FieldFillingAgent:
     def run_metadata(self) -> dict[str, Any]:
         return {
             "retrieval_backend": self.retrieval_backend,
+            "retrieval_plan": getattr(self.retriever, "retrieval_plan", ""),
             "generation_backend": self.generation_backend,
             "enable_rerank": self.enable_rerank,
             "target_namespace": self.target_namespace,
@@ -388,6 +461,21 @@ def output_files(out_dir: Path) -> list[str]:
     return sorted(path.name for path in out_dir.iterdir() if path.is_file())
 
 
+def ordered_predictions_for_fields(fields: list[FieldGold], predictions_by_field_id: dict[str, FieldPrediction]) -> list[FieldPrediction]:
+    ordered = [predictions_by_field_id[field.field_id] for field in fields if field.field_id in predictions_by_field_id]
+    return sorted(ordered, key=lambda prediction: (prediction.row_index, prediction.field_id))
+
+
+def generation_skip_reason_for_bundle(bundle: Any) -> str:
+    if bundle.decision == "no_evidence":
+        return "no_evidence"
+    if bundle.decision == "clue_only":
+        return "reference_only"
+    if bundle.decision == "conflict_unresolved":
+        return "conflict"
+    return ""
+
+
 def build_run_summary(
     *,
     run_state: RunState,
@@ -403,6 +491,7 @@ def build_run_summary(
         f"- run_id: `{run_state.run_id}`",
         f"- target_namespace: `{run_state.target_namespace}`",
         f"- retrieval_backend: `{trace_summary.get('retrieval_backend', '')}`",
+        f"- retrieval_plan: `{trace_summary.get('retrieval_plan', '')}`",
         f"- generation_backend: `{trace_summary.get('generation_backend', '')}`",
         f"- enable_rerank: `{trace_summary.get('enable_rerank', False)}`",
         f"- qdrant_collection: `{trace_summary.get('qdrant_collection', '')}`",
@@ -418,6 +507,13 @@ def build_run_summary(
         f"- repaired: {trace_summary['repaired_count']}",
         f"- generation_called: {trace_summary.get('generation_called_count', 0)}",
         f"- generation_skipped: {trace_summary.get('generation_skipped_count', 0)}",
+        f"- skipped_no_evidence: {trace_summary.get('skipped_no_evidence_count', 0)}",
+        f"- skipped_reference_only: {trace_summary.get('skipped_reference_only_count', 0)}",
+        f"- skipped_conflict: {trace_summary.get('skipped_conflict_count', 0)}",
+        f"- direct_evidence: {trace_summary.get('direct_evidence_count', 0)}",
+        f"- reference_only: {trace_summary.get('reference_only_count', 0)}",
+        f"- resumed_count: {run_state.resumed_count}",
+        f"- skipped_completed_count: {run_state.skipped_completed_count}",
         f"- writeback: {writeback_status}",
         "",
         "## Evidence Strategy",

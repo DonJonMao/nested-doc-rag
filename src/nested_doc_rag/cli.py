@@ -6,7 +6,13 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
-from nested_doc_rag.agent.backends import DeterministicAnswerGenerator, LLMAnswerGenerator, MiniCorpusRetriever, QdrantEvidenceRetriever
+from nested_doc_rag.agent.backends import (
+    DeterministicAnswerGenerator,
+    LayeredQdrantEvidenceRetriever,
+    LLMAnswerGenerator,
+    MiniCorpusRetriever,
+    QdrantEvidenceRetriever,
+)
 from nested_doc_rag.embedding import RerankClient
 from nested_doc_rag.retrieval import QdrantRetriever
 
@@ -59,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     agent_parser.add_argument("--no-writeback", action="store_true", help="Disable Excel writeback even when a template is provided.")
     agent_parser.add_argument("--trace-format", default="md,jsonl", help="Accepted for compatibility; both md and jsonl are written.")
     agent_parser.add_argument("--retrieval-backend", choices=["mini", "qdrant"], default=None, help="Evidence retrieval backend.")
+    agent_parser.add_argument("--retrieval-plan", choices=["flat", "layered"], default=None, help="Qdrant retrieval plan.")
     agent_parser.add_argument("--generation-backend", choices=["deterministic", "llm"], default=None, help="Answer generation backend.")
     agent_parser.add_argument("--enable-rerank", action="store_true", help="Enable rerank for qdrant retrieval.")
     agent_parser.add_argument("--qdrant-path", type=Path, default=None, help="Qdrant local path.")
@@ -72,6 +79,9 @@ def build_parser() -> argparse.ArgumentParser:
     agent_parser.add_argument("--chat-api-key-env", default=None, help="Environment variable containing chat API key.")
     agent_parser.add_argument("--vector-top-k", type=int, default=None, help="Vector retrieval top-k.")
     agent_parser.add_argument("--rerank-top-n", type=int, default=None, help="Rerank top-n.")
+    agent_parser.add_argument("--resume", action="store_true", help="Resume from field-level checkpoints in out-dir.")
+    agent_parser.add_argument("--checkpoint-every", type=int, default=1, help="Write a checkpoint after this many completed fields.")
+    agent_parser.add_argument("--checkpoint-path", type=Path, default=None, help="Optional predictions checkpoint JSONL path.")
     return parser
 
 
@@ -134,12 +144,22 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("run-agent requires --fields or --gold")
         retrieval_backend = args.retrieval_backend or config.agent.retrieval_backend
         generation_backend = args.generation_backend or config.agent.generation_backend
+        retrieval_plan = args.retrieval_plan or (config.retrieval.retrieval_plan if retrieval_backend == "qdrant" else "flat")
         target_namespace = args.target_namespace or config.retrieval.target_namespace
         enable_rerank = bool(args.enable_rerank or config.agent.enable_rerank)
         vector_top_k = args.vector_top_k or config.retrieval.vector_top_k
         rerank_top_n = args.rerank_top_n or config.retrieval.rerank_top_n
         try:
-            retriever = build_agent_retriever(args, config, retrieval_backend, target_namespace, enable_rerank, vector_top_k, rerank_top_n)
+            retriever = build_agent_retriever(
+                args,
+                config,
+                retrieval_backend,
+                retrieval_plan,
+                target_namespace,
+                enable_rerank,
+                vector_top_k,
+                rerank_top_n,
+            )
             generator = build_agent_generator(args, config, generation_backend)
         except RuntimeError as exc:
             parser.error(str(exc))
@@ -157,6 +177,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             retrieval_backend=retrieval_backend,
             generation_backend=generation_backend,
             enable_rerank=enable_rerank,
+            resume=args.resume,
+            checkpoint_every=args.checkpoint_every,
+            checkpoint_path=args.checkpoint_path,
         )
         predictions = agent.run(load_fields(fields_path))
         print(
@@ -176,6 +199,7 @@ def build_agent_retriever(
     args: argparse.Namespace,
     config,
     retrieval_backend: str,
+    retrieval_plan: str,
     target_namespace: str,
     enable_rerank: bool,
     vector_top_k: int,
@@ -219,6 +243,17 @@ def build_agent_retriever(
             endpoint=rerank_endpoint,
             model=args.rerank_model or config.services.rerank_model,
             timeout_seconds=config.services.timeout_seconds,
+        )
+    if retrieval_plan == "layered":
+        return LayeredQdrantEvidenceRetriever(
+            qdrant_retriever=qdrant_retriever,
+            layered_plan=config.retrieval.layered_plan,
+            global_namespace=config.retrieval.global_namespace,
+            enable_rerank=enable_rerank,
+            rerank_client=rerank_client,
+            vector_top_k=config.retrieval.layer_top_k or vector_top_k,
+            rerank_top_n=config.retrieval.layer_rerank_top_n or rerank_top_n,
+            max_reference_chunks=config.retrieval.max_reference_chunks,
         )
     return QdrantEvidenceRetriever(
         qdrant_retriever=qdrant_retriever,
