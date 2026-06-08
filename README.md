@@ -113,7 +113,9 @@ python -m nested_doc_rag.cli writeback \
 ## Step15AgentRunner
 
 `Step15AgentRunner` is the recommended production-oriented runtime for gongkan
-form filling. It keeps Step 15 layered RAG as the effect engine:
+form filling. It has two layers.
+
+Step 15 raw answer arbitration is the effect engine:
 
 - layered Qdrant retrieval
 - rerank
@@ -121,8 +123,9 @@ form filling. It keeps Step 15 layered RAG as the effect engine:
 - LLM answer arbitration prompt
 - answer statuses: `answered` / `partial_clue` / `not_found` / `conflict_unresolved`
 - `reference_source_documents` for partial clues
+- immutable raw prediction used for evaluation
 
-It adds Agentic engineering controls:
+Agent overlay adds production controls without mutating the raw answer:
 
 - field state
 - query trace
@@ -132,11 +135,15 @@ It adds Agentic engineering controls:
 - review queue
 - checkpoint/resume
 - optional safe Excel writeback
+- writeback gating
+- reference enrichment suggestions
 
 It does not apply the strict pre-generation selected/reference gate used by
 `FieldFillingAgent` v1.2. Step 15 is responsible for answer quality; the Agent
-layer is responsible for execution management, traceability, checkpointing,
-review routing, and writeback safety.
+overlay is responsible for traceability, checkpointing, review routing, and
+writeback safety. Evaluation uses `predictions_raw.jsonl`; production review and
+writeback use `agent_overlays.jsonl`. `predictions.jsonl` remains a compatibility
+copy of the raw predictions.
 
 Recommended closed-book evaluation:
 
@@ -147,9 +154,10 @@ python -m nested_doc_rag.cli run-step15-agent \
   --room-context "西咸4号楼 301机房" \
   --rows 4-144 \
   --retrieval-mode layered \
-  --resume \
+  --prompt-version step15_compat \
   --judge \
-  --out-dir artifacts/runs/step15_agent_xixian4
+  --use-judge-cache \
+  --out-dir artifacts/runs/step15_agent_overlay
 ```
 
 Production-style run with writeback:
@@ -161,6 +169,7 @@ python -m nested_doc_rag.cli run-step15-agent \
   --room-context "西咸4号楼 301机房" \
   --rows 4-144 \
   --retrieval-mode layered \
+  --prompt-version step15_compat \
   --template data/forms/基地云机房信息调研表.xlsx \
   --writeback \
   --out-dir artifacts/runs/step15_agent_xixian4_writeback \

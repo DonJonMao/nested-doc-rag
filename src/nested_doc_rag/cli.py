@@ -93,6 +93,12 @@ def build_parser() -> argparse.ArgumentParser:
     step15_agent_parser.add_argument("--rows", default="all", help="Rows to run: all, 4-144, or 34,38,42.")
     step15_agent_parser.add_argument("--form-items", type=Path, default=None, help="Optional form_items.jsonl override.")
     step15_agent_parser.add_argument("--retrieval-mode", choices=["flat", "layered"], default=None, help="Step 15 retrieval mode.")
+    step15_agent_parser.add_argument(
+        "--prompt-version",
+        choices=["step15_compat", "agent_v2"],
+        default="step15_compat",
+        help="Answer prompt version. step15_compat preserves the Step 15 effect prompt.",
+    )
     step15_agent_parser.add_argument("--vector-top-k", type=int, default=None, help="Flat vector retrieval top-k.")
     step15_agent_parser.add_argument("--rerank-top-n", type=int, default=None, help="Flat rerank top-n.")
     judge_group = step15_agent_parser.add_mutually_exclusive_group()
@@ -117,6 +123,10 @@ def build_parser() -> argparse.ArgumentParser:
     step15_agent_parser.add_argument("--timeout", type=int, default=None, help="HTTP timeout seconds.")
     step15_agent_parser.add_argument("--chat-max-retries", type=int, default=2, help="Maximum chat timeout retries.")
     step15_agent_parser.add_argument("--chat-retry-backoff-seconds", type=int, default=3, help="Seconds to wait between chat retries.")
+    step15_agent_parser.add_argument("--judge-cache", type=Path, default=None, help="Judge cache JSONL path.")
+    judge_cache_group = step15_agent_parser.add_mutually_exclusive_group()
+    judge_cache_group.add_argument("--use-judge-cache", dest="use_judge_cache", action="store_true", default=False, help="Reuse cached judge results.")
+    judge_cache_group.add_argument("--no-judge-cache", dest="use_judge_cache", action="store_false", help="Disable judge cache.")
     return parser
 
 
@@ -273,6 +283,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             timeout_seconds=args.timeout or config.services.timeout_seconds,
             chat_max_retries=args.chat_max_retries,
             chat_retry_backoff_seconds=args.chat_retry_backoff_seconds,
+            prompt_version=args.prompt_version,
+            judge_cache_path=args.judge_cache or (config.paths.artifacts_dir / "cache" / "judge_cache.jsonl"),
+            use_judge_cache=bool(args.use_judge_cache),
             deepseek_api_key_env=api_key_env,
             qdrant_path=qdrant_path,
             collection_name=collection_name,

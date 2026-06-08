@@ -5,10 +5,10 @@ from typing import Any
 
 from nested_doc_rag.agent.step15_runner import (
     Step15AgentRunner,
+    build_agent_overlay_for_step15_prediction,
     convert_step15_generated_to_prediction,
     critic_check_step15_answer,
     make_step15_review_item,
-    normalize_step15_prediction_after_arbitration,
 )
 from nested_doc_rag.cli import build_parser
 from nested_doc_rag.config import load_app_config
@@ -75,21 +75,24 @@ def test_critic_partial_without_reference() -> None:
     assert "partial_without_reference" in flags
 
 
-def test_not_found_with_hits_rescued_to_partial() -> None:
+def test_overlay_does_not_mutate_raw_prediction() -> None:
     prediction = convert_step15_generated_to_prediction(
         make_item(5),
         {"answer_value": "未找到", "answer_status": "not_found", "confidence": 0.2, "source_chunk_ids": []},
         make_hits(),
     )
 
-    normalized = normalize_step15_prediction_after_arbitration(prediction, make_hits(), ["not_found_with_relevant_hits"])
+    overlay = build_agent_overlay_for_step15_prediction(prediction, make_hits(), ["not_found_with_relevant_hits"])
 
-    assert normalized.answer_status == "partial_clue"
-    assert normalized.answer_value == "未找到可直接填写的证据；检索到相关线索，请人工复核。"
-    assert normalized.reference_chunk_ids
-    assert normalized.reference_source_documents
-    assert normalized.reference_snippets
-    assert normalized.validation["status_rescued"] == "not_found_to_partial_clue"
+    assert prediction.answer_status == "not_found"
+    assert prediction.answer_value == "未找到"
+    assert overlay.suggested_status == "partial_clue"
+    assert overlay.review_required is True
+    assert overlay.writeback_allowed is False
+    assert overlay.suggested_reference_chunk_ids
+    assert overlay.suggested_reference_source_documents
+    assert overlay.suggested_reference_snippets
+    assert "not_found_with_relevant_hits" in overlay.reasons
 
 
 def test_partial_without_reference_gets_reference_docs() -> None:
@@ -99,28 +102,30 @@ def test_partial_without_reference_gets_reference_docs() -> None:
         make_hits(),
     )
 
-    normalized = normalize_step15_prediction_after_arbitration(prediction, make_hits(), ["partial_without_reference"])
+    overlay = build_agent_overlay_for_step15_prediction(prediction, make_hits(), ["partial_without_reference"])
 
-    assert normalized.answer_status == "partial_clue"
-    assert normalized.reference_chunk_ids
-    assert normalized.reference_source_documents
-    assert normalized.validation["reference_docs_filled_by_runner"] is True
+    assert prediction.answer_status == "partial_clue"
+    assert prediction.reference_source_documents == []
+    assert overlay.suggested_reference_chunk_ids
+    assert overlay.suggested_reference_source_documents
+    assert "reference_docs_filled_by_runner" in overlay.reasons
 
 
-def test_risky_answered_downgraded_to_partial() -> None:
+def test_risky_answered_overlay_blocks_writeback_without_mutating() -> None:
     prediction = convert_step15_generated_to_prediction(
         make_item(5),
         {"answer_value": "2路市电", "answer_status": "answered", "confidence": 0.82, "source_chunk_ids": []},
         make_hits(),
     )
 
-    normalized = normalize_step15_prediction_after_arbitration(prediction, make_hits(), ["answered_without_source"])
+    overlay = build_agent_overlay_for_step15_prediction(prediction, make_hits(), ["liquid_cooling_scope_mismatch"])
 
-    assert normalized.answer_status == "partial_clue"
-    assert normalized.source_chunk_ids == []
-    assert normalized.reference_source_documents
-    assert normalized.validation["downgraded_by_critic"] is True
-    assert normalized.validation["downgrade_flags"] == ["answered_without_source"]
+    assert prediction.answer_status == "answered"
+    assert prediction.answer_value == "2路市电"
+    assert overlay.suggested_status == "partial_clue"
+    assert overlay.review_required is True
+    assert overlay.writeback_allowed is False
+    assert "risky_answered_requires_review" in overlay.reasons
 
 
 def test_not_found_without_hits_stays_not_found() -> None:
@@ -130,10 +135,11 @@ def test_not_found_without_hits_stays_not_found() -> None:
         [],
     )
 
-    normalized = normalize_step15_prediction_after_arbitration(prediction, [], [])
+    overlay = build_agent_overlay_for_step15_prediction(prediction, [], [])
 
-    assert normalized.answer_status == "not_found"
-    assert normalized.reference_chunk_ids == []
+    assert prediction.answer_status == "not_found"
+    assert overlay.suggested_status is None
+    assert overlay.suggested_reference_chunk_ids == []
 
 
 def test_review_routing_for_partial() -> None:
@@ -150,7 +156,8 @@ def test_review_routing_for_partial() -> None:
         make_hits(),
     )
 
-    item = make_step15_review_item(make_item(5), prediction, [], make_hits())
+    overlay = build_agent_overlay_for_step15_prediction(prediction, make_hits(), [])
+    item = make_step15_review_item(make_item(5), prediction, overlay, make_hits())
 
     assert item is not None
     assert item["answer_status"] == "partial_clue"
@@ -164,9 +171,27 @@ def test_checkpoint_writes_each_field(tmp_path: Path) -> None:
 
     assert len(predictions) == 2
     assert len(read_jsonl(tmp_path / "predictions.checkpoint.jsonl")) == 2
+    assert len(read_jsonl(tmp_path / "agent_overlays.checkpoint.jsonl")) == 2
     assert (tmp_path / "trace.checkpoint.jsonl").exists()
     assert (tmp_path / "review_items.checkpoint.jsonl").exists()
     assert (tmp_path / "run_state.json").exists()
+
+
+def test_predictions_json_is_raw(tmp_path: Path) -> None:
+    runner = make_runner(tmp_path, answer_caller=not_found_answer_caller)
+
+    predictions = runner.run([make_item(4)])
+
+    assert predictions[0].answer_status == "not_found"
+    raw = read_jsonl(tmp_path / "predictions_raw.jsonl")
+    compat = read_jsonl(tmp_path / "predictions.jsonl")
+    overlays = read_jsonl(tmp_path / "agent_overlays.jsonl")
+    agent_view = read_jsonl(tmp_path / "predictions_agent_view.jsonl")
+    assert raw == compat
+    assert raw[0]["answer_status"] == "not_found"
+    assert overlays[0]["suggested_status"] == "partial_clue"
+    assert agent_view[0]["answer_status"] == "not_found"
+    assert agent_view[0]["agent_overlay"]["suggested_status"] == "partial_clue"
 
 
 def test_resume_skips_completed_rows(tmp_path: Path) -> None:
@@ -205,6 +230,22 @@ def test_field_failure_does_not_abort_run(tmp_path: Path) -> None:
     assert failed.answer_status == "conflict_unresolved"
     assert failed.validation["error"] == "fake llm failure"
     assert next(prediction for prediction in predictions if prediction.row_index == 6).answer_status == "answered"
+
+
+def test_judge_uses_raw_prediction(tmp_path: Path) -> None:
+    seen_generated_statuses: list[str] = []
+
+    def judge_caller(**kwargs: Any) -> dict[str, Any]:
+        seen_generated_statuses.append(kwargs["generated"]["answer_status"])
+        return {"label": "mismatch", "score": 0, "reason": "fake"}
+
+    runner = make_runner(tmp_path, answer_caller=not_found_answer_caller, judge_caller=judge_caller, judge_enabled=True)
+
+    runner.run([make_item(4)])
+
+    assert seen_generated_statuses == ["not_found"]
+    overlays = read_jsonl(tmp_path / "agent_overlays.jsonl")
+    assert overlays[0]["suggested_status"] == "partial_clue"
 
 
 def test_chat_timeout_retry_success(tmp_path: Path) -> None:
@@ -274,6 +315,9 @@ def test_cli_run_step15_agent_args(tmp_path: Path) -> None:
             "3",
             "--chat-retry-backoff-seconds",
             "0",
+            "--use-judge-cache",
+            "--judge-cache",
+            str(tmp_path / "judge_cache.jsonl"),
         ]
     )
 
@@ -283,6 +327,17 @@ def test_cli_run_step15_agent_args(tmp_path: Path) -> None:
     assert args.resume is True
     assert args.chat_max_retries == 3
     assert args.chat_retry_backoff_seconds == 0
+    assert args.prompt_version == "step15_compat"
+    assert args.use_judge_cache is True
+    assert args.judge_cache == tmp_path / "judge_cache.jsonl"
+
+
+def test_prompt_version_default_step15_compat() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["run-step15-agent", "--out-dir", "artifacts/runs/test"])
+
+    assert args.prompt_version == "step15_compat"
 
 
 def test_regression_rows_config_loads() -> None:
@@ -327,6 +382,64 @@ def test_writeback_optional(tmp_path: Path) -> None:
     assert calls == ["called"]
 
 
+def test_writeback_uses_overlay_gating(tmp_path: Path) -> None:
+    captured: list[int] = []
+    template = tmp_path / "template.xlsx"
+    template.write_text("fake", encoding="utf-8")
+
+    runner = make_runner(
+        tmp_path,
+        answer_caller=liquid_mismatch_answer_caller,
+        writeback_enabled=True,
+        template_path=template,
+        writeback_fn=capturing_writeback(captured),
+    )
+
+    predictions = runner.run([make_item(57, question_text="液冷机柜是否支持")])
+
+    assert predictions[0].answer_status == "answered"
+    assert captured == [0]
+    overlays = read_jsonl(tmp_path / "agent_overlays.jsonl")
+    assert overlays[0]["writeback_allowed"] is False
+    assert overlays[0]["suggested_status"] == "partial_clue"
+    review_items = read_jsonl(tmp_path / "review_items.jsonl")
+    assert review_items
+    assert review_items[0]["field_id"] == "item_57"
+
+
+def test_judge_cache_reuses_same_answer(tmp_path: Path) -> None:
+    calls = 0
+    cache_path = tmp_path / "judge_cache.jsonl"
+
+    def judge_caller(**kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {"label": "exact", "score": 1, "reason": "fake cached judge"}
+
+    runner = make_runner(
+        tmp_path / "run1",
+        answer_caller=answered_answer_caller,
+        judge_caller=judge_caller,
+        judge_enabled=True,
+        judge_cache_path=cache_path,
+        use_judge_cache=True,
+    )
+    runner.run([make_item(4)])
+
+    runner = make_runner(
+        tmp_path / "run2",
+        answer_caller=answered_answer_caller,
+        judge_caller=judge_caller,
+        judge_enabled=True,
+        judge_cache_path=cache_path,
+        use_judge_cache=True,
+    )
+    runner.run([make_item(4)])
+
+    assert calls == 1
+    assert len(read_jsonl(cache_path)) == 1
+
+
 def make_runner(
     tmp_path: Path,
     *,
@@ -339,6 +452,9 @@ def make_runner(
     template_path: Path | None = None,
     writeback_fn=None,
     chat_max_retries: int = 2,
+    prompt_version: str = "step15_compat",
+    judge_cache_path: Path | None = None,
+    use_judge_cache: bool = False,
 ) -> Step15AgentRunner:
     config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml")
     return Step15AgentRunner(
@@ -358,10 +474,13 @@ def make_runner(
         writeback_fn=writeback_fn or fake_writeback([]),
         chat_max_retries=chat_max_retries,
         chat_retry_backoff_seconds=0,
+        prompt_version=prompt_version,
+        judge_cache_path=judge_cache_path,
+        use_judge_cache=use_judge_cache,
     )
 
 
-def make_item(row: int, *, include_heldout: bool = True) -> dict[str, Any]:
+def make_item(row: int, *, include_heldout: bool = True, question_text: str = "市电进线情况") -> dict[str, Any]:
     item = {
         "form_item_id": f"item_{row}",
         "file_name": "基地云机房信息调研表.xlsx",
@@ -369,7 +488,7 @@ def make_item(row: int, *, include_heldout: bool = True) -> dict[str, Any]:
         "row_index": row,
         "target_cell": f"D{row}",
         "category_path": ["电力", "市电"],
-        "question_text": "市电进线情况",
+        "question_text": question_text,
         "instruction_text": "填写市电路数及来源",
         "answer_example": "2路市电",
         "needs_evidence": True,
@@ -438,6 +557,29 @@ def answered_answer_caller(**kwargs: Any) -> dict[str, Any]:
     }
 
 
+def not_found_answer_caller(**kwargs: Any) -> dict[str, Any]:
+    del kwargs
+    return {
+        "answer_value": "未找到",
+        "answer_status": "not_found",
+        "confidence": 0.2,
+        "source_chunk_ids": [],
+        "evidence_attachment_ids": [],
+        "reference_source_documents": [],
+    }
+
+
+def liquid_mismatch_answer_caller(**kwargs: Any) -> dict[str, Any]:
+    return {
+        "answer_value": "支持",
+        "answer_status": "answered",
+        "confidence": 0.86,
+        "source_chunk_ids": [kwargs["hits"][0]["chunk_id"]],
+        "evidence_attachment_ids": [],
+        "reference_source_documents": [],
+    }
+
+
 def fake_writeback(calls: list[str]):
     class Summary:
         def to_dict(self) -> dict[str, Any]:
@@ -446,6 +588,20 @@ def fake_writeback(calls: list[str]):
     def writeback(**kwargs: Any) -> Summary:
         del kwargs
         calls.append("called")
+        return Summary()
+
+    return writeback
+
+
+def capturing_writeback(captured_counts: list[int]):
+    class Summary:
+        def to_dict(self) -> dict[str, Any]:
+            return {"output_path": "fake.xlsx"}
+
+    def writeback(**kwargs: Any) -> Summary:
+        captured_counts.append(len(kwargs["predictions"]))
+        output_path = Path(kwargs["output_path"])
+        write_jsonl(output_path.parent / "review_items.jsonl", [])
         return Summary()
 
     return writeback

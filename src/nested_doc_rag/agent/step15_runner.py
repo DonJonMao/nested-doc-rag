@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from collections import Counter
 from collections.abc import Callable
@@ -30,6 +32,7 @@ RetrievalFn = Callable[[str], Step15RetrievalResult]
 WritebackFn = Callable[..., Any]
 
 ANSWER_STATUSES = {"answered", "partial_clue", "not_found", "conflict_unresolved"}
+PROMPT_VERSIONS = {"step15_compat", "agent_v2"}
 UNSAFE_WRITEBACK_FLAGS = {
     "answered_without_source",
     "invalid_source_reference",
@@ -47,6 +50,61 @@ RISKY_ANSWERED_DOWNGRADE_FLAGS = {
     "liquid_cooling_scope_mismatch",
     "field_intent_source_mismatch",
 }
+CRITICAL_OVERLAY_FLAGS = RISKY_ANSWERED_DOWNGRADE_FLAGS | {"answer_too_long"}
+
+
+@dataclass(frozen=True)
+class AgentOverlay:
+    field_id: str
+    row_index: int | None
+    target_cell: str | None
+    critic_flags: list[str]
+    review_required: bool
+    writeback_allowed: bool
+    suggested_status: str | None
+    suggested_answer_value: str | None
+    suggested_reference_source_documents: list[dict[str, Any]]
+    suggested_reference_chunk_ids: list[str]
+    suggested_reference_snippets: list[str]
+    risk_level: str
+    reasons: list[str]
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> AgentOverlay:
+        return cls(
+            field_id=str(value["field_id"]),
+            row_index=int(value["row_index"]) if value.get("row_index") is not None else None,
+            target_cell=value.get("target_cell"),
+            critic_flags=[str(item) for item in value.get("critic_flags") or []],
+            review_required=bool(value.get("review_required")),
+            writeback_allowed=bool(value.get("writeback_allowed")),
+            suggested_status=str(value["suggested_status"]) if value.get("suggested_status") is not None else None,
+            suggested_answer_value=str(value["suggested_answer_value"]) if value.get("suggested_answer_value") is not None else None,
+            suggested_reference_source_documents=[
+                dict(item) for item in value.get("suggested_reference_source_documents") or [] if isinstance(item, dict)
+            ],
+            suggested_reference_chunk_ids=[str(item) for item in value.get("suggested_reference_chunk_ids") or []],
+            suggested_reference_snippets=[str(item) for item in value.get("suggested_reference_snippets") or []],
+            risk_level=str(value.get("risk_level") or "low"),
+            reasons=[str(item) for item in value.get("reasons") or []],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "field_id": self.field_id,
+            "row_index": self.row_index,
+            "target_cell": self.target_cell,
+            "critic_flags": self.critic_flags,
+            "review_required": self.review_required,
+            "writeback_allowed": self.writeback_allowed,
+            "suggested_status": self.suggested_status,
+            "suggested_answer_value": self.suggested_answer_value,
+            "suggested_reference_source_documents": self.suggested_reference_source_documents,
+            "suggested_reference_chunk_ids": self.suggested_reference_chunk_ids,
+            "suggested_reference_snippets": self.suggested_reference_snippets,
+            "risk_level": self.risk_level,
+            "reasons": self.reasons,
+        }
 
 
 @dataclass
@@ -57,6 +115,7 @@ class Step15FieldResult:
     generated: dict[str, Any]
     top_hits: list[dict[str, Any]]
     vector_hits: list[dict[str, Any]]
+    overlay: AgentOverlay
     review_item: dict[str, Any] | None
     eval_result: dict[str, Any] | None
     retrieval_latency_ms: float
@@ -84,6 +143,9 @@ class Step15AgentRunner:
         timeout_seconds: int | None = None,
         chat_max_retries: int = 2,
         chat_retry_backoff_seconds: int = 3,
+        prompt_version: Literal["step15_compat", "agent_v2"] = "step15_compat",
+        judge_cache_path: Path | None = None,
+        use_judge_cache: bool = False,
         deepseek_api_key_env: str | None = None,
         qdrant_path: Path | None = None,
         collection_name: str | None = None,
@@ -119,6 +181,12 @@ class Step15AgentRunner:
         self.timeout_seconds = timeout_seconds or config.services.timeout_seconds
         self.chat_max_retries = max(0, chat_max_retries)
         self.chat_retry_backoff_seconds = max(0, chat_retry_backoff_seconds)
+        if prompt_version not in PROMPT_VERSIONS:
+            raise ValueError(f"unsupported prompt_version: {prompt_version}")
+        self.prompt_version = prompt_version
+        self.judge_cache_path = judge_cache_path
+        self.use_judge_cache = use_judge_cache
+        self.judge_cache: dict[str, dict[str, Any]] = load_judge_cache(judge_cache_path) if use_judge_cache and judge_cache_path else {}
         self.deepseek_api_key_env = deepseek_api_key_env or config.services.chat_api_key_env
         self.qdrant_path = qdrant_path or config.paths.qdrant_path
         self.collection_name = collection_name or config.qdrant.collection_name
@@ -145,12 +213,15 @@ class Step15AgentRunner:
                 "retrieval_mode": self.retrieval_mode,
                 "collection_name": self.collection_name,
                 "chat_model": self.chat_model,
+                "prompt_version": self.prompt_version,
+                "use_judge_cache": self.use_judge_cache,
                 "judge_enabled": self.judge_enabled,
                 "writeback_enabled": self.writeback_enabled,
             },
         )
         self.review_items: list[dict[str, Any]] = []
         self.eval_results: list[dict[str, Any]] = []
+        self.agent_overlays: list[AgentOverlay] = []
         self.writeback_status = "skipped: writeback disabled"
         self.writeback_summary: dict[str, Any] | None = None
         self._owns_retriever = retriever is None and retrieval_fn is None
@@ -206,6 +277,7 @@ class Step15AgentRunner:
             )
 
         predictions_by_field_id: dict[str, FieldPrediction] = dict(checkpoint_predictions)
+        overlays_by_field_id: dict[str, AgentOverlay] = {overlay.field_id: overlay for overlay in self.agent_overlays}
         processed_since_checkpoint = 0
         try:
             for item in items:
@@ -220,6 +292,7 @@ class Step15AgentRunner:
                     result = self.failed_item_result(item, exc)
 
                 predictions_by_field_id[result.prediction.field_id] = result.prediction
+                overlays_by_field_id[result.overlay.field_id] = result.overlay
                 if result.eval_result is not None:
                     self.eval_results.append(result.eval_result)
                 if result.review_item is not None:
@@ -230,8 +303,10 @@ class Step15AgentRunner:
                     field_id,
                     "field_completed",
                     {
-                        "answer_status": result.prediction.answer_status,
-                        "final_prediction": result.prediction.to_dict(),
+                        "raw_status": result.prediction.answer_status,
+                        "overlay_suggested_status": result.overlay.suggested_status,
+                        "raw_prediction": result.prediction.to_dict(),
+                        "agent_overlay": result.overlay.to_dict(),
                         "needs_review": result.review_item is not None,
                         "critic_flags": result.critic_flags,
                     },
@@ -246,7 +321,7 @@ class Step15AgentRunner:
                 )
                 completed_keys.add(key)
                 if processed_since_checkpoint >= self.checkpoint_every:
-                    self.write_checkpoint(items, predictions_by_field_id, run_state)
+                    self.write_checkpoint(items, predictions_by_field_id, overlays_by_field_id, run_state)
                     processed_since_checkpoint = 0
         finally:
             if self._owns_retriever and self.retriever is not None:
@@ -255,8 +330,9 @@ class Step15AgentRunner:
         run_state["finished_at"] = now_iso()
         self.trace.record(None, "run_completed", run_state)
         ordered_predictions = ordered_predictions_for_items(items, predictions_by_field_id)
-        self.write_checkpoint(items, predictions_by_field_id, run_state)
-        self.write_outputs(ordered_predictions, run_state)
+        ordered_overlays = ordered_overlays_for_predictions(ordered_predictions, overlays_by_field_id)
+        self.write_checkpoint(items, predictions_by_field_id, overlays_by_field_id, run_state)
+        self.write_outputs(ordered_predictions, ordered_overlays, run_state)
         return ordered_predictions
 
     def process_item(self, item: dict[str, Any]) -> Step15FieldResult:
@@ -294,7 +370,7 @@ class Step15AgentRunner:
         )
 
         generation_started = perf_counter_ms()
-        messages = build_qdrant_answer_messages(item, query_text, top_hits, room_context=self.room_context)
+        messages = build_qdrant_answer_messages(item, query_text, top_hits, room_context=self.room_context, prompt_version=self.prompt_version)
         generated = self.call_answer(messages=messages, item=item, query_text=query_text, hits=top_hits)
         generation_latency_ms = round(perf_counter_ms() - generation_started, 3)
         self.trace.record(
@@ -302,6 +378,7 @@ class Step15AgentRunner:
             "answer_arbitrated",
             {
                 "chat_model": self.chat_model,
+                "prompt_version": self.prompt_version,
                 "answer_status": generated.get("answer_status"),
                 "source_chunk_ids": generated.get("source_chunk_ids") or [],
                 "reference_source_documents_count": len(generated.get("reference_source_documents") or []),
@@ -311,31 +388,29 @@ class Step15AgentRunner:
 
         prediction = convert_step15_generated_to_prediction(item, generated, top_hits, retrieval_mode=self.retrieval_mode)
         critic_flags = critic_check_step15_answer(item, generated, top_hits)
-        prediction = with_critic_validation(prediction, critic_flags)
-        before_normalization = prediction.answer_status
-        prediction = normalize_step15_prediction_after_arbitration(prediction, top_hits, critic_flags)
-        if prediction.answer_status != before_normalization or prediction.validation.get("reference_docs_filled_by_runner"):
-            self.trace.record(
-                field_id,
-                "post_arbitration_normalized",
-                {
-                    "before_status": before_normalization,
-                    "after_status": prediction.answer_status,
-                    "status_rescued": prediction.validation.get("status_rescued"),
-                    "downgraded_by_critic": prediction.validation.get("downgraded_by_critic"),
-                    "reference_docs_filled_by_runner": prediction.validation.get("reference_docs_filled_by_runner"),
-                    "reference_source_documents_count": len(prediction.reference_source_documents),
-                },
-            )
-        generated = generated_from_prediction(prediction, generated)
+        overlay = build_agent_overlay_for_step15_prediction(prediction, top_hits, critic_flags)
+        self.trace.record(
+            field_id,
+            "agent_overlay_built",
+            {
+                "raw_status": prediction.answer_status,
+                "suggested_status": overlay.suggested_status,
+                "review_required": overlay.review_required,
+                "writeback_allowed": overlay.writeback_allowed,
+                "risk_level": overlay.risk_level,
+                "reasons": overlay.reasons,
+                "critic_flags": critic_flags,
+                "suggested_reference_source_documents_count": len(overlay.suggested_reference_source_documents),
+            },
+        )
         self.trace.record(
             field_id,
             "prediction_normalized",
-            {"prediction": prediction.to_dict(), "source_ids_valid": prediction.validation.get("source_ids_valid")},
+            {"raw_prediction": prediction.to_dict(), "source_ids_valid": prediction.validation.get("source_ids_valid")},
         )
         self.trace.record(field_id, "critic_checked", {"critic_flags": critic_flags})
 
-        review_item = make_step15_review_item(item, prediction, critic_flags, top_hits)
+        review_item = make_step15_review_item(item, prediction, overlay, top_hits)
         self.trace.record(
             field_id,
             "review_routed",
@@ -343,14 +418,14 @@ class Step15AgentRunner:
                 "needs_review": review_item is not None,
                 "suggested_action": (review_item or {}).get("suggested_action"),
                 "critic_flags": critic_flags,
+                "overlay": overlay.to_dict(),
             },
         )
 
         eval_result = None
         if self.judge_enabled:
             heldout_answer = str(item.get("existing_value") or item.get("heldout_answer") or "")
-            judge = self.call_judge(
-                messages=build_judge_messages(item, generated, heldout_answer),
+            judge = self.get_or_call_judge(
                 item=item,
                 generated=generated,
                 heldout_answer=heldout_answer,
@@ -369,6 +444,7 @@ class Step15AgentRunner:
             generated=generated,
             top_hits=top_hits,
             vector_hits=vector_hits,
+            overlay=overlay,
             review_item=review_item,
             eval_result=eval_result,
             retrieval_latency_ms=retrieval_latency_ms,
@@ -396,7 +472,22 @@ class Step15AgentRunner:
             },
             method_name="step15_agent_failed",
         )
-        review_item = make_step15_review_item(item, prediction, ["field_failed"], [])
+        overlay = AgentOverlay(
+            field_id=field_id,
+            row_index=prediction.row_index,
+            target_cell=prediction.target_cell,
+            critic_flags=["field_failed"],
+            review_required=True,
+            writeback_allowed=False,
+            suggested_status="conflict_unresolved",
+            suggested_answer_value="处理失败，请人工复核",
+            suggested_reference_source_documents=[],
+            suggested_reference_chunk_ids=[],
+            suggested_reference_snippets=[],
+            risk_level="high",
+            reasons=["field_failed"],
+        )
+        review_item = make_step15_review_item(item, prediction, overlay, [])
         generated = {
             "answer_value": prediction.answer_value,
             "answer_status": prediction.answer_status,
@@ -417,7 +508,7 @@ class Step15AgentRunner:
                 self.room_context,
             )
         self.trace.record(field_id, "field_failed", {"error": str(exc), "final_prediction": prediction.to_dict()})
-        self.trace.record(field_id, "review_routed", {"needs_review": True, "critic_flags": ["field_failed"]})
+        self.trace.record(field_id, "review_routed", {"needs_review": True, "critic_flags": ["field_failed"], "overlay": overlay.to_dict()})
         return Step15FieldResult(
             item=item,
             masked_query="",
@@ -425,6 +516,7 @@ class Step15AgentRunner:
             generated=generated,
             top_hits=[],
             vector_hits=[],
+            overlay=overlay,
             review_item=review_item,
             eval_result=eval_result,
             retrieval_latency_ms=0.0,
@@ -465,6 +557,40 @@ class Step15AgentRunner:
             caller=self.judge_caller,
             kwargs=kwargs,
         )
+
+    def get_or_call_judge(self, *, item: dict[str, Any], generated: dict[str, Any], heldout_answer: str) -> dict[str, Any]:
+        messages = build_judge_messages(item, generated, heldout_answer)
+        cache_key = build_judge_cache_key(
+            item=item,
+            generated=generated,
+            heldout_answer=heldout_answer,
+            judge_prompt_version="gongkan_eval_v1",
+            judge_model=self.chat_model,
+        )
+        field_id = field_id_for_item(item)
+        if self.use_judge_cache and cache_key in self.judge_cache:
+            judge = dict(self.judge_cache[cache_key])
+            self.trace.record(field_id, "judge_cache_hit", {"cache_key": cache_key, "label": judge.get("label"), "score": judge.get("score")})
+            return judge
+
+        judge = self.call_judge(messages=messages, item=item, generated=generated, heldout_answer=heldout_answer)
+        if self.use_judge_cache and self.judge_cache_path is not None:
+            self.judge_cache[cache_key] = dict(judge)
+            append_judge_cache_record(
+                self.judge_cache_path,
+                {
+                    "cache_key": cache_key,
+                    "judge": judge,
+                    "metadata": {
+                        "field_id": field_id,
+                        "row_index": item.get("row_index"),
+                        "judge_prompt_version": "gongkan_eval_v1",
+                        "judge_model": self.chat_model,
+                    },
+                },
+            )
+            self.trace.record(field_id, "judge_cache_written", {"cache_key": cache_key, "label": judge.get("label"), "score": judge.get("score")})
+        return judge
 
     def call_chat_with_retries(
         self,
@@ -541,38 +667,47 @@ class Step15AgentRunner:
             self.review_items = read_jsonl(self.review_checkpoint_path())
         if self.eval_checkpoint_path().exists():
             self.eval_results = read_jsonl(self.eval_checkpoint_path())
+        if self.overlay_checkpoint_path().exists():
+            self.agent_overlays = [AgentOverlay.from_dict(record) for record in read_jsonl(self.overlay_checkpoint_path())]
         self.trace.load_jsonl(self.trace_checkpoint_path())
 
     def write_checkpoint(
         self,
         items: list[dict[str, Any]],
         predictions_by_field_id: dict[str, FieldPrediction],
+        overlays_by_field_id: dict[str, AgentOverlay],
         run_state: dict[str, Any],
     ) -> None:
         predictions = ordered_predictions_for_items(items, predictions_by_field_id)
+        overlays = ordered_overlays_for_predictions(predictions, overlays_by_field_id)
         write_jsonl(self.predictions_checkpoint_path(), [prediction.to_dict() for prediction in predictions])
+        write_jsonl(self.overlay_checkpoint_path(), [overlay.to_dict() for overlay in overlays])
         if self.judge_enabled:
             write_jsonl(self.eval_checkpoint_path(), ordered_eval_results_for_items(items, self.eval_results))
         write_jsonl(self.review_checkpoint_path(), self.review_items)
         self.trace.write_jsonl(self.trace_checkpoint_path())
         write_json(self.out_dir / "run_state.json", run_state)
 
-    def write_outputs(self, predictions: list[FieldPrediction], run_state: dict[str, Any]) -> None:
+    def write_outputs(self, predictions: list[FieldPrediction], overlays: list[AgentOverlay], run_state: dict[str, Any]) -> None:
         predictions_path = self.out_dir / "predictions.jsonl"
         trace_path = self.out_dir / "trace.jsonl"
         review_items_path = self.out_dir / "review_items.jsonl"
         write_jsonl(predictions_path, [prediction.to_dict() for prediction in predictions])
+        write_jsonl(self.out_dir / "predictions_raw.jsonl", [prediction.to_dict() for prediction in predictions])
+        write_jsonl(self.out_dir / "agent_overlays.jsonl", [overlay.to_dict() for overlay in overlays])
+        write_jsonl(self.out_dir / "predictions_agent_view.jsonl", build_agent_view_records(predictions, overlays))
         if self.judge_enabled:
             write_jsonl(self.out_dir / "eval_results.jsonl", ordered_eval_results_for_items_by_predictions(predictions, self.eval_results))
         write_jsonl(review_items_path, self.review_items)
         self.trace.write_jsonl(trace_path)
-        trace_summary = build_trace_summary(self.trace.events, predictions, self.review_items)
+        trace_summary = build_trace_summary(self.trace.events, predictions, self.review_items, overlays)
         write_json(self.out_dir / "trace_summary.json", trace_summary)
         self.trace.write_markdown(self.out_dir / "trace.md", trace_summary)
-        self.maybe_writeback(predictions)
+        self.maybe_writeback(predictions, overlays)
         output_files = sorted({path.name for path in self.out_dir.iterdir() if path.is_file()} | {"run_summary.md", "summary.json"})
         summary = build_summary_json(
             predictions=predictions,
+            overlays=overlays,
             eval_results=self.eval_results if self.judge_enabled else [],
             trace_summary=trace_summary,
             run_state=run_state,
@@ -590,7 +725,7 @@ class Step15AgentRunner:
         )
         write_json(self.out_dir / "run_state.json", run_state)
 
-    def maybe_writeback(self, predictions: list[FieldPrediction]) -> None:
+    def maybe_writeback(self, predictions: list[FieldPrediction], overlays: list[AgentOverlay]) -> None:
         if not self.writeback_enabled:
             self.writeback_status = "skipped: writeback disabled"
             return
@@ -602,11 +737,17 @@ class Step15AgentRunner:
             return
 
         agent_review_items = list(self.review_items)
+        overlay_by_field_id = {overlay.field_id: overlay for overlay in overlays}
+        writeback_predictions = [
+            prediction
+            for prediction in predictions
+            if prediction.answer_status == "answered" and overlay_by_field_id.get(prediction.field_id, default_blocking_overlay(prediction)).writeback_allowed
+        ]
         summary = self.writeback_fn(
             template_path=self.template_path,
-            predictions=predictions,
+            predictions=writeback_predictions,
             output_path=self.out_dir / "filled_form.xlsx",
-            trace_by_field={prediction.field_id: f"{self.run_id}:{prediction.field_id}" for prediction in predictions},
+            trace_by_field={prediction.field_id: f"{self.run_id}:{prediction.field_id}" for prediction in writeback_predictions},
         )
         writeback_review_items = read_jsonl(self.out_dir / "review_items.jsonl")
         self.review_items = merge_review_items(agent_review_items, writeback_review_items)
@@ -622,6 +763,9 @@ class Step15AgentRunner:
 
     def review_checkpoint_path(self) -> Path:
         return self.out_dir / "review_items.checkpoint.jsonl"
+
+    def overlay_checkpoint_path(self) -> Path:
+        return self.out_dir / "agent_overlays.checkpoint.jsonl"
 
     def eval_checkpoint_path(self) -> Path:
         return self.out_dir / "eval_results.checkpoint.jsonl"
@@ -642,6 +786,9 @@ class Step15AgentRunner:
             "chat_model": self.chat_model,
             "chat_max_retries": self.chat_max_retries,
             "chat_retry_backoff_seconds": self.chat_retry_backoff_seconds,
+            "prompt_version": self.prompt_version,
+            "use_judge_cache": self.use_judge_cache,
+            "judge_cache_path": str(self.judge_cache_path) if self.judge_cache_path else "",
             "judge_enabled": self.judge_enabled,
             "writeback_enabled": self.writeback_enabled,
         }
@@ -691,101 +838,77 @@ def convert_step15_generated_to_prediction(
     )
 
 
-def normalize_step15_prediction_after_arbitration(
-    prediction: FieldPrediction,
+def build_agent_overlay_for_step15_prediction(
+    raw_prediction: FieldPrediction,
     top_hits: list[dict[str, Any]],
     critic_flags: list[str],
     *,
     min_reference_hits: int = 1,
-) -> FieldPrediction:
-    reference_docs = prediction.reference_source_documents
-    validation = dict(prediction.validation)
-    should_rescue_not_found = prediction.answer_status == "not_found" and has_relevant_reference_hits(top_hits, min_reference_hits=min_reference_hits)
-    should_fill_partial_refs = prediction.answer_status == "partial_clue" and not reference_docs and len(top_hits) >= min_reference_hits
+) -> AgentOverlay:
+    reference_docs = list(raw_prediction.reference_source_documents)
+    reasons: list[str] = list(critic_flags)
+    suggested_status: str | None = None
+    suggested_answer_value: str | None = None
+    suggested_reference_docs: list[dict[str, Any]] = []
+    should_rescue_not_found = raw_prediction.answer_status == "not_found" and has_relevant_reference_hits(
+        top_hits, min_reference_hits=min_reference_hits
+    )
+    should_fill_partial_refs = raw_prediction.answer_status == "partial_clue" and not reference_docs and len(top_hits) >= min_reference_hits
     downgrade_flags = [flag for flag in critic_flags if flag in RISKY_ANSWERED_DOWNGRADE_FLAGS]
-    should_downgrade_answered = prediction.answer_status == "answered" and bool(downgrade_flags)
-
-    if not (should_rescue_not_found or should_fill_partial_refs or should_downgrade_answered):
-        return prediction
-
-    if not reference_docs:
-        reference_docs = reference_source_documents_from_hits(top_hits)
-    reference_ids = dedupe([str(doc.get("chunk_id")) for doc in reference_docs if doc.get("chunk_id")])
-    snippets = reference_snippets(reference_docs, top_hits)
-    validation["post_arbitration_normalized"] = True
+    should_flag_risky_answered = raw_prediction.answer_status == "answered" and bool(downgrade_flags)
 
     if should_rescue_not_found:
-        validation["status_rescued"] = "not_found_to_partial_clue"
-        validation["original_answer_status"] = prediction.answer_status
-        validation["original_answer_value"] = prediction.answer_value
-        return replace(
-            prediction,
-            answer_status="partial_clue",
-            answer_value="未找到可直接填写的证据；检索到相关线索，请人工复核。",
-            confidence=partial_confidence(prediction.confidence),
-            source_chunk_ids=[],
-            evidence_attachment_ids=[],
-            reference_chunk_ids=reference_ids,
-            reference_source_documents=reference_docs,
-            reference_snippets=snippets,
-            validation=validation,
-        )
+        suggested_status = "partial_clue"
+        suggested_answer_value = "未找到可直接填写的证据；检索到相关线索，请人工复核。"
+        reasons.append("not_found_with_relevant_hits")
+        suggested_reference_docs = reference_source_documents_from_hits(top_hits)
+    elif should_fill_partial_refs:
+        reasons.append("reference_docs_filled_by_runner")
+        suggested_reference_docs = reference_source_documents_from_hits(top_hits)
+    elif should_flag_risky_answered:
+        suggested_status = "partial_clue"
+        suggested_answer_value = "检索到相关线索，但证据不足以安全直接填写；请人工复核。"
+        reasons.append("risky_answered_requires_review")
+        suggested_reference_docs = reference_source_documents_from_hits(top_hits)
 
-    if should_downgrade_answered:
-        validation["downgraded_by_critic"] = True
-        validation["downgrade_flags"] = downgrade_flags
-        validation["original_answer_status"] = prediction.answer_status
-        validation["original_answer_value"] = prediction.answer_value
-        return replace(
-            prediction,
-            answer_status="partial_clue",
-            answer_value="检索到相关线索，但证据不足以安全直接填写；请人工复核。",
-            confidence=min(prediction.confidence, 0.55),
-            source_chunk_ids=[],
-            evidence_attachment_ids=[],
-            reference_chunk_ids=reference_ids,
-            reference_source_documents=reference_docs,
-            reference_snippets=snippets,
-            validation=validation,
-        )
-
-    validation["reference_docs_filled_by_runner"] = True
-    return replace(
-        prediction,
-        reference_chunk_ids=reference_ids,
-        reference_source_documents=reference_docs,
-        reference_snippets=snippets,
-        validation=validation,
+    if not suggested_reference_docs and reference_docs:
+        suggested_reference_docs = reference_docs
+    suggested_reference_ids = dedupe([str(doc.get("chunk_id")) for doc in suggested_reference_docs if doc.get("chunk_id")])
+    suggested_snippets = reference_snippets(suggested_reference_docs, top_hits)
+    critical_flags = [flag for flag in critic_flags if flag in CRITICAL_OVERLAY_FLAGS]
+    if raw_prediction.answer_status == "answered" and not critical_flags:
+        writeback_allowed = True
+        review_required = False
+    else:
+        writeback_allowed = False
+        review_required = True
+    if raw_prediction.answer_status in {"partial_clue", "not_found", "conflict_unresolved"}:
+        review_required = True
+        writeback_allowed = False
+    if critical_flags:
+        review_required = True
+        writeback_allowed = False
+    if critical_flags:
+        risk_level = "high"
+    elif review_required or critic_flags:
+        risk_level = "medium"
+    else:
+        risk_level = "low"
+    return AgentOverlay(
+        field_id=raw_prediction.field_id,
+        row_index=raw_prediction.row_index,
+        target_cell=raw_prediction.target_cell,
+        critic_flags=critic_flags,
+        review_required=review_required,
+        writeback_allowed=writeback_allowed,
+        suggested_status=suggested_status,
+        suggested_answer_value=suggested_answer_value,
+        suggested_reference_source_documents=suggested_reference_docs,
+        suggested_reference_chunk_ids=suggested_reference_ids,
+        suggested_reference_snippets=suggested_snippets,
+        risk_level=risk_level,
+        reasons=dedupe(reasons),
     )
-
-
-def generated_from_prediction(prediction: FieldPrediction, original_generated: dict[str, Any]) -> dict[str, Any]:
-    generated = dict(original_generated)
-    generated.update(
-        {
-            "answer_value": prediction.answer_value,
-            "answer_status": prediction.answer_status,
-            "confidence": prediction.confidence,
-            "source_chunk_ids": prediction.source_chunk_ids,
-            "evidence_attachment_ids": prediction.evidence_attachment_ids,
-            "reference_chunk_ids": prediction.reference_chunk_ids,
-            "reference_source_documents": prediction.reference_source_documents,
-            "reference_snippets": prediction.reference_snippets,
-        }
-    )
-    if prediction.validation.get("status_rescued"):
-        generated["agent_resolution"] = {
-            "used": True,
-            "action": "clue_only",
-            "reason": "runner rescued not_found with relevant retrieved evidence",
-        }
-    if prediction.validation.get("downgraded_by_critic"):
-        generated["agent_resolution"] = {
-            "used": True,
-            "action": "clue_only",
-            "reason": "runner downgraded high-risk answered output to partial_clue",
-        }
-    return generated
 
 
 def critic_check_step15_answer(
@@ -829,16 +952,10 @@ def critic_check_step15_answer(
 def make_step15_review_item(
     item: dict[str, Any],
     prediction: FieldPrediction,
-    critic_flags: list[str],
+    overlay: AgentOverlay,
     top_hits: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    needs_review = (
-        prediction.answer_status in {"partial_clue", "not_found", "conflict_unresolved"}
-        or bool(critic_flags)
-        or prediction.confidence < 0.5
-        or prediction.validation.get("validation_pass") is False
-    )
-    if not needs_review:
+    if not overlay.review_required:
         return None
     return {
         "field_id": prediction.field_id,
@@ -850,9 +967,16 @@ def make_step15_review_item(
         "confidence": prediction.confidence,
         "source_chunk_ids": prediction.source_chunk_ids,
         "reference_source_documents": prediction.reference_source_documents,
-        "critic_flags": critic_flags,
+        "critic_flags": overlay.critic_flags,
+        "agent_overlay": overlay.to_dict(),
+        "suggested_status": overlay.suggested_status,
+        "suggested_answer_value": overlay.suggested_answer_value,
+        "suggested_reference_source_documents": overlay.suggested_reference_source_documents,
+        "writeback_allowed": overlay.writeback_allowed,
+        "risk_level": overlay.risk_level,
+        "reasons": overlay.reasons,
         "top_hit_preview": top_hit_preview(top_hits),
-        "suggested_action": suggested_review_action(prediction.answer_status, critic_flags),
+        "suggested_action": suggested_review_action(prediction.answer_status, overlay.critic_flags, overlay),
     }
 
 
@@ -1128,9 +1252,15 @@ def make_eval_result(
     }
 
 
-def build_trace_summary(events: list[Any], predictions: list[FieldPrediction], review_items: list[dict[str, Any]]) -> dict[str, Any]:
+def build_trace_summary(
+    events: list[Any],
+    predictions: list[FieldPrediction],
+    review_items: list[dict[str, Any]],
+    overlays: list[AgentOverlay] | None = None,
+) -> dict[str, Any]:
     status_counts = Counter(prediction.answer_status for prediction in predictions)
-    critic_flags = Counter(flag for prediction in predictions for flag in prediction.validation.get("critic_flags", []))
+    overlays = overlays or []
+    critic_flags = Counter(flag for overlay in overlays for flag in overlay.critic_flags)
     retrieval_latencies = [
         float(event.payload.get("retrieval_latency_ms") or 0)
         for event in events
@@ -1149,6 +1279,8 @@ def build_trace_summary(events: list[Any], predictions: list[FieldPrediction], r
         "conflict_unresolved_count": status_counts.get("conflict_unresolved", 0),
         "review_count": len(review_items),
         "critic_flag_counts": dict(critic_flags),
+        "raw_status_counts": dict(status_counts),
+        "overlay_counts": build_overlay_counts(overlays),
         "avg_retrieval_latency_ms": round(sum(retrieval_latencies) / len(retrieval_latencies), 3) if retrieval_latencies else 0,
         "avg_generation_latency_ms": round(sum(generation_latencies) / len(generation_latencies), 3) if generation_latencies else 0,
         "failed_count": sum(1 for event in events if event.step == "field_failed"),
@@ -1160,6 +1292,7 @@ def build_trace_summary(events: list[Any], predictions: list[FieldPrediction], r
 def build_summary_json(
     *,
     predictions: list[FieldPrediction],
+    overlays: list[AgentOverlay],
     eval_results: list[dict[str, Any]],
     trace_summary: dict[str, Any],
     run_state: dict[str, Any],
@@ -1171,7 +1304,11 @@ def build_summary_json(
     return {
         **run_state,
         "method_name": "step15_agent",
+        "effect_metrics_source": "predictions_raw.jsonl",
+        "production_controls_source": "agent_overlays.jsonl",
         "answer_status_counts": dict(Counter(prediction.answer_status for prediction in predictions)),
+        "raw_status_counts": dict(Counter(prediction.answer_status for prediction in predictions)),
+        "overlay_counts": build_overlay_counts(overlays),
         "trace_summary": trace_summary,
         "label_counts": dict(label_counts),
         "average_score": round(sum(numeric_scores) / len(numeric_scores), 4) if numeric_scores else 0,
@@ -1182,8 +1319,20 @@ def build_summary_json(
     }
 
 
+def build_overlay_counts(overlays: list[AgentOverlay]) -> dict[str, Any]:
+    critic_flags = Counter(flag for overlay in overlays for flag in overlay.critic_flags)
+    return {
+        "review_required": sum(1 for overlay in overlays if overlay.review_required),
+        "writeback_allowed": sum(1 for overlay in overlays if overlay.writeback_allowed),
+        "suggested_partial_clue": sum(1 for overlay in overlays if overlay.suggested_status == "partial_clue"),
+        "risk_levels": dict(Counter(overlay.risk_level for overlay in overlays)),
+        "critic_flag_counts": dict(critic_flags),
+    }
+
+
 def build_run_summary_md(*, summary: dict[str, Any], output_files: list[str], writeback_status: str) -> str:
     trace_summary = summary.get("trace_summary") or {}
+    overlay_counts = summary.get("overlay_counts") or {}
     lines = [
         "# Step15AgentRunner Run Summary",
         "",
@@ -1202,6 +1351,9 @@ def build_run_summary_md(*, summary: dict[str, Any], output_files: list[str], wr
         f"- average_score: {summary.get('average_score', 0)}",
         f"- exact_or_acceptable: {summary.get('acceptable_or_better', 0)}",
         f"- partial_or_better: {summary.get('partial_or_better', 0)}",
+        f"- overlay_review_required: {overlay_counts.get('review_required', 0)}",
+        f"- overlay_writeback_allowed: {overlay_counts.get('writeback_allowed', 0)}",
+        f"- overlay_suggested_partial_clue: {overlay_counts.get('suggested_partial_clue', 0)}",
         f"- writeback: {writeback_status}",
         "",
         "## Runtime Model",
@@ -1261,6 +1413,82 @@ def ordered_predictions_for_items(items: list[dict[str, Any]], predictions_by_fi
     return sorted(ordered, key=lambda prediction: (prediction.row_index, prediction.field_id))
 
 
+def ordered_overlays_for_predictions(predictions: list[FieldPrediction], overlays_by_field_id: dict[str, AgentOverlay]) -> list[AgentOverlay]:
+    return [overlays_by_field_id.get(prediction.field_id) or default_blocking_overlay(prediction) for prediction in predictions]
+
+
+def build_agent_view_records(predictions: list[FieldPrediction], overlays: list[AgentOverlay]) -> list[dict[str, Any]]:
+    overlay_by_field_id = {overlay.field_id: overlay for overlay in overlays}
+    records: list[dict[str, Any]] = []
+    for prediction in predictions:
+        overlay = overlay_by_field_id.get(prediction.field_id) or default_blocking_overlay(prediction)
+        records.append({**prediction.to_dict(), "agent_overlay": overlay.to_dict()})
+    return records
+
+
+def default_blocking_overlay(prediction: FieldPrediction) -> AgentOverlay:
+    return AgentOverlay(
+        field_id=prediction.field_id,
+        row_index=prediction.row_index,
+        target_cell=prediction.target_cell,
+        critic_flags=[],
+        review_required=True,
+        writeback_allowed=False,
+        suggested_status=None,
+        suggested_answer_value=None,
+        suggested_reference_source_documents=[],
+        suggested_reference_chunk_ids=[],
+        suggested_reference_snippets=[],
+        risk_level="medium",
+        reasons=["missing_overlay"],
+    )
+
+
+def load_judge_cache(path: Path | None) -> dict[str, dict[str, Any]]:
+    if path is None or not path.exists():
+        return {}
+    cache: dict[str, dict[str, Any]] = {}
+    for record in read_jsonl(path):
+        cache_key = str(record.get("cache_key") or "")
+        judge = record.get("judge")
+        if cache_key and isinstance(judge, dict):
+            cache[cache_key] = dict(judge)
+    return cache
+
+
+def append_judge_cache_record(path: Path, record: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def build_judge_cache_key(
+    *,
+    item: dict[str, Any],
+    generated: dict[str, Any],
+    heldout_answer: str,
+    judge_prompt_version: str,
+    judge_model: str,
+) -> str:
+    payload = {
+        "field_id": field_id_for_item(item),
+        "question_text_hash": stable_hash(item.get("question_text")),
+        "heldout_answer_hash": stable_hash(heldout_answer),
+        "raw_answer_value_hash": stable_hash(generated.get("answer_value")),
+        "raw_answer_status": generated.get("answer_status"),
+        "source_chunk_ids_hash": stable_hash(generated.get("source_chunk_ids") or []),
+        "reference_source_documents_hash": stable_hash(generated.get("reference_source_documents") or []),
+        "judge_prompt_version": judge_prompt_version,
+        "judge_model": judge_model,
+    }
+    return stable_hash(payload)
+
+
+def stable_hash(value: Any) -> str:
+    text = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def ordered_eval_results_for_items(items: list[dict[str, Any]], eval_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_row = {int(result.get("row_index") or 0): result for result in eval_results}
     return [by_row[int(item.get("row_index") or 0)] for item in items if int(item.get("row_index") or 0) in by_row]
@@ -1294,7 +1522,11 @@ def top_hit_preview(top_hits: list[dict[str, Any]], limit: int = 5) -> list[dict
     ]
 
 
-def suggested_review_action(answer_status: str, critic_flags: list[str]) -> str:
+def suggested_review_action(answer_status: str, critic_flags: list[str], overlay: AgentOverlay | None = None) -> str:
+    if overlay and not overlay.writeback_allowed and answer_status == "answered":
+        return "核对 source_chunk_ids 与答案一致性；overlay 已阻止自动回写。"
+    if overlay and overlay.suggested_status == "partial_clue":
+        return "根据 overlay 建议和参考来源人工确认是否可填写。"
     if answer_status == "partial_clue":
         return "根据 reference_source_documents 人工确认是否可填写。"
     if answer_status == "not_found":

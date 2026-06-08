@@ -80,6 +80,7 @@ def build_qdrant_answer_messages(
     hits: list[dict[str, Any]],
     *,
     room_context: str | None = None,
+    prompt_version: str = "step15_compat",
 ) -> list[dict[str, str]]:
     evidence = [normalize_hit_for_prompt(hit) for hit in hits]
     item_view = {
@@ -95,33 +96,17 @@ def build_qdrant_answer_messages(
         "needs_evidence": item.get("needs_evidence"),
         "external_room_context": display_text(room_context),
     }
-    schema = {
-        "answer_value": "可直接填入工勘单的短答案；没有足够直接证据时填“未找到”",
-        "answer_status": "answered | partial_clue | not_found | conflict_unresolved",
-        "confidence": "0-1",
-        "source_chunk_ids": ["直接支撑 answer_value 的 chunk id；partial_clue/not_found 时为空数组"],
-        "evidence_attachment_ids": ["直接支撑 answer_value 的附件 id；partial_clue/not_found 时为空数组"],
-        "reference_source_documents": [
-            {
-                "file_name": "仅作参考线索的来源文件名",
-                "anchor": "来源位置",
-                "chunk_id": "来源 chunk id",
-                "namespace": "来源 namespace",
-                "source_type": "来源 source_type",
-                "retrieval_layer": "来源 retrieval_layer",
-                "source_anchor": "来源锚点",
-                "text_preview": "短证据预览",
-                "reason": "为什么只是参考线索而不是可填证据",
-            }
-        ],
-        "agent_resolution": {
-            "used": "是否进行了智能体仲裁/格式转换/冲突处理",
-            "action": "none | select_source | format_transform | conflict_marked | clue_only",
-            "reason": "简短说明",
-        },
-        "missing_fields": ["缺失字段"],
-        "notes": "边界说明",
-    }
+    schema = build_answer_schema(prompt_version)
+    agent_v2_rules = ""
+    if prompt_version == "agent_v2":
+        agent_v2_rules = (
+            "not_found strict rule: Use not_found only when the retrieved evidence pack contains no relevant information for the field. "
+            "If any retrieved evidence is related but insufficient for direct filling, output partial_clue.\n"
+            "partial source rule: For partial_clue, always include reference_source_documents with chunk_id, namespace, source_type, retrieval_layer, "
+            "source_anchor, and a short evidence preview.\n"
+        )
+    elif prompt_version != "step15_compat":
+        raise ValueError(f"unsupported prompt_version: {prompt_version}")
     user_prompt = (
         "下面是一个工勘单填报项、外部已知目标机房上下文和 RAG 检索结果。"
         "请只使用 external_room_context 与 retrieved_chunks 中的信息生成答案，不能使用常识，不能使用表格最后一列答案、heldout answer、expected_value 或 gold answer。\n"
@@ -133,10 +118,7 @@ def build_qdrant_answer_messages(
         "2. 如果只命中相关信息，但粒度不够、缺少台数/实测值/房间粒度，或格式口径不足以直接填表，answer_status=partial_clue，answer_value 必须是“未找到”，"
         "只在 reference_source_documents 中列出参考来源文件、位置和原因，不把它当直接证据。\n"
         "3. 如果没有相关信息，answer_status=not_found，answer_value 必须是“未找到”。not_found 只应在没有相关证据时使用。\n"
-        "not_found strict rule: Use not_found only when the retrieved evidence pack contains no relevant information for the field. "
-        "If any retrieved evidence is related but insufficient for direct filling, output partial_clue.\n"
-        "partial source rule: For partial_clue, always include reference_source_documents with chunk_id, namespace, source_type, retrieval_layer, "
-        "source_anchor, and a short evidence preview.\n"
+        f"{agent_v2_rules}"
         "4. 如果多个 retrieved_chunks 都像可用证据但互相冲突，交给你做智能体仲裁：优先同 namespace 的 main_excel_capability，"
         "其次精确指标行，最后才是 global/intro_doc 长段说明；无法裁决时 answer_status=conflict_unresolved，answer_value 必须是“未找到”。\n"
         "5. 对 main_excel_capability 的 raw_text，斜杠前后的能力描述也是证据的一部分，不只看最后的现状/答案。"
@@ -166,6 +148,40 @@ def build_qdrant_answer_messages(
         },
         {"role": "user", "content": user_prompt},
     ]
+
+
+def build_answer_schema(prompt_version: str) -> dict[str, Any]:
+    reference_doc_schema = {
+        "file_name": "仅作参考线索的来源文件名",
+        "anchor": "来源位置",
+        "chunk_id": "来源 chunk id",
+        "reason": "为什么只是参考线索而不是可填证据",
+    }
+    if prompt_version == "agent_v2":
+        reference_doc_schema.update(
+            {
+                "namespace": "来源 namespace",
+                "source_type": "来源 source_type",
+                "retrieval_layer": "来源 retrieval_layer",
+                "source_anchor": "来源锚点",
+                "text_preview": "短证据预览",
+            }
+        )
+    return {
+        "answer_value": "可直接填入工勘单的短答案；没有足够直接证据时填“未找到”",
+        "answer_status": "answered | partial_clue | not_found | conflict_unresolved",
+        "confidence": "0-1",
+        "source_chunk_ids": ["直接支撑 answer_value 的 chunk id；partial_clue/not_found 时为空数组"],
+        "evidence_attachment_ids": ["直接支撑 answer_value 的附件 id；partial_clue/not_found 时为空数组"],
+        "reference_source_documents": [reference_doc_schema],
+        "agent_resolution": {
+            "used": "是否进行了智能体仲裁/格式转换/冲突处理",
+            "action": "none | select_source | format_transform | conflict_marked | clue_only",
+            "reason": "简短说明",
+        },
+        "missing_fields": ["缺失字段"],
+        "notes": "边界说明",
+    }
 
 
 def normalize_hit_for_prompt(hit: dict[str, Any]) -> dict[str, Any]:
