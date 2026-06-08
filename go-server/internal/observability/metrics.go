@@ -12,11 +12,11 @@ import (
 )
 
 type Metrics struct {
-	Registry              *prometheus.Registry
-	HTTPRequestsTotal     *prometheus.CounterVec
-	HTTPRequestDuration   *prometheus.HistogramVec
-	HTTPRequestsInFlight  prometheus.Gauge
-	AppReadyChecksTotal   *prometheus.CounterVec
+	Registry             *prometheus.Registry
+	HTTPRequestsTotal    *prometheus.CounterVec
+	HTTPRequestDuration  *prometheus.HistogramVec
+	HTTPRequestsInFlight prometheus.Gauge
+	AppReadyChecksTotal  *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
