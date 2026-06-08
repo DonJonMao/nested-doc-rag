@@ -1,0 +1,105 @@
+openapi: 3.0.3
+info:
+  title: Gongkan Platform Go Backend
+  version: 0.1.0
+  description: Block 0 infrastructure API for the nested-doc-rag Go backend.
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+  /readyz:
+    get:
+      summary: Readiness probe
+      responses:
+        "200":
+          description: Dependencies are ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        "503":
+          description: At least one dependency failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      responses:
+        "200":
+          description: Prometheus text exposition.
+          content:
+            text/plain:
+              schema:
+                type: string
+  /api/v1/ping:
+    get:
+      summary: API ping
+      responses:
+        "200":
+          description: Service metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+components:
+  schemas:
+    ApiResponse:
+      type: object
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+          example: OK
+        message:
+          type: string
+          example: success
+        data:
+          type: object
+          additionalProperties: true
+        request_id:
+          type: string
+          example: req_123
+    ApiErrorResponse:
+      type: object
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+          example: INTERNAL
+        message:
+          type: string
+          example: service is not ready
+        details:
+          type: object
+          additionalProperties: true
+        request_id:
+          type: string
+          example: req_123
+    ReadyResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                status:
+                  type: string
+                  example: ok
+                checks:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  example:
+                    database: ok
+                    redis: ok
+                    storage: ok
