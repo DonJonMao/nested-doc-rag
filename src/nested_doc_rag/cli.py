@@ -13,7 +13,9 @@ from nested_doc_rag.agent.backends import (
     MiniCorpusRetriever,
     QdrantEvidenceRetriever,
 )
+from nested_doc_rag.agent.step15_runner import Step15AgentRunner, parse_rows_arg, validate_step15_agent_config
 from nested_doc_rag.embedding import RerankClient
+from nested_doc_rag.gongkan_eval import select_eval_items
 from nested_doc_rag.retrieval import QdrantRetriever
 
 from .agent.runner import FieldFillingAgent, load_corpus, load_fields
@@ -82,6 +84,37 @@ def build_parser() -> argparse.ArgumentParser:
     agent_parser.add_argument("--resume", action="store_true", help="Resume from field-level checkpoints in out-dir.")
     agent_parser.add_argument("--checkpoint-every", type=int, default=1, help="Write a checkpoint after this many completed fields.")
     agent_parser.add_argument("--checkpoint-path", type=Path, default=None, help="Optional predictions checkpoint JSONL path.")
+
+    step15_agent_parser = subparsers.add_parser("run-step15-agent", help="Run Step 15 layered RAG inside an Agentic runtime.")
+    step15_agent_parser.add_argument("--config", type=Path, default=None, help="Optional local YAML config path.")
+    step15_agent_parser.add_argument("--target-namespace", default=None, help="Target namespace.")
+    step15_agent_parser.add_argument("--global-namespace", default=None, help="Global/reference namespace.")
+    step15_agent_parser.add_argument("--room-context", default=None, help="Known target room context for disambiguation.")
+    step15_agent_parser.add_argument("--rows", default="all", help="Rows to run: all, 4-144, or 34,38,42.")
+    step15_agent_parser.add_argument("--form-items", type=Path, default=None, help="Optional form_items.jsonl override.")
+    step15_agent_parser.add_argument("--retrieval-mode", choices=["flat", "layered"], default=None, help="Step 15 retrieval mode.")
+    step15_agent_parser.add_argument("--vector-top-k", type=int, default=None, help="Flat vector retrieval top-k.")
+    step15_agent_parser.add_argument("--rerank-top-n", type=int, default=None, help="Flat rerank top-n.")
+    judge_group = step15_agent_parser.add_mutually_exclusive_group()
+    judge_group.add_argument("--judge", dest="judge", action="store_true", default=False, help="Run heldout-answer judge.")
+    judge_group.add_argument("--no-judge", dest="judge", action="store_false", help="Disable judge. This is production mode.")
+    step15_agent_parser.add_argument("--resume", action="store_true", help="Resume from field-level checkpoints in out-dir.")
+    step15_agent_parser.add_argument("--checkpoint-every", type=int, default=1, help="Write checkpoint every N fields.")
+    step15_agent_parser.add_argument("--template", type=Path, default=None, help="Optional Excel template for safe writeback.")
+    step15_agent_parser.add_argument("--writeback", action="store_true", help="Enable safe Excel writeback.")
+    step15_agent_parser.add_argument("--out-dir", type=Path, required=True, help="Run output directory.")
+    step15_agent_parser.add_argument("--qdrant-path", type=Path, default=None, help="Qdrant local path.")
+    step15_agent_parser.add_argument("--qdrant-collection", default=None, help="Qdrant collection name.")
+    step15_agent_parser.add_argument("--embedding-endpoint", default=None, help="Embedding service endpoint.")
+    step15_agent_parser.add_argument("--embedding-model", default=None, help="Embedding model name.")
+    step15_agent_parser.add_argument("--rerank-endpoint", default=None, help="Rerank service endpoint.")
+    step15_agent_parser.add_argument("--rerank-model", default=None, help="Rerank model name.")
+    step15_agent_parser.add_argument("--chat-endpoint", default=None, help="DeepSeek/OpenAI-compatible chat completion endpoint.")
+    step15_agent_parser.add_argument("--chat-model", default=None, help="Chat model name.")
+    step15_agent_parser.add_argument("--chat-api-key-env", default=None, help="Environment variable containing chat API key.")
+    step15_agent_parser.add_argument("--deepseek-api-key-env", default=None, help="Alias for --chat-api-key-env.")
+    step15_agent_parser.add_argument("--deepseek-api-key", default=None, help="Optional direct chat API key. Prefer env vars for real runs.")
+    step15_agent_parser.add_argument("--timeout", type=int, default=None, help="HTTP timeout seconds.")
     return parser
 
 
@@ -189,6 +222,75 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "out_dir": str(args.out_dir),
                     "run_id": agent.run_id,
                     "writeback": agent.writeback_status,
+                },
+                ensure_ascii=False,
+            )
+        )
+    elif args.command == "run-step15-agent":
+        config = load_app_config(args.config)
+        step12_dir = config.paths.artifacts_dir / "12_gongkan_form_analysis"
+        form_items_path = args.form_items or (step12_dir / "form_items.jsonl")
+        try:
+            rows = parse_rows_arg(args.rows, step12_dir=step12_dir)
+            target_namespace = args.target_namespace or config.retrieval.target_namespace
+            global_namespace = args.global_namespace or config.retrieval.global_namespace
+            qdrant_path = args.qdrant_path or config.paths.qdrant_path
+            collection_name = args.qdrant_collection or config.qdrant.collection_name
+            embedding_endpoint = args.embedding_endpoint or config.services.embedding_endpoint
+            embedding_model = args.embedding_model or config.services.embedding_model
+            rerank_endpoint = args.rerank_endpoint or config.services.rerank_endpoint
+            chat_endpoint = args.chat_endpoint or config.services.chat_endpoint
+            chat_model = args.chat_model or config.services.chat_model
+            validate_step15_agent_config(
+                qdrant_path=qdrant_path,
+                collection_name=collection_name,
+                embedding_endpoint=embedding_endpoint,
+                embedding_model=embedding_model,
+                rerank_endpoint=rerank_endpoint,
+                chat_endpoint=chat_endpoint,
+                chat_model=chat_model,
+            )
+            items = select_eval_items(rows, form_items_path=form_items_path)
+        except (RuntimeError, ValueError) as exc:
+            parser.error(str(exc))
+        api_key_env = args.deepseek_api_key_env or args.chat_api_key_env or config.services.chat_api_key_env
+        runner = Step15AgentRunner(
+            config=config,
+            target_namespace=target_namespace,
+            global_namespace=global_namespace,
+            room_context=args.room_context,
+            out_dir=args.out_dir,
+            retrieval_mode=args.retrieval_mode or "layered",
+            vector_top_k=args.vector_top_k or config.retrieval.vector_top_k,
+            rerank_top_n=args.rerank_top_n or config.retrieval.rerank_top_n,
+            judge_enabled=bool(args.judge),
+            writeback_enabled=bool(args.writeback),
+            template_path=args.template,
+            checkpoint_every=args.checkpoint_every,
+            resume=args.resume,
+            timeout_seconds=args.timeout or config.services.timeout_seconds,
+            deepseek_api_key_env=api_key_env,
+            qdrant_path=qdrant_path,
+            collection_name=collection_name,
+            embedding_endpoint=embedding_endpoint,
+            embedding_model=embedding_model,
+            rerank_endpoint=rerank_endpoint,
+            rerank_model=args.rerank_model if args.rerank_model is not None else config.services.rerank_model,
+            chat_endpoint=chat_endpoint,
+            chat_model=chat_model,
+            chat_api_key=args.deepseek_api_key if args.deepseek_api_key is not None else os.environ.get(api_key_env, ""),
+            allowed_layers=config.retrieval.query_layers,
+            layered_plan=config.retrieval.layered_plan,
+        )
+        predictions = runner.run(items)
+        print(
+            json.dumps(
+                {
+                    "field_count": len(predictions),
+                    "out_dir": str(args.out_dir),
+                    "run_id": runner.run_id,
+                    "judge": bool(args.judge),
+                    "writeback": runner.writeback_status,
                 },
                 ensure_ascii=False,
             )

@@ -1,0 +1,330 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from nested_doc_rag.agent.step15_runner import (
+    Step15AgentRunner,
+    convert_step15_generated_to_prediction,
+    critic_check_step15_answer,
+    make_step15_review_item,
+)
+from nested_doc_rag.cli import build_parser
+from nested_doc_rag.config import load_app_config
+from nested_doc_rag.evaluation.step15_engine import Step15RetrievalResult
+from nested_doc_rag.io import read_jsonl, write_jsonl
+from nested_doc_rag.schemas.eval import FieldPrediction
+
+
+def test_convert_step15_generated_to_prediction_answered() -> None:
+    prediction = convert_step15_generated_to_prediction(
+        make_item(4),
+        {
+            "answer_value": "2路市电",
+            "answer_status": "answered",
+            "confidence": 0.86,
+            "source_chunk_ids": ["chunk_main"],
+            "evidence_attachment_ids": ["att_1"],
+            "agent_resolution": {"used": True, "action": "select_source", "reason": "主表命中"},
+        },
+        make_hits(),
+    )
+
+    assert prediction.answer_status == "answered"
+    assert prediction.source_chunk_ids == ["chunk_main"]
+    assert prediction.evidence_attachment_ids == ["att_1"]
+    assert prediction.validation["engine"] == "step15_agent"
+    assert prediction.validation["source_ids_valid"] is True
+
+
+def test_convert_step15_generated_to_prediction_partial() -> None:
+    prediction = convert_step15_generated_to_prediction(
+        make_item(5),
+        {
+            "answer_value": "未找到",
+            "answer_status": "partial_clue",
+            "confidence": 0.45,
+            "source_chunk_ids": [],
+            "reference_source_documents": [
+                {"file_name": "intro.docx", "anchor": "P3", "chunk_id": "chunk_global", "reason": "只有园区级说明"}
+            ],
+        },
+        make_hits(),
+    )
+
+    assert prediction.answer_status == "partial_clue"
+    assert prediction.reference_chunk_ids == ["chunk_global"]
+    assert prediction.reference_source_documents[0]["retrieval_layer"] == "global_intro"
+    assert prediction.reference_snippets
+
+
+def test_critic_answered_without_source() -> None:
+    flags = critic_check_step15_answer(make_item(4), {"answer_status": "answered", "answer_value": "2路市电", "source_chunk_ids": []}, make_hits())
+
+    assert "answered_without_source" in flags
+
+
+def test_critic_partial_without_reference() -> None:
+    flags = critic_check_step15_answer(
+        make_item(5),
+        {"answer_status": "partial_clue", "answer_value": "未找到", "source_chunk_ids": [], "reference_source_documents": []},
+        make_hits(),
+    )
+
+    assert "partial_without_reference" in flags
+
+
+def test_review_routing_for_partial() -> None:
+    prediction = convert_step15_generated_to_prediction(
+        make_item(5),
+        {
+            "answer_value": "未找到",
+            "answer_status": "partial_clue",
+            "confidence": 0.45,
+            "reference_source_documents": [
+                {"file_name": "intro.docx", "anchor": "P3", "chunk_id": "chunk_global", "reason": "只有园区级说明"}
+            ],
+        },
+        make_hits(),
+    )
+
+    item = make_step15_review_item(make_item(5), prediction, [], make_hits())
+
+    assert item is not None
+    assert item["answer_status"] == "partial_clue"
+    assert item["suggested_action"] == "根据 reference_source_documents 人工确认是否可填写。"
+
+
+def test_checkpoint_writes_each_field(tmp_path: Path) -> None:
+    runner = make_runner(tmp_path, answer_caller=answered_answer_caller)
+
+    predictions = runner.run([make_item(4), make_item(5)])
+
+    assert len(predictions) == 2
+    assert len(read_jsonl(tmp_path / "predictions.checkpoint.jsonl")) == 2
+    assert (tmp_path / "trace.checkpoint.jsonl").exists()
+    assert (tmp_path / "review_items.checkpoint.jsonl").exists()
+    assert (tmp_path / "run_state.json").exists()
+
+
+def test_resume_skips_completed_rows(tmp_path: Path) -> None:
+    completed = FieldPrediction(
+        field_id="item_4",
+        row_index=4,
+        target_cell="D4",
+        answer_value="已完成",
+        answer_status="answered",
+        confidence=0.9,
+        method_name="step15_agent",
+    )
+    write_jsonl(tmp_path / "predictions.checkpoint.jsonl", [completed.to_dict()])
+    calls: list[str] = []
+    runner = make_runner(tmp_path, answer_caller=answered_answer_caller, retrieval_fn=recording_retrieval(calls), resume=True)
+
+    predictions = runner.run([make_item(4), make_item(5)])
+
+    assert [prediction.row_index for prediction in predictions] == [4, 5]
+    assert len(calls) == 1
+    assert "skipped_completed_count: 1" in (tmp_path / "run_summary.md").read_text(encoding="utf-8")
+
+
+def test_field_failure_does_not_abort_run(tmp_path: Path) -> None:
+    def caller(**kwargs: Any) -> dict[str, Any]:
+        if kwargs["item"]["row_index"] == 5:
+            raise RuntimeError("fake llm failure")
+        return answered_answer_caller(**kwargs)
+
+    runner = make_runner(tmp_path, answer_caller=caller)
+
+    predictions = runner.run([make_item(4), make_item(5), make_item(6)])
+
+    assert [prediction.row_index for prediction in predictions] == [4, 5, 6]
+    failed = next(prediction for prediction in predictions if prediction.row_index == 5)
+    assert failed.answer_status == "conflict_unresolved"
+    assert failed.validation["error"] == "fake llm failure"
+    assert next(prediction for prediction in predictions if prediction.row_index == 6).answer_status == "answered"
+
+
+def test_cli_run_step15_agent_args(tmp_path: Path) -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "run-step15-agent",
+            "--config",
+            "config/local.example.yaml",
+            "--target-namespace",
+            "xixian_4",
+            "--global-namespace",
+            "global",
+            "--room-context",
+            "西咸4号楼 301机房",
+            "--rows",
+            "4-5",
+            "--retrieval-mode",
+            "layered",
+            "--out-dir",
+            str(tmp_path),
+            "--resume",
+            "--judge",
+        ]
+    )
+
+    assert args.command == "run-step15-agent"
+    assert args.rows == "4-5"
+    assert args.judge is True
+    assert args.resume is True
+
+
+def test_judge_disabled_mode(tmp_path: Path) -> None:
+    def judge_caller(**kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("judge should not be called")
+
+    runner = make_runner(tmp_path, answer_caller=answered_answer_caller, judge_caller=judge_caller, judge_enabled=False)
+
+    runner.run([make_item(4, include_heldout=False)])
+
+    assert (tmp_path / "predictions.jsonl").exists()
+    assert (tmp_path / "trace.jsonl").exists()
+    assert not (tmp_path / "eval_results.jsonl").exists()
+
+
+def test_writeback_optional(tmp_path: Path) -> None:
+    calls: list[str] = []
+    template = tmp_path / "template.xlsx"
+    template.write_text("fake", encoding="utf-8")
+
+    runner = make_runner(tmp_path / "no_writeback", answer_caller=answered_answer_caller, writeback_enabled=False, writeback_fn=fake_writeback(calls))
+    runner.run([make_item(4)])
+    assert calls == []
+
+    runner = make_runner(
+        tmp_path / "with_writeback",
+        answer_caller=answered_answer_caller,
+        writeback_enabled=True,
+        template_path=template,
+        writeback_fn=fake_writeback(calls),
+    )
+    runner.run([make_item(4)])
+    assert calls == ["called"]
+
+
+def make_runner(
+    tmp_path: Path,
+    *,
+    answer_caller,
+    retrieval_fn=None,
+    judge_caller=None,
+    judge_enabled: bool = False,
+    resume: bool = False,
+    writeback_enabled: bool = False,
+    template_path: Path | None = None,
+    writeback_fn=None,
+) -> Step15AgentRunner:
+    config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml")
+    return Step15AgentRunner(
+        config=config,
+        target_namespace="xixian_4",
+        global_namespace="global",
+        room_context="西咸4号楼 301机房",
+        out_dir=tmp_path,
+        retrieval_mode="layered",
+        judge_enabled=judge_enabled,
+        resume=resume,
+        writeback_enabled=writeback_enabled,
+        template_path=template_path,
+        retrieval_fn=retrieval_fn or fake_retrieval,
+        answer_caller=answer_caller,
+        judge_caller=judge_caller,
+        writeback_fn=writeback_fn or fake_writeback([]),
+    )
+
+
+def make_item(row: int, *, include_heldout: bool = True) -> dict[str, Any]:
+    item = {
+        "form_item_id": f"item_{row}",
+        "file_name": "基地云机房信息调研表.xlsx",
+        "sheet_name": "Sheet1",
+        "row_index": row,
+        "target_cell": f"D{row}",
+        "category_path": ["电力", "市电"],
+        "question_text": "市电进线情况",
+        "instruction_text": "填写市电路数及来源",
+        "answer_example": "2路市电",
+        "needs_evidence": True,
+    }
+    if include_heldout:
+        item["existing_value"] = "2路市电"
+    return item
+
+
+def make_hits() -> list[dict[str, Any]]:
+    return [
+        {
+            "chunk_id": "chunk_main",
+            "namespace": "xixian_4",
+            "source_type": "main_excel_capability",
+            "corpus_layer": "fact",
+            "retrieval_layer": "target_main_fact",
+            "layer_priority": 1,
+            "rerank_score": 0.92,
+            "file_name": "main.xlsx",
+            "anchor": "row 12",
+            "raw_text": "市电进线情况：2路市电，来自同一变电站。",
+            "text_for_embedding": "市电进线情况 2路市电",
+            "proof_attachment_ids": ["att_1"],
+        },
+        {
+            "chunk_id": "chunk_global",
+            "namespace": "global",
+            "source_type": "intro_doc_paragraph",
+            "corpus_layer": "intro_doc",
+            "retrieval_layer": "global_intro",
+            "layer_priority": 4,
+            "rerank_score": 0.65,
+            "file_name": "intro.docx",
+            "anchor": "P3",
+            "raw_text": "园区供电有双路市电规划。",
+            "text_for_embedding": "园区供电 双路市电",
+        },
+    ]
+
+
+def fake_retrieval(query: str) -> Step15RetrievalResult:
+    del query
+    hits = make_hits()
+    return Step15RetrievalResult(reranked_hits=hits, vector_hits=hits, retrieval_mode="layered")
+
+
+def recording_retrieval(calls: list[str]):
+    def retrieve(query: str) -> Step15RetrievalResult:
+        calls.append(query)
+        return fake_retrieval(query)
+
+    return retrieve
+
+
+def answered_answer_caller(**kwargs: Any) -> dict[str, Any]:
+    chunk_id = kwargs["hits"][0]["chunk_id"]
+    return {
+        "answer_value": "2路市电，来自同一变电站",
+        "answer_status": "answered",
+        "confidence": 0.86,
+        "source_chunk_ids": [chunk_id],
+        "evidence_attachment_ids": ["att_1"],
+        "reference_source_documents": [],
+        "agent_resolution": {"used": True, "action": "select_source", "reason": "主表证据直接命中"},
+    }
+
+
+def fake_writeback(calls: list[str]):
+    class Summary:
+        def to_dict(self) -> dict[str, Any]:
+            return {"output_path": "fake.xlsx"}
+
+    def writeback(**kwargs: Any) -> Summary:
+        del kwargs
+        calls.append("called")
+        return Summary()
+
+    return writeback

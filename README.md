@@ -110,6 +110,69 @@ python -m nested_doc_rag.cli writeback \
   --out artifacts/runs/demo/filled_form.xlsx
 ```
 
+## Step15AgentRunner
+
+`Step15AgentRunner` is the recommended production-oriented runtime for gongkan
+form filling. It keeps Step 15 layered RAG as the effect engine:
+
+- layered Qdrant retrieval
+- rerank
+- full layered evidence pack
+- LLM answer arbitration prompt
+- answer statuses: `answered` / `partial_clue` / `not_found` / `conflict_unresolved`
+- `reference_source_documents` for partial clues
+
+It adds Agentic engineering controls:
+
+- field state
+- query trace
+- evidence pack trace
+- answer arbitration trace
+- lightweight critic flags
+- review queue
+- checkpoint/resume
+- optional safe Excel writeback
+
+It does not apply the strict pre-generation selected/reference gate used by
+`FieldFillingAgent` v1.2. Step 15 is responsible for answer quality; the Agent
+layer is responsible for execution management, traceability, checkpointing,
+review routing, and writeback safety.
+
+Closed-book evaluation:
+
+```bash
+python -m nested_doc_rag.cli run-step15-agent \
+  --config config/local.yaml \
+  --target-namespace xixian_4 \
+  --global-namespace global \
+  --room-context "西咸4号楼 301机房" \
+  --rows all \
+  --retrieval-mode layered \
+  --out-dir artifacts/runs/step15_agent_xixian4 \
+  --resume \
+  --judge
+```
+
+Production-style run with writeback:
+
+```bash
+python -m nested_doc_rag.cli run-step15-agent \
+  --config config/local.yaml \
+  --target-namespace xixian_4 \
+  --room-context "西咸4号楼 301机房" \
+  --rows 4-144 \
+  --retrieval-mode layered \
+  --template data/forms/基地云机房信息调研表.xlsx \
+  --writeback \
+  --out-dir artifacts/runs/step15_agent_xixian4_writeback \
+  --resume \
+  --no-judge
+```
+
+`FieldFillingAgent` remains available for strict/ablation experiments.
+`Step15AgentRunner` is preferred when effect quality and partial clue retention
+matter.
+
 ## Lightweight Field Filling Agent
 
 `FieldFillingAgent` is a lightweight field-level runtime for controlled form
