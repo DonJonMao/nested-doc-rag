@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -9,6 +8,7 @@ from typing import Any
 
 from .config import load_app_config
 from .io import display_text, read_jsonl
+from .llm import extract_json_object
 
 BASE_CLOUD_FILE = "基地云机房信息调研表.xlsx"
 
@@ -92,13 +92,7 @@ def call_deepseek_json(
         raise RuntimeError(f"curl failed: {proc.stderr.strip() or proc.stdout.strip()}")
     response = json.loads(proc.stdout)
     content = response["choices"][0]["message"]["content"].strip()
-    content = re.sub(r"^```(?:json)?\s*", "", content)
-    content = re.sub(r"\s*```$", "", content)
-    if not content.startswith("{"):
-        match = re.search(r"\{[\s\S]*\}", content)
-        if match:
-            content = match.group(0)
-    return json.loads(content)
+    return extract_json_object(content)
 
 
 def build_judge_messages(item: dict[str, Any], generated: dict[str, Any], heldout_answer: str) -> list[dict[str, str]]:

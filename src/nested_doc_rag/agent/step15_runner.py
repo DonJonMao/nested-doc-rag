@@ -23,6 +23,7 @@ from nested_doc_rag.evaluation.step15_engine import (
 from nested_doc_rag.excel.writeback import patch_workbook
 from nested_doc_rag.gongkan_eval import build_judge_messages, build_masked_query, call_deepseek_json
 from nested_doc_rag.io import display_text, read_jsonl, write_json, write_jsonl
+from nested_doc_rag.llm import JsonRepairError
 from nested_doc_rag.retrieval import QdrantRetriever
 from nested_doc_rag.schemas.eval import FieldPrediction
 
@@ -255,12 +256,16 @@ class Step15AgentRunner:
             "engine": "step15_agent",
             "target_namespace": self.target_namespace,
             "global_namespace": self.global_namespace,
+            "room_context": display_text(self.room_context),
+            "rows": rows_label_for_items(items),
             "retrieval_mode": self.retrieval_mode,
             "fields_total": len(items),
             "fields_completed": skipped_completed_count,
             "fields_failed": 0,
             "resumed_count": 1 if self.resume and checkpoint_predictions else 0,
             "skipped_completed_count": skipped_completed_count,
+            "judge_enabled": self.judge_enabled,
+            "writeback_enabled": self.writeback_enabled,
             "started_at": now_iso(),
             "finished_at": "",
         }
@@ -614,6 +619,16 @@ class Step15AgentRunner:
                         timeout=self.timeout_seconds,
                     )
             except Exception as exc:  # noqa: BLE001 - retry wraps fake and real chat callers
+                if is_json_parse_error(exc):
+                    self.trace.record(
+                        field_id,
+                        "json_parse_failed",
+                        {
+                            "call_kind": call_kind,
+                            "attempt": attempt,
+                            "error": display_text(str(exc), 240),
+                        },
+                    )
                 retryable = is_retryable_chat_error(exc)
                 if not retryable or attempt >= attempts:
                     if retryable:
@@ -704,7 +719,7 @@ class Step15AgentRunner:
         write_json(self.out_dir / "trace_summary.json", trace_summary)
         self.trace.write_markdown(self.out_dir / "trace.md", trace_summary)
         self.maybe_writeback(predictions, overlays)
-        output_files = sorted({path.name for path in self.out_dir.iterdir() if path.is_file()} | {"run_summary.md", "summary.json"})
+        output_files = sorted({path.name for path in self.out_dir.iterdir() if path.is_file()} | {"run_summary.md", "summary.json", "run_manifest.json"})
         summary = build_summary_json(
             predictions=predictions,
             overlays=overlays,
@@ -715,6 +730,14 @@ class Step15AgentRunner:
             writeback_summary=self.writeback_summary,
         )
         write_json(self.out_dir / "summary.json", summary)
+        manifest = build_run_manifest(
+            summary=summary,
+            run_state=run_state,
+            room_context=self.room_context,
+            judge_enabled=self.judge_enabled,
+            writeback_enabled=self.writeback_enabled,
+        )
+        write_json(self.out_dir / "run_manifest.json", manifest)
         (self.out_dir / "run_summary.md").write_text(
             build_run_summary_md(
                 summary=summary,
@@ -1226,6 +1249,10 @@ def is_retryable_chat_error(exc: Exception) -> bool:
     return any(marker in text for marker in ["timeout", "timed out", "curl: (28)", "operation timed out", "read timed out"])
 
 
+def is_json_parse_error(exc: Exception) -> bool:
+    return isinstance(exc, (json.JSONDecodeError, JsonRepairError))
+
+
 def make_eval_result(
     item: dict[str, Any],
     generated: dict[str, Any],
@@ -1316,6 +1343,65 @@ def build_summary_json(
         "partial_or_better": sum(1 for result in eval_results if result.get("judge", {}).get("label") in {"exact", "acceptable", "partial"}),
         "writeback_status": writeback_status,
         "writeback_summary": writeback_summary or {},
+    }
+
+
+def build_run_manifest(
+    *,
+    summary: dict[str, Any],
+    run_state: dict[str, Any],
+    room_context: str | None,
+    judge_enabled: bool,
+    writeback_enabled: bool,
+) -> dict[str, Any]:
+    trace_summary = summary.get("trace_summary") or {}
+    raw_status_counts = summary.get("raw_status_counts") or {}
+    overlay_counts = summary.get("overlay_counts") or {}
+    failed_count = int(trace_summary.get("failed_count") or run_state.get("fields_failed") or 0)
+    total_fields = int(summary.get("fields_total") or trace_summary.get("total_fields") or 0)
+    if total_fields and failed_count >= total_fields:
+        status = "failed"
+    elif failed_count:
+        status = "completed_with_failures"
+    else:
+        status = "completed"
+    artifacts = {
+        "predictions_raw": "predictions_raw.jsonl",
+        "predictions": "predictions.jsonl",
+        "agent_overlays": "agent_overlays.jsonl",
+        "predictions_agent_view": "predictions_agent_view.jsonl",
+        "review_items": "review_items.jsonl",
+        "trace": "trace.jsonl",
+        "trace_summary": "trace_summary.json",
+        "run_summary": "run_summary.md",
+        "summary": "summary.json",
+        "filled_form": "filled_form.xlsx" if writeback_enabled else None,
+        "writeback_audit": "writeback_audit.jsonl" if writeback_enabled else None,
+        "evidence_map": "evidence_map.json" if writeback_enabled else None,
+    }
+    return {
+        "run_id": summary.get("run_id"),
+        "created_at": run_state.get("started_at"),
+        "finished_at": run_state.get("finished_at"),
+        "status": status,
+        "engine": "step15_agent_overlay",
+        "target_namespace": summary.get("target_namespace"),
+        "global_namespace": summary.get("global_namespace"),
+        "room_context": display_text(room_context),
+        "rows": run_state.get("rows", ""),
+        "judge_enabled": judge_enabled,
+        "writeback_enabled": writeback_enabled,
+        "artifacts": artifacts,
+        "counts": {
+            "total_fields": total_fields,
+            "answered": int(raw_status_counts.get("answered") or 0),
+            "partial_clue": int(raw_status_counts.get("partial_clue") or 0),
+            "not_found": int(raw_status_counts.get("not_found") or 0),
+            "conflict_unresolved": int(raw_status_counts.get("conflict_unresolved") or 0),
+            "review_required": int(overlay_counts.get("review_required") or 0),
+            "writeback_allowed": int(overlay_counts.get("writeback_allowed") or 0),
+            "failed": failed_count,
+        },
     }
 
 
@@ -1411,6 +1497,15 @@ def ordered_predictions_for_items(items: list[dict[str, Any]], predictions_by_fi
         if prediction is not None and prediction not in ordered:
             ordered.append(prediction)
     return sorted(ordered, key=lambda prediction: (prediction.row_index, prediction.field_id))
+
+
+def rows_label_for_items(items: list[dict[str, Any]]) -> str:
+    rows = sorted(int(item.get("row_index") or 0) for item in items if item.get("row_index") is not None)
+    if not rows:
+        return ""
+    if rows == list(range(rows[0], rows[-1] + 1)):
+        return f"{rows[0]}-{rows[-1]}"
+    return ",".join(str(row) for row in rows)
 
 
 def ordered_overlays_for_predictions(predictions: list[FieldPrediction], overlays_by_field_id: dict[str, AgentOverlay]) -> list[AgentOverlay]:

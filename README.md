@@ -1,30 +1,91 @@
-# Nested Doc RAG for Datacenter Knowledge
+# Nested Doc RAG for Gongkan Form Filling
 
-This repository contains an engineering prototype for parsing nested datacenter
-knowledge files, building a RAG index, and evaluating closed-book answers for
-gongkan survey forms.
+This project implements a Python core for datacenter gongkan form filling: it ingests complex nested Office knowledge files into a traceable Qdrant index, then uses Step15AgentRunner to fill survey forms with layered RAG, answer arbitration, review routing, and safe Excel writeback.
 
-## Scope
+## What This Project Does
 
-The repository contains code and design documents only. Local source data,
-generated artifacts, vector stores, and evaluation outputs are excluded by
-`.gitignore`.
+### Knowledge Base Ingestion
+
+The ingestion pipeline turns complex datacenter Office files into retrievable, auditable knowledge:
+
+- parse nested Excel and Word files
+- preserve workbook, table, row, paragraph, and embedded-object structure
+- build semantic segments instead of fixed-length chunks
+- embed segment text with a configured embedding service
+- store vectors and metadata in Qdrant
+
+Important payload fields include `namespace`, `source_type`, `corpus_layer`, `raw_text`, `text_for_embedding`, `source_anchor`, and `proof_attachment_ids`.
+
+### Gongkan Form Filling
+
+The form-filling runtime uses `Step15AgentRunner` overlay mode:
+
+- Step 15 layered RAG is the effect engine
+- the LLM sees the full layered evidence pack and arbitrates `answered`, `partial_clue`, `not_found`, or `conflict_unresolved`
+- raw prediction is immutable and used for evaluation
+- Agent overlay is additive and provides trace, checkpoint/resume, critic flags, review routing, reference enrichment suggestions, and writeback gating
+
+## Recommended Runtime
+
+Use `Step15AgentRunner` overlay mode for production-oriented gongkan form filling.
+
+Step 15 raw answer arbitration is the effect engine. Agent overlay is the production control layer. Evaluation uses raw predictions. Review and writeback use raw predictions plus overlays. Overlay never mutates raw `answer_status` or `answer_value`.
+
+Runtime choices:
+
+- `Step15AgentRunner`: recommended production-oriented runtime.
+- `FieldFillingAgent`: strict/ablation runtime, including offline mini mode and the v1.2 selected/reference gate.
+- Step 15 legacy scripts: historical/debug compatibility entry points.
+
+## Core Workflows
+
+### 1. Knowledge ingestion and indexing
+
+Current main chain:
+
+```text
+01_file_registration
+02_datacenter_routing
+03_format_probe
+04a_structure_parse
+04b_embedded_object_parse
+05_segment_extract
+06_segmentation_audit
+07_agent_need_audit
+08_llm_structure_hint
+09_table_candidate_resolution
+10_semantic_segment_audit
+11_embedding_build
+15_vector_store / Qdrant index
+```
+
+The pipeline does not rely on fixed-length chunks. Excel row-level capability items are primary segments. `raw_text` is used as evidence, `text_for_embedding` is used for embedding, `source_anchor` supports source tracing, and `proof_attachment_ids` supports audit/review. Qdrant payloads preserve `namespace`, `source_type`, `corpus_layer`, and `source_anchor` so retrieval results remain explainable.
+
+### 2. Gongkan form filling
+
+`Step15AgentRunner` flow:
+
+```text
+field
+-> masked query
+-> room_context
+-> layered Qdrant retrieval
+-> rerank
+-> Step 15 answer arbitration prompt
+-> raw prediction
+-> Agent overlay
+-> review queue
+-> optional safe Excel writeback
+```
+
+The LLM sees the layered evidence pack and decides the answer status. The overlay does not change the raw answer. Excel writeback is gated by `overlay.writeback_allowed`, so unsafe or review-needed rows are not written automatically.
 
 ## Quickstart
 
-Install the package in editable mode from the repository root:
+Install:
 
 ```bash
-conda activate datacenter
 python -m pip install -e .
-# For local development:
-python -m pip install -e ".[dev]"
-```
-
-Inspect the merged configuration:
-
-```bash
-python -m nested_doc_rag.cli show-config --config config/local.example.yaml
 ```
 
 Run tests:
@@ -33,67 +94,13 @@ Run tests:
 pytest
 ```
 
-Run the mini baseline comparison:
-
-```bash
-python -m nested_doc_rag.cli run-baselines \
-  --config experiments/form_filling_baselines.yaml \
-  --out-dir artifacts/experiments/baselines
-```
-
-Write predictions back to an Excel form:
-
-```bash
-python -m nested_doc_rag.cli writeback \
-  --template path/to/survey_form.xlsx \
-  --pred artifacts/runs/demo/predictions.jsonl \
-  --out artifacts/runs/demo/filled_form.xlsx
-```
-
-## Current Structure
-
-Reusable code now lives under `src/nested_doc_rag`:
-
-- `config`: centralized YAML/env/CLI configuration.
-- `schemas`: typed data contracts for documents, segments, retrieval,
-  evaluation, agents, and Excel writeback.
-- `io`, `parsing`, `segmentation`: deterministic file reading and chunk
-  preparation utilities.
-- `embedding`, `retrieval`: embedding clients, manifests, Qdrant retrieval,
-  rerank, and layered retrieval primitives.
-- `form`, `evaluation`, `agent`, `excel`: gongkan form analysis, field-level
-  metrics, repair scaffolding, and workbook writeback.
-
-Top-level directories are organized around how the package is used:
-
-- `config/`: default and local configuration templates.
-- `examples/mini_data/`: small non-sensitive fixtures for tests and smoke runs.
-- `experiments/`: reproducible experiment configs, including form-filling
-  baseline comparisons.
-- `apps/legacy_wrappers/`: compatibility entry points for the historical
-  numbered steps while migration continues.
-- `01_*` through `15_*`: retained legacy script directories and historical
-  artifacts. Treat these as compatibility/debug entry points, not the primary
-  API.
-
-## Main Workflows
-
-Configuration inspection:
+Inspect configuration:
 
 ```bash
 python -m nested_doc_rag.cli show-config --config config/local.example.yaml
 ```
 
-Field-level evaluation:
-
-```bash
-python -m nested_doc_rag.cli eval-fields \
-  --gold examples/mini_data/gold_fields.jsonl \
-  --pred examples/mini_data/predictions.jsonl \
-  --out-dir artifacts/evaluation
-```
-
-Baseline comparison:
+Run mini baseline smoke tests:
 
 ```bash
 python -m nested_doc_rag.cli run-baselines \
@@ -101,66 +108,24 @@ python -m nested_doc_rag.cli run-baselines \
   --out-dir artifacts/experiments/baselines
 ```
 
-Excel writeback:
-
-```bash
-python -m nested_doc_rag.cli writeback \
-  --template path/to/survey_form.xlsx \
-  --pred artifacts/runs/demo/predictions.jsonl \
-  --out artifacts/runs/demo/filled_form.xlsx
-```
-
-## Step15AgentRunner
-
-`Step15AgentRunner` is the recommended production-oriented runtime for gongkan
-form filling. It has two layers.
-
-Step 15 raw answer arbitration is the effect engine:
-
-- layered Qdrant retrieval
-- rerank
-- full layered evidence pack
-- LLM answer arbitration prompt
-- answer statuses: `answered` / `partial_clue` / `not_found` / `conflict_unresolved`
-- `reference_source_documents` for partial clues
-- immutable raw prediction used for evaluation
-
-Agent overlay adds production controls without mutating the raw answer:
-
-- field state
-- query trace
-- evidence pack trace
-- answer arbitration trace
-- lightweight critic flags
-- review queue
-- checkpoint/resume
-- optional safe Excel writeback
-- writeback gating
-- reference enrichment suggestions
-
-It does not apply the strict pre-generation selected/reference gate used by
-`FieldFillingAgent` v1.2. Step 15 is responsible for answer quality; the Agent
-overlay is responsible for traceability, checkpointing, review routing, and
-writeback safety. Evaluation uses `predictions_raw.jsonl`; production review and
-writeback use `agent_overlays.jsonl`. `predictions.jsonl` remains a compatibility
-copy of the raw predictions.
-
-Recommended closed-book evaluation:
+Recommended real form-filling run:
 
 ```bash
 python -m nested_doc_rag.cli run-step15-agent \
   --config config/local.yaml \
   --target-namespace xixian_4 \
+  --global-namespace global \
   --room-context "西咸4号楼 301机房" \
   --rows 4-144 \
   --retrieval-mode layered \
   --prompt-version step15_compat \
   --judge \
   --use-judge-cache \
+  --resume \
   --out-dir artifacts/runs/step15_agent_overlay
 ```
 
-Production-style run with writeback:
+Run with Excel writeback:
 
 ```bash
 python -m nested_doc_rag.cli run-step15-agent \
@@ -170,127 +135,49 @@ python -m nested_doc_rag.cli run-step15-agent \
   --rows 4-144 \
   --retrieval-mode layered \
   --prompt-version step15_compat \
+  --no-judge \
   --template data/forms/基地云机房信息调研表.xlsx \
   --writeback \
-  --out-dir artifacts/runs/step15_agent_xixian4_writeback \
   --resume \
-  --no-judge
+  --out-dir artifacts/runs/step15_agent_writeback
 ```
 
-`FieldFillingAgent` remains available for strict/ablation experiments.
-`Step15AgentRunner` is preferred when effect quality and partial clue retention
-matter.
-
-## Lightweight Field Filling Agent
-
-`FieldFillingAgent` is a lightweight field-level runtime for controlled form
-filling. It is not a complex multi-agent system; it is a deterministic state
-machine:
-
-```text
-field -> query planning -> evidence retrieval -> evidence selection -> answer generation -> validation -> one-shot repair -> human review -> writeback
-```
-
-FieldFillingAgent v1.2 adds:
-
-- Step 15-style layered Qdrant retrieval for real backend runs.
-- Selected/reference evidence channels.
-- Direct evidence vs. reference clue policy.
-- `partial_clue` output with `reference_chunk_ids` and `reference_source_documents`.
-- Generation gating: LLM generation only runs when direct selected evidence exists.
-- One-shot repair, field-level checkpoint/resume, trace, and review queue.
-
-Evidence channels:
-
-- Selected evidence can support `answered` and can be cited in `source_chunk_ids`.
-- Reference evidence can support `partial_clue`, cannot support `answered`, and is written to `reference_chunk_ids` / `reference_source_documents`.
-
-### Two execution modes
-
-Offline mini mode uses the bundled mini corpus plus the deterministic generator.
-It has no Qdrant, embedding, rerank, LLM, or API key dependency, so it is suitable
-for tests and reproducible demos:
+Validate an output directory:
 
 ```bash
-python -m nested_doc_rag.cli run-agent \
-  --config config/local.example.yaml \
-  --gold examples/mini_data/gold_fields.jsonl \
-  --corpus examples/mini_data/knowledge_chunks.jsonl \
-  --target-namespace xixian_4 \
-  --retrieval-backend mini \
-  --generation-backend deterministic \
-  --out-dir artifacts/runs/demo \
-  --no-writeback
+python -m nested_doc_rag.cli validate-artifacts \
+  --run-dir artifacts/runs/step15_agent_overlay
 ```
 
-Real backend mode uses Qdrant retrieval, an embedding service, optional rerank,
-and LLM answer generation. Use `--fields` for real filling inputs; `--gold` is
-kept for eval-compatible demo data. If a FieldGold-compatible file is reused,
-`expected_value` is only evaluation gold and is not used for generation:
+## Outputs
 
-```bash
-python -m nested_doc_rag.cli run-agent \
-  --config config/local.yaml \
-  --fields artifacts/form/form_fields.jsonl \
-  --target-namespace xixian_4 \
-  --room-context "西咸4号楼 301机房" \
-  --retrieval-backend qdrant \
-  --retrieval-plan layered \
-  --generation-backend llm \
-  --enable-rerank \
-  --resume \
-  --checkpoint-every 1 \
-  --template data/forms/基地云机房信息调研表.xlsx \
-  --out-dir artifacts/runs/agent_v1_2_xixian4
-```
+Stable Step15AgentRunner overlay artifacts:
 
-The LLM sees only selected direct evidence. `no_evidence`, `clue_only`, and
-`conflict_unresolved` fields do not call the LLM and are sent to review.
-
-Outputs:
-
+- `predictions_raw.jsonl`
 - `predictions.jsonl`
+- `agent_overlays.jsonl`
+- `predictions_agent_view.jsonl`
+- `review_items.jsonl`
 - `trace.jsonl`
 - `trace_summary.json`
-- `trace.md`
-- `review_items.jsonl`
 - `run_summary.md`
-- checkpoint/resume sidecars: `predictions.checkpoint.jsonl`, `trace.checkpoint.jsonl`, `review_items.checkpoint.jsonl`, `run_state.json`
+- `summary.json`
+- `run_manifest.json`
+- `filled_form.xlsx`, when writeback is enabled and completed
+- `writeback_audit.jsonl`, when writeback is enabled and completed
+- `evidence_map.json`, when writeback is enabled and completed
 
-Legacy wrappers are still available when a migrated numbered step is needed:
+`predictions.jsonl` is a compatibility alias of `predictions_raw.jsonl` in overlay mode. Go/backend integrations should use `run_manifest.json` to locate artifacts and should not depend on Python internal functions.
 
-```bash
-python apps/legacy_wrappers/step11_embedding.py --config config/local.example.yaml
-python apps/legacy_wrappers/step12_form_analysis.py --config config/local.example.yaml
-python apps/legacy_wrappers/step15_qdrant_eval.py --config config/local.example.yaml
-```
+See [docs/contracts.md](docs/contracts.md) for the frozen artifact contract.
 
-## Remote services
+## Remote Services
 
-The code uses configurable HTTP endpoints for:
+Real runs require locally configured services:
 
-- Qwen3 embedding: `qwen3-embedding-8b`
-- Reranker
-- DeepSeek-compatible chat completions
+- embedding endpoint
+- rerank endpoint
+- DeepSeek/OpenAI-compatible chat completion endpoint
+- Qdrant local path or server configuration
 
-API keys are not stored in the repository. Pass them through command-line
-arguments or environment variables, depending on the step.
-
-## Examples
-
-Run the packaged CLI from the repository root after `python -m pip install -e .`.
-Use `config/local.example.yaml` as a starting point for local paths and service
-endpoints.
-
-```bash
-python -m nested_doc_rag.cli show-config --config config/local.example.yaml
-python -m nested_doc_rag.cli run-baselines --config experiments/form_filling_baselines.yaml
-python -m nested_doc_rag.cli eval-fields \
-  --gold examples/mini_data/gold_fields.jsonl \
-  --pred examples/mini_data/predictions.jsonl \
-  --out-dir artifacts/evaluation
-```
-
-For production runs, put private data, vector stores, and generated workbooks
-under ignored local paths such as `data/` and `artifacts/`, then pass those
-paths through YAML config or CLI arguments.
+Service URLs belong in `config/local.yaml`, environment variables, or CLI flags. API keys are read through environment variables such as `DEEPSEEK_API_KEY`. Do not commit `config/local.yaml`, `.env`, generated artifacts, vector stores, source data, or secrets.

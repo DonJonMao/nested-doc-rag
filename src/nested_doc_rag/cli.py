@@ -6,6 +6,7 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
+from nested_doc_rag.artifacts import ArtifactValidationError, validate_step15_artifacts
 from nested_doc_rag.agent.backends import (
     DeterministicAnswerGenerator,
     LayeredQdrantEvidenceRetriever,
@@ -53,6 +54,14 @@ def build_parser() -> argparse.ArgumentParser:
     writeback_parser.add_argument("--evidence-map", type=Path, default=None, help="Optional input evidence map JSON path.")
     writeback_parser.add_argument("--mode", choices=["safe", "overwrite"], default="safe", help="Write mode.")
     writeback_parser.add_argument("--no-comments", action="store_true", help="Disable Excel cell comments.")
+
+    artifacts_parser = subparsers.add_parser("validate-artifacts", help="Validate a frozen Step15AgentRunner artifact directory.")
+    artifacts_parser.add_argument("--run-dir", type=Path, required=True, help="Step15AgentRunner output directory.")
+    artifacts_parser.add_argument(
+        "--allow-mutated-predictions",
+        action="store_true",
+        help="Allow predictions.jsonl to differ from predictions_raw.jsonl. Disabled for overlay mode.",
+    )
 
     agent_parser = subparsers.add_parser("run-agent", help="Run the lightweight field-filling agent with mini or real backends.")
     agent_parser.add_argument("--config", type=Path, default=None, help="Optional local YAML config path.")
@@ -166,6 +175,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             write_comments=not args.no_comments,
         )
         print(json.dumps(summary.to_dict(), ensure_ascii=False))
+    elif args.command == "validate-artifacts":
+        try:
+            result = validate_step15_artifacts(args.run_dir, allow_mutated_predictions=bool(args.allow_mutated_predictions))
+        except ArtifactValidationError as exc:
+            parser.error(str(exc))
+        print(json.dumps(result, ensure_ascii=False))
     elif args.command == "run-baselines":
         summary = run_baseline_experiment(
             args.config,
