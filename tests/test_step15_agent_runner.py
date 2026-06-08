@@ -8,6 +8,7 @@ from nested_doc_rag.agent.step15_runner import (
     convert_step15_generated_to_prediction,
     critic_check_step15_answer,
     make_step15_review_item,
+    normalize_step15_prediction_after_arbitration,
 )
 from nested_doc_rag.cli import build_parser
 from nested_doc_rag.config import load_app_config
@@ -72,6 +73,67 @@ def test_critic_partial_without_reference() -> None:
     )
 
     assert "partial_without_reference" in flags
+
+
+def test_not_found_with_hits_rescued_to_partial() -> None:
+    prediction = convert_step15_generated_to_prediction(
+        make_item(5),
+        {"answer_value": "未找到", "answer_status": "not_found", "confidence": 0.2, "source_chunk_ids": []},
+        make_hits(),
+    )
+
+    normalized = normalize_step15_prediction_after_arbitration(prediction, make_hits(), ["not_found_with_relevant_hits"])
+
+    assert normalized.answer_status == "partial_clue"
+    assert normalized.answer_value == "未找到可直接填写的证据；检索到相关线索，请人工复核。"
+    assert normalized.reference_chunk_ids
+    assert normalized.reference_source_documents
+    assert normalized.reference_snippets
+    assert normalized.validation["status_rescued"] == "not_found_to_partial_clue"
+
+
+def test_partial_without_reference_gets_reference_docs() -> None:
+    prediction = convert_step15_generated_to_prediction(
+        make_item(5),
+        {"answer_value": "未找到", "answer_status": "partial_clue", "confidence": 0.45, "reference_source_documents": []},
+        make_hits(),
+    )
+
+    normalized = normalize_step15_prediction_after_arbitration(prediction, make_hits(), ["partial_without_reference"])
+
+    assert normalized.answer_status == "partial_clue"
+    assert normalized.reference_chunk_ids
+    assert normalized.reference_source_documents
+    assert normalized.validation["reference_docs_filled_by_runner"] is True
+
+
+def test_risky_answered_downgraded_to_partial() -> None:
+    prediction = convert_step15_generated_to_prediction(
+        make_item(5),
+        {"answer_value": "2路市电", "answer_status": "answered", "confidence": 0.82, "source_chunk_ids": []},
+        make_hits(),
+    )
+
+    normalized = normalize_step15_prediction_after_arbitration(prediction, make_hits(), ["answered_without_source"])
+
+    assert normalized.answer_status == "partial_clue"
+    assert normalized.source_chunk_ids == []
+    assert normalized.reference_source_documents
+    assert normalized.validation["downgraded_by_critic"] is True
+    assert normalized.validation["downgrade_flags"] == ["answered_without_source"]
+
+
+def test_not_found_without_hits_stays_not_found() -> None:
+    prediction = convert_step15_generated_to_prediction(
+        make_item(5),
+        {"answer_value": "未找到", "answer_status": "not_found", "confidence": 0.2, "source_chunk_ids": []},
+        [],
+    )
+
+    normalized = normalize_step15_prediction_after_arbitration(prediction, [], [])
+
+    assert normalized.answer_status == "not_found"
+    assert normalized.reference_chunk_ids == []
 
 
 def test_review_routing_for_partial() -> None:
@@ -145,6 +207,47 @@ def test_field_failure_does_not_abort_run(tmp_path: Path) -> None:
     assert next(prediction for prediction in predictions if prediction.row_index == 6).answer_status == "answered"
 
 
+def test_chat_timeout_retry_success(tmp_path: Path) -> None:
+    calls = 0
+
+    def caller(**kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("curl failed: curl: (28) Operation timed out after 120006 milliseconds with 0 bytes received")
+        return answered_answer_caller(**kwargs)
+
+    runner = make_runner(tmp_path, answer_caller=caller, chat_max_retries=2)
+
+    predictions = runner.run([make_item(4)])
+
+    assert calls == 2
+    assert predictions[0].answer_status == "answered"
+    trace_text = (tmp_path / "trace.jsonl").read_text(encoding="utf-8")
+    assert "chat_retry_started" in trace_text
+    assert "chat_retry_succeeded" in trace_text
+
+
+def test_chat_timeout_retry_failure_writes_failed_prediction(tmp_path: Path) -> None:
+    calls = 0
+
+    def caller(**kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("curl failed: curl: (28) Operation timed out after 120006 milliseconds with 0 bytes received")
+
+    runner = make_runner(tmp_path, answer_caller=caller, chat_max_retries=1)
+
+    predictions = runner.run([make_item(4)])
+
+    assert calls == 2
+    assert predictions[0].answer_status == "conflict_unresolved"
+    assert "timed out" in predictions[0].validation["error"]
+    trace_text = (tmp_path / "trace.jsonl").read_text(encoding="utf-8")
+    assert "chat_retry_started" in trace_text
+    assert "chat_retry_failed" in trace_text
+
+
 def test_cli_run_step15_agent_args(tmp_path: Path) -> None:
     parser = build_parser()
 
@@ -167,6 +270,10 @@ def test_cli_run_step15_agent_args(tmp_path: Path) -> None:
             str(tmp_path),
             "--resume",
             "--judge",
+            "--chat-max-retries",
+            "3",
+            "--chat-retry-backoff-seconds",
+            "0",
         ]
     )
 
@@ -174,6 +281,17 @@ def test_cli_run_step15_agent_args(tmp_path: Path) -> None:
     assert args.rows == "4-5"
     assert args.judge is True
     assert args.resume is True
+    assert args.chat_max_retries == 3
+    assert args.chat_retry_backoff_seconds == 0
+
+
+def test_regression_rows_config_loads() -> None:
+    path = Path("experiments/step15_agent_regression_rows.yaml")
+    rows = load_simple_rows_yaml(path)
+
+    assert rows["improved_rows"] == [20, 38, 46, 132, 135, 140]
+    assert rows["regressed_rows"] == [14, 57, 102, 124, 130]
+    assert rows["timeout_rows"] == [33]
 
 
 def test_judge_disabled_mode(tmp_path: Path) -> None:
@@ -220,6 +338,7 @@ def make_runner(
     writeback_enabled: bool = False,
     template_path: Path | None = None,
     writeback_fn=None,
+    chat_max_retries: int = 2,
 ) -> Step15AgentRunner:
     config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml")
     return Step15AgentRunner(
@@ -237,6 +356,8 @@ def make_runner(
         answer_caller=answer_caller,
         judge_caller=judge_caller,
         writeback_fn=writeback_fn or fake_writeback([]),
+        chat_max_retries=chat_max_retries,
+        chat_retry_backoff_seconds=0,
     )
 
 
@@ -328,3 +449,19 @@ def fake_writeback(calls: list[str]):
         return Summary()
 
     return writeback
+
+
+def load_simple_rows_yaml(path: Path) -> dict[str, list[int]]:
+    rows: dict[str, list[int]] = {}
+    current: str | None = None
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.endswith(":"):
+            current = line[:-1]
+            rows[current] = []
+            continue
+        if line.startswith("-") and current:
+            rows[current].append(int(line.removeprefix("-").strip()))
+    return rows

@@ -106,6 +106,11 @@ def build_qdrant_answer_messages(
                 "file_name": "仅作参考线索的来源文件名",
                 "anchor": "来源位置",
                 "chunk_id": "来源 chunk id",
+                "namespace": "来源 namespace",
+                "source_type": "来源 source_type",
+                "retrieval_layer": "来源 retrieval_layer",
+                "source_anchor": "来源锚点",
+                "text_preview": "短证据预览",
                 "reason": "为什么只是参考线索而不是可填证据",
             }
         ],
@@ -128,6 +133,10 @@ def build_qdrant_answer_messages(
         "2. 如果只命中相关信息，但粒度不够、缺少台数/实测值/房间粒度，或格式口径不足以直接填表，answer_status=partial_clue，answer_value 必须是“未找到”，"
         "只在 reference_source_documents 中列出参考来源文件、位置和原因，不把它当直接证据。\n"
         "3. 如果没有相关信息，answer_status=not_found，answer_value 必须是“未找到”。not_found 只应在没有相关证据时使用。\n"
+        "not_found strict rule: Use not_found only when the retrieved evidence pack contains no relevant information for the field. "
+        "If any retrieved evidence is related but insufficient for direct filling, output partial_clue.\n"
+        "partial source rule: For partial_clue, always include reference_source_documents with chunk_id, namespace, source_type, retrieval_layer, "
+        "source_anchor, and a short evidence preview.\n"
         "4. 如果多个 retrieved_chunks 都像可用证据但互相冲突，交给你做智能体仲裁：优先同 namespace 的 main_excel_capability，"
         "其次精确指标行，最后才是 global/intro_doc 长段说明；无法裁决时 answer_status=conflict_unresolved，answer_value 必须是“未找到”。\n"
         "5. 对 main_excel_capability 的 raw_text，斜杠前后的能力描述也是证据的一部分，不只看最后的现状/答案。"

@@ -115,6 +115,8 @@ def build_parser() -> argparse.ArgumentParser:
     step15_agent_parser.add_argument("--deepseek-api-key-env", default=None, help="Alias for --chat-api-key-env.")
     step15_agent_parser.add_argument("--deepseek-api-key", default=None, help="Optional direct chat API key. Prefer env vars for real runs.")
     step15_agent_parser.add_argument("--timeout", type=int, default=None, help="HTTP timeout seconds.")
+    step15_agent_parser.add_argument("--chat-max-retries", type=int, default=2, help="Maximum chat timeout retries.")
+    step15_agent_parser.add_argument("--chat-retry-backoff-seconds", type=int, default=3, help="Seconds to wait between chat retries.")
     return parser
 
 
@@ -269,6 +271,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             checkpoint_every=args.checkpoint_every,
             resume=args.resume,
             timeout_seconds=args.timeout or config.services.timeout_seconds,
+            chat_max_retries=args.chat_max_retries,
+            chat_retry_backoff_seconds=args.chat_retry_backoff_seconds,
             deepseek_api_key_env=api_key_env,
             qdrant_path=qdrant_path,
             collection_name=collection_name,

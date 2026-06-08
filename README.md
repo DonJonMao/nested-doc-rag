@@ -138,19 +138,18 @@ It does not apply the strict pre-generation selected/reference gate used by
 layer is responsible for execution management, traceability, checkpointing,
 review routing, and writeback safety.
 
-Closed-book evaluation:
+Recommended closed-book evaluation:
 
 ```bash
 python -m nested_doc_rag.cli run-step15-agent \
   --config config/local.yaml \
   --target-namespace xixian_4 \
-  --global-namespace global \
   --room-context "西咸4号楼 301机房" \
-  --rows all \
+  --rows 4-144 \
   --retrieval-mode layered \
-  --out-dir artifacts/runs/step15_agent_xixian4 \
   --resume \
-  --judge
+  --judge \
+  --out-dir artifacts/runs/step15_agent_xixian4
 ```
 
 Production-style run with writeback:

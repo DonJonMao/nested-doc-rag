@@ -5,7 +5,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -30,7 +30,23 @@ RetrievalFn = Callable[[str], Step15RetrievalResult]
 WritebackFn = Callable[..., Any]
 
 ANSWER_STATUSES = {"answered", "partial_clue", "not_found", "conflict_unresolved"}
-UNSAFE_WRITEBACK_FLAGS = {"answered_without_source", "invalid_source_reference", "answered_from_global_intro_risk", "answer_too_long"}
+UNSAFE_WRITEBACK_FLAGS = {
+    "answered_without_source",
+    "invalid_source_reference",
+    "answered_from_global_intro_risk",
+    "answer_too_long",
+    "scope_mismatch_risk",
+    "liquid_cooling_scope_mismatch",
+    "field_intent_source_mismatch",
+}
+RISKY_ANSWERED_DOWNGRADE_FLAGS = {
+    "answered_without_source",
+    "invalid_source_reference",
+    "answered_from_global_intro_risk",
+    "scope_mismatch_risk",
+    "liquid_cooling_scope_mismatch",
+    "field_intent_source_mismatch",
+}
 
 
 @dataclass
@@ -66,6 +82,8 @@ class Step15AgentRunner:
         checkpoint_every: int = 1,
         resume: bool = False,
         timeout_seconds: int | None = None,
+        chat_max_retries: int = 2,
+        chat_retry_backoff_seconds: int = 3,
         deepseek_api_key_env: str | None = None,
         qdrant_path: Path | None = None,
         collection_name: str | None = None,
@@ -99,6 +117,8 @@ class Step15AgentRunner:
         self.checkpoint_every = max(1, checkpoint_every)
         self.resume = resume
         self.timeout_seconds = timeout_seconds or config.services.timeout_seconds
+        self.chat_max_retries = max(0, chat_max_retries)
+        self.chat_retry_backoff_seconds = max(0, chat_retry_backoff_seconds)
         self.deepseek_api_key_env = deepseek_api_key_env or config.services.chat_api_key_env
         self.qdrant_path = qdrant_path or config.paths.qdrant_path
         self.collection_name = collection_name or config.qdrant.collection_name
@@ -292,6 +312,22 @@ class Step15AgentRunner:
         prediction = convert_step15_generated_to_prediction(item, generated, top_hits, retrieval_mode=self.retrieval_mode)
         critic_flags = critic_check_step15_answer(item, generated, top_hits)
         prediction = with_critic_validation(prediction, critic_flags)
+        before_normalization = prediction.answer_status
+        prediction = normalize_step15_prediction_after_arbitration(prediction, top_hits, critic_flags)
+        if prediction.answer_status != before_normalization or prediction.validation.get("reference_docs_filled_by_runner"):
+            self.trace.record(
+                field_id,
+                "post_arbitration_normalized",
+                {
+                    "before_status": before_normalization,
+                    "after_status": prediction.answer_status,
+                    "status_rescued": prediction.validation.get("status_rescued"),
+                    "downgraded_by_critic": prediction.validation.get("downgraded_by_critic"),
+                    "reference_docs_filled_by_runner": prediction.validation.get("reference_docs_filled_by_runner"),
+                    "reference_source_documents_count": len(prediction.reference_source_documents),
+                },
+            )
+        generated = generated_from_prediction(prediction, generated)
         self.trace.record(
             field_id,
             "prediction_normalized",
@@ -415,26 +451,80 @@ class Step15AgentRunner:
         )
 
     def call_answer(self, **kwargs: Any) -> dict[str, Any]:
-        if self.answer_caller is not None:
-            return self.answer_caller(**kwargs)
-        return call_deepseek_json(
-            url=self.chat_endpoint,
-            model=self.chat_model,
-            api_key=self.chat_api_key,
-            messages=kwargs["messages"],
-            timeout=self.timeout_seconds,
+        return self.call_chat_with_retries(
+            call_kind="answer",
+            field_id=field_id_for_item(kwargs.get("item") or {}),
+            caller=self.answer_caller,
+            kwargs=kwargs,
         )
 
     def call_judge(self, **kwargs: Any) -> dict[str, Any]:
-        if self.judge_caller is not None:
-            return self.judge_caller(**kwargs)
-        return call_deepseek_json(
-            url=self.chat_endpoint,
-            model=self.chat_model,
-            api_key=self.chat_api_key,
-            messages=kwargs["messages"],
-            timeout=self.timeout_seconds,
+        return self.call_chat_with_retries(
+            call_kind="judge",
+            field_id=field_id_for_item(kwargs.get("item") or {}),
+            caller=self.judge_caller,
+            kwargs=kwargs,
         )
+
+    def call_chat_with_retries(
+        self,
+        *,
+        call_kind: str,
+        field_id: str,
+        caller: AnswerCaller | JudgeCaller | None,
+        kwargs: dict[str, Any],
+    ) -> dict[str, Any]:
+        attempts = self.chat_max_retries + 1
+        for attempt in range(1, attempts + 1):
+            try:
+                if caller is not None:
+                    result = caller(**kwargs)
+                else:
+                    result = call_deepseek_json(
+                        url=self.chat_endpoint,
+                        model=self.chat_model,
+                        api_key=self.chat_api_key,
+                        messages=kwargs["messages"],
+                        timeout=self.timeout_seconds,
+                    )
+            except Exception as exc:  # noqa: BLE001 - retry wraps fake and real chat callers
+                retryable = is_retryable_chat_error(exc)
+                if not retryable or attempt >= attempts:
+                    if retryable:
+                        self.trace.record(
+                            field_id,
+                            "chat_retry_failed",
+                            {
+                                "call_kind": call_kind,
+                                "attempt": attempt,
+                                "max_retries": self.chat_max_retries,
+                                "error": display_text(str(exc), 240),
+                            },
+                        )
+                    raise
+                self.trace.record(
+                    field_id,
+                    "chat_retry_started",
+                    {
+                        "call_kind": call_kind,
+                        "attempt": attempt,
+                        "next_attempt": attempt + 1,
+                        "max_retries": self.chat_max_retries,
+                        "backoff_seconds": self.chat_retry_backoff_seconds,
+                        "error": display_text(str(exc), 240),
+                    },
+                )
+                if self.chat_retry_backoff_seconds:
+                    sleep(self.chat_retry_backoff_seconds)
+                continue
+            if attempt > 1:
+                self.trace.record(
+                    field_id,
+                    "chat_retry_succeeded",
+                    {"call_kind": call_kind, "attempt": attempt, "max_retries": self.chat_max_retries},
+                )
+            return result
+        raise RuntimeError("chat retry loop exited unexpectedly")
 
     def load_checkpoint_predictions(self) -> dict[str, FieldPrediction]:
         checkpoint = self.predictions_checkpoint_path()
@@ -550,6 +640,8 @@ class Step15AgentRunner:
             "embedding_model": self.embedding_model,
             "rerank_model": self.rerank_model,
             "chat_model": self.chat_model,
+            "chat_max_retries": self.chat_max_retries,
+            "chat_retry_backoff_seconds": self.chat_retry_backoff_seconds,
             "judge_enabled": self.judge_enabled,
             "writeback_enabled": self.writeback_enabled,
         }
@@ -599,22 +691,122 @@ def convert_step15_generated_to_prediction(
     )
 
 
+def normalize_step15_prediction_after_arbitration(
+    prediction: FieldPrediction,
+    top_hits: list[dict[str, Any]],
+    critic_flags: list[str],
+    *,
+    min_reference_hits: int = 1,
+) -> FieldPrediction:
+    reference_docs = prediction.reference_source_documents
+    validation = dict(prediction.validation)
+    should_rescue_not_found = prediction.answer_status == "not_found" and has_relevant_reference_hits(top_hits, min_reference_hits=min_reference_hits)
+    should_fill_partial_refs = prediction.answer_status == "partial_clue" and not reference_docs and len(top_hits) >= min_reference_hits
+    downgrade_flags = [flag for flag in critic_flags if flag in RISKY_ANSWERED_DOWNGRADE_FLAGS]
+    should_downgrade_answered = prediction.answer_status == "answered" and bool(downgrade_flags)
+
+    if not (should_rescue_not_found or should_fill_partial_refs or should_downgrade_answered):
+        return prediction
+
+    if not reference_docs:
+        reference_docs = reference_source_documents_from_hits(top_hits)
+    reference_ids = dedupe([str(doc.get("chunk_id")) for doc in reference_docs if doc.get("chunk_id")])
+    snippets = reference_snippets(reference_docs, top_hits)
+    validation["post_arbitration_normalized"] = True
+
+    if should_rescue_not_found:
+        validation["status_rescued"] = "not_found_to_partial_clue"
+        validation["original_answer_status"] = prediction.answer_status
+        validation["original_answer_value"] = prediction.answer_value
+        return replace(
+            prediction,
+            answer_status="partial_clue",
+            answer_value="未找到可直接填写的证据；检索到相关线索，请人工复核。",
+            confidence=partial_confidence(prediction.confidence),
+            source_chunk_ids=[],
+            evidence_attachment_ids=[],
+            reference_chunk_ids=reference_ids,
+            reference_source_documents=reference_docs,
+            reference_snippets=snippets,
+            validation=validation,
+        )
+
+    if should_downgrade_answered:
+        validation["downgraded_by_critic"] = True
+        validation["downgrade_flags"] = downgrade_flags
+        validation["original_answer_status"] = prediction.answer_status
+        validation["original_answer_value"] = prediction.answer_value
+        return replace(
+            prediction,
+            answer_status="partial_clue",
+            answer_value="检索到相关线索，但证据不足以安全直接填写；请人工复核。",
+            confidence=min(prediction.confidence, 0.55),
+            source_chunk_ids=[],
+            evidence_attachment_ids=[],
+            reference_chunk_ids=reference_ids,
+            reference_source_documents=reference_docs,
+            reference_snippets=snippets,
+            validation=validation,
+        )
+
+    validation["reference_docs_filled_by_runner"] = True
+    return replace(
+        prediction,
+        reference_chunk_ids=reference_ids,
+        reference_source_documents=reference_docs,
+        reference_snippets=snippets,
+        validation=validation,
+    )
+
+
+def generated_from_prediction(prediction: FieldPrediction, original_generated: dict[str, Any]) -> dict[str, Any]:
+    generated = dict(original_generated)
+    generated.update(
+        {
+            "answer_value": prediction.answer_value,
+            "answer_status": prediction.answer_status,
+            "confidence": prediction.confidence,
+            "source_chunk_ids": prediction.source_chunk_ids,
+            "evidence_attachment_ids": prediction.evidence_attachment_ids,
+            "reference_chunk_ids": prediction.reference_chunk_ids,
+            "reference_source_documents": prediction.reference_source_documents,
+            "reference_snippets": prediction.reference_snippets,
+        }
+    )
+    if prediction.validation.get("status_rescued"):
+        generated["agent_resolution"] = {
+            "used": True,
+            "action": "clue_only",
+            "reason": "runner rescued not_found with relevant retrieved evidence",
+        }
+    if prediction.validation.get("downgraded_by_critic"):
+        generated["agent_resolution"] = {
+            "used": True,
+            "action": "clue_only",
+            "reason": "runner downgraded high-risk answered output to partial_clue",
+        }
+    return generated
+
+
 def critic_check_step15_answer(
     item: dict[str, Any],
     generated: dict[str, Any],
     top_hits: list[dict[str, Any]],
 ) -> list[str]:
-    del item
     flags: list[str] = []
     status = str(generated.get("answer_status") or "")
     source_chunk_ids = [str(chunk_id) for chunk_id in generated.get("source_chunk_ids") or [] if chunk_id]
     top_hit_index = hit_index(top_hits)
+    source_hits = [top_hit_index[chunk_id] for chunk_id in source_chunk_ids if chunk_id in top_hit_index]
+    question_text = display_text(item.get("question_text"))
     if status == "answered" and not source_chunk_ids:
         flags.append("answered_without_source")
     if any(chunk_id not in top_hit_index for chunk_id in source_chunk_ids):
         flags.append("invalid_source_reference")
     if status == "partial_clue" and not (generated.get("reference_source_documents") or []):
         flags.append("partial_without_reference")
+    if status == "not_found" and (top_hits or any(hit.get("retrieval_layer") == "target_main_fact" for hit in top_hits)):
+        flags.append("not_found_with_relevant_hits")
     if status == "not_found" and len(top_hits) >= 5:
         flags.append("not_found_with_many_hits")
     if status == "not_found" and any(hit.get("retrieval_layer") == "target_main_fact" for hit in top_hits):
@@ -625,8 +817,12 @@ def critic_check_step15_answer(
         flags.append("low_confidence")
     if len(display_text(generated.get("answer_value"))) > 200:
         flags.append("answer_too_long")
-    if status == "answered" and answered_from_global_intro(source_chunk_ids, top_hit_index):
+    if status == "answered" and is_equipment_capacity_field(question_text) and answered_from_global_intro(source_chunk_ids, top_hit_index):
         flags.append("answered_from_global_intro_risk")
+    if status == "answered" and "液冷" in question_text and source_hits and not any(hit_has_liquid_cooling_terms(hit) for hit in source_hits):
+        flags.append("liquid_cooling_scope_mismatch")
+    if status == "answered" and field_intent_source_mismatch(question_text, source_hits):
+        flags.append("field_intent_source_mismatch")
     return dedupe(flags)
 
 
@@ -781,6 +977,47 @@ def normalize_reference_source_documents(generated: dict[str, Any], top_hits: li
     return output
 
 
+def reference_source_documents_from_hits(top_hits: list[dict[str, Any]], limit: int = 5) -> list[dict[str, Any]]:
+    docs: list[dict[str, Any]] = []
+    for hit in top_hits[:limit]:
+        chunk_id = str(hit.get("chunk_id") or "")
+        if not chunk_id:
+            continue
+        docs.append(
+            {
+                "chunk_id": chunk_id,
+                "namespace": hit.get("namespace"),
+                "source_type": hit.get("source_type"),
+                "corpus_layer": hit.get("corpus_layer"),
+                "retrieval_layer": hit.get("retrieval_layer"),
+                "source_anchor": hit.get("source_anchor") or hit.get("anchor"),
+                "file_name": hit.get("file_name"),
+                "anchor": hit.get("anchor") or hit.get("source_anchor"),
+                "reason": "retrieved related evidence, but not safe enough for direct filling",
+                "text_preview": display_text(hit.get("raw_text") or hit.get("text_for_embedding"), 180),
+            }
+        )
+    return docs
+
+
+def has_relevant_reference_hits(top_hits: list[dict[str, Any]], *, min_reference_hits: int = 1) -> bool:
+    if len(top_hits) < min_reference_hits:
+        return False
+    if top_hits:
+        return True
+    return any(
+        hit.get("retrieval_layer") in {"target_main_fact", "target_structured_detail"}
+        or (display_text(hit.get("namespace")) and hit.get("namespace") != "global")
+        or safe_float(hit.get("rerank_score")) >= 0.5
+        or safe_float(hit.get("vector_score")) >= 0.7
+        for hit in top_hits
+    )
+
+
+def partial_confidence(confidence: float) -> float:
+    return max(0.35, min(confidence or 0.45, 0.55))
+
+
 def reference_chunk_ids_from_generated(generated: dict[str, Any], docs: list[dict[str, Any]]) -> list[str]:
     ids = [str(item) for item in generated.get("reference_chunk_ids") or [] if item]
     ids.extend(str(doc.get("chunk_id")) for doc in docs if doc.get("chunk_id"))
@@ -815,6 +1052,54 @@ def answered_from_global_intro(source_chunk_ids: list[str], hits: dict[str, dict
         or (hit.get("namespace") == "global" and str(hit.get("source_type") or "").startswith("intro_doc"))
     )
     return global_intro_count >= max(1, len(source_hits) // 2)
+
+
+def hit_has_liquid_cooling_terms(hit: dict[str, Any]) -> bool:
+    text = display_text(" ".join([display_text(hit.get("raw_text")), display_text(hit.get("text_for_embedding"))]))
+    return any(term in text for term in ["液冷", "CDU", "冷板", "液冷机柜"])
+
+
+def is_equipment_capacity_field(question_text: str) -> bool:
+    return any(
+        term in question_text
+        for term in [
+            "UPS",
+            "电池",
+            "市电",
+            "供电",
+            "油机",
+            "柴油",
+            "发电",
+            "机柜",
+            "U位",
+            "功率",
+            "容量",
+            "空调",
+            "制冷",
+            "网络",
+            "端口",
+            "液冷",
+            "冷板",
+            "CDU",
+        ]
+    )
+
+
+def field_intent_source_mismatch(question_text: str, source_hits: list[dict[str, Any]]) -> bool:
+    if not source_hits:
+        return False
+    asks_record = any(term in question_text for term in ["巡检", "记录", "归档", "报告", "演练", "测试", "维护", "检修"])
+    if not asks_record:
+        return False
+    source_text = display_text(" ".join(display_text(hit.get("raw_text") or hit.get("text_for_embedding")) for hit in source_hits))
+    has_record_terms = any(term in source_text for term in ["巡检", "记录", "归档", "报告", "演练", "测试", "维护", "检修"])
+    has_equipment_terms = any(term in source_text for term in ["UPS", "机柜", "功率", "容量", "市电", "油机", "空调", "冷冻", "供电"])
+    return has_equipment_terms and not has_record_terms
+
+
+def is_retryable_chat_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(marker in text for marker in ["timeout", "timed out", "curl: (28)", "operation timed out", "read timed out"])
 
 
 def make_eval_result(
@@ -1040,6 +1325,13 @@ def clamp_confidence(value: Any) -> float:
     except (TypeError, ValueError):
         return 0.0
     return max(0.0, min(number, 1.0))
+
+
+def safe_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def dedupe(values: list[str]) -> list[str]:
