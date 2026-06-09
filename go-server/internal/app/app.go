@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"os"
 
+	artifactpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/artifact"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/audit"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/auth"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/config"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/database"
+	filepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/file"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/httpx"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/logging"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/middleware"
@@ -95,11 +97,18 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	}
 	userService := userpkg.NewService(userRepo, auditService)
 	workspaceService := workspacepkg.NewService(workspaceRepo, auditService)
-	routes := block1Routes{
+	fileRepo := filepkg.NewPGXRepo(db)
+	fileValidator := filepkg.NewValidator(cfg.Files.MaxUploadSize.Bytes, cfg.Files.AllowedExtensions, cfg.Files.AllowedMIMETypes)
+	fileService := filepkg.NewService(fileRepo, objectStorage, workspaceService, auditService, fileValidator, cfg.Files.TempDir, cfg.Files.DeleteObjectOnSoftDelete)
+	artifactRepo := artifactpkg.NewPGXRepo(db)
+	artifactService := artifactpkg.NewService(artifactRepo, objectStorage, workspaceService, auditService)
+	routes := platformRoutes{
 		tokenManager:     tokenManager,
 		authHandler:      auth.NewHandler(authService),
 		userHandler:      userpkg.NewHandler(userService),
 		workspaceHandler: workspacepkg.NewHandler(workspaceService),
+		fileHandler:      filepkg.NewHandler(fileService),
+		artifactHandler:  artifactpkg.NewHandler(artifactService),
 	}
 	metrics := observability.NewMetrics()
 	router := buildRouter(cfg, logger, db, redisClient, objectStorage, metrics, routes)
@@ -135,7 +144,7 @@ func buildRouter(
 	redisClient *redis.Client,
 	objectStorage storage.ObjectStorage,
 	metrics *observability.Metrics,
-	routes block1Routes,
+	routes platformRoutes,
 ) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -174,18 +183,20 @@ func buildRouter(
 			},
 		},
 	})
-	registerBlock1Routes(r, routes)
+	registerPlatformRoutes(r, routes)
 	return r
 }
 
-type block1Routes struct {
+type platformRoutes struct {
 	tokenManager     *auth.TokenManager
 	authHandler      *auth.Handler
 	userHandler      *userpkg.Handler
 	workspaceHandler *workspacepkg.Handler
+	fileHandler      *filepkg.Handler
+	artifactHandler  *artifactpkg.Handler
 }
 
-func registerBlock1Routes(r chi.Router, routes block1Routes) {
+func registerPlatformRoutes(r chi.Router, routes platformRoutes) {
 	if routes.authHandler == nil || routes.tokenManager == nil {
 		return
 	}
@@ -196,6 +207,12 @@ func registerBlock1Routes(r chi.Router, routes block1Routes) {
 			routes.authHandler.RegisterProtectedRoutes(protected)
 			if routes.workspaceHandler != nil {
 				routes.workspaceHandler.RegisterRoutes(protected)
+			}
+			if routes.fileHandler != nil {
+				routes.fileHandler.RegisterRoutes(protected)
+			}
+			if routes.artifactHandler != nil {
+				routes.artifactHandler.RegisterRoutes(protected)
 			}
 			if routes.userHandler != nil {
 				protected.Group(func(admin chi.Router) {

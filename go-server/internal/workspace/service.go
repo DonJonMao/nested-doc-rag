@@ -107,6 +107,24 @@ func (s *Service) ListMembers(ctx context.Context, workspaceID uuid.UUID, actor 
 	return s.repo.ListMembers(ctx, workspaceID)
 }
 
+func (s *Service) CanReadWorkspace(ctx context.Context, workspaceID uuid.UUID, actor auth.Principal) error {
+	return s.ensureWorkspaceMember(ctx, workspaceID, actor)
+}
+
+func (s *Service) CanWriteWorkspace(ctx context.Context, workspaceID uuid.UUID, actor auth.Principal) error {
+	if auth.IsAdminRoles(actor.Roles) {
+		return nil
+	}
+	memberRole, err := s.repo.GetMemberRole(ctx, workspaceID, actor.UserID)
+	if err != nil {
+		return httpx.NewAppError(httpx.CodeForbidden, "forbidden", http.StatusForbidden, nil, nil)
+	}
+	if memberRole != RoleOwner && memberRole != RoleOperator {
+		return httpx.NewAppError(httpx.CodeForbidden, "forbidden", http.StatusForbidden, nil, nil)
+	}
+	return nil
+}
+
 func (s *Service) ensureWorkspaceMember(ctx context.Context, workspaceID uuid.UUID, actor auth.Principal) error {
 	if auth.IsAdminRoles(actor.Roles) {
 		return nil

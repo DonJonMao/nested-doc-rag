@@ -35,6 +35,30 @@ auth:
     username: "admin"
     password_env: "GONGKAN_BOOTSTRAP_ADMIN_PASSWORD"
 
+files:
+  max_upload_size: "200MB"
+  temp_dir: "./runtime/tmp/uploads"
+  allowed_extensions:
+    - ".xlsx"
+    - ".xls"
+    - ".docx"
+    - ".png"
+    - ".jpg"
+    - ".jpeg"
+  allowed_mime_types:
+    - "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    - "application/vnd.ms-excel"
+    - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    - "image/png"
+    - "image/jpeg"
+    - "application/octet-stream"
+  delete_object_on_soft_delete: false
+
+artifacts:
+  allow_presign_download: false
+  download_mode: "proxy"
+  default_presign_ttl: "15m"
+
 python:
   executable: "python"
   project_dir: "../"

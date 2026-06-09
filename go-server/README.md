@@ -46,6 +46,29 @@ Not implemented in Block 1:
 - review queue
 - artifact management APIs
 
+## Block 2 Scope
+
+Implemented in this block:
+
+- workspace-scoped file upload
+- file metadata table
+- file download with auth
+- file soft delete
+- upload validation
+- SHA256 checksum
+- object storage integration
+- artifact metadata model
+- artifact download
+- audit logs for file/artifact operations
+
+Not implemented in Block 2:
+
+- knowledge base management
+- form filling business
+- job queue
+- PythonRunner
+- review queue
+
 ## Run Locally
 
 ```bash
@@ -103,6 +126,25 @@ curl -X POST http://localhost:8080/api/v1/workspaces \
   -d '{"name":"西咸数据中心","description":"测试工作区"}'
 ```
 
+## File Example
+
+Upload a file:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/files \
+  -H "Authorization: Bearer <access_token>" \
+  -F "workspace_id=<workspace_id>" \
+  -F "file_category=form_template" \
+  -F "file=@./example.xlsx"
+```
+
+Download a file:
+
+```bash
+curl -OJ http://localhost:8080/api/v1/files/<file_id>/download \
+  -H "Authorization: Bearer <access_token>"
+```
+
 ## Tests
 
 ```bash
@@ -111,7 +153,6 @@ go test ./...
 
 ## Next Blocks
 
-- Block 2: File Storage and Artifact Management
 - Block 3: Task Queue, Worker, State Machine, SSE
 - Block 4: Python Core integration
 - Block 5: Gongkan form filling business

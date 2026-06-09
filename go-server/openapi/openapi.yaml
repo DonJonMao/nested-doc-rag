@@ -303,6 +303,154 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
+  /api/v1/files:
+    post:
+      summary: Upload a workspace-scoped file.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/UploadFileRequest"
+      responses:
+        "200":
+          description: Uploaded file metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "400":
+          description: Invalid upload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+    get:
+      summary: List workspace files.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: workspace_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: file_category
+          in: query
+          schema:
+            type: string
+            enum: [knowledge_document, form_template, proof_attachment, misc]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Files.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileListResponse"
+  /api/v1/files/{file_id}:
+    get:
+      summary: Get file metadata.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/FileID"
+      responses:
+        "200":
+          description: File metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+    delete:
+      summary: Soft delete file metadata.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/FileID"
+      responses:
+        "200":
+          description: File soft deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+  /api/v1/files/{file_id}/download:
+    get:
+      summary: Download file through Go proxy.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/FileID"
+      responses:
+        "200":
+          description: File stream.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+  /api/v1/artifacts/{artifact_id}:
+    get:
+      summary: Get run artifact metadata.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ArtifactID"
+      responses:
+        "200":
+          description: Artifact metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+  /api/v1/artifacts/{artifact_id}/download:
+    get:
+      summary: Download run artifact through Go proxy.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ArtifactID"
+      responses:
+        "200":
+          description: Artifact stream.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+  /api/v1/runs/{run_id}/artifacts:
+    get:
+      summary: List artifacts for a run id.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+        - name: workspace_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Run artifacts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactListResponse"
 components:
   securitySchemes:
     BearerAuth:
@@ -319,6 +467,27 @@ components:
         format: uuid
     WorkspaceID:
       name: workspace_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    FileID:
+      name: file_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ArtifactID:
+      name: artifact_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RunID:
+      name: run_id
       in: path
       required: true
       schema:
@@ -505,3 +674,120 @@ components:
         role:
           type: string
           enum: [owner, operator, reviewer, viewer]
+    UploadFileRequest:
+      type: object
+      required: [workspace_id, file_category, file]
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+        file_category:
+          type: string
+          enum: [knowledge_document, form_template, proof_attachment, misc]
+        file:
+          type: string
+          format: binary
+    UploadFileResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/File"
+    FileListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/File"
+    File:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        original_filename:
+          type: string
+        file_size:
+          type: integer
+          format: int64
+        mime_type:
+          type: string
+        sha256:
+          type: string
+        file_category:
+          type: string
+          enum: [knowledge_document, form_template, proof_attachment, misc]
+        status:
+          type: string
+          enum: [active, deleted, quarantined]
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+    ArtifactListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/RunArtifact"
+    RunArtifact:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+        artifact_type:
+          type: string
+          enum:
+            - predictions_raw
+            - predictions
+            - agent_overlays
+            - predictions_agent_view
+            - review_items
+            - trace
+            - trace_summary
+            - run_summary
+            - summary
+            - run_manifest
+            - filled_form
+            - writeback_audit
+            - evidence_map
+        filename:
+          type: string
+        content_type:
+          type: string
+        file_size:
+          type: integer
+          format: int64
+        sha256:
+          type: string
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time

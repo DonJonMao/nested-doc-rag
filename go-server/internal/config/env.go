@@ -30,6 +30,14 @@ func ApplyEnvOverrides(cfg *Config) error {
 	setBool(&cfg.Auth.BootstrapAdmin.Enabled, "GONGKAN_BOOTSTRAP_ADMIN_ENABLED", &errors)
 	setString(&cfg.Auth.BootstrapAdmin.Username, "GONGKAN_BOOTSTRAP_ADMIN_USERNAME")
 	setString(&cfg.Auth.BootstrapAdmin.PasswordEnv, "GONGKAN_BOOTSTRAP_ADMIN_PASSWORD_ENV")
+	setByteSize(&cfg.Files.MaxUploadSize, "GONGKAN_FILES_MAX_UPLOAD_SIZE", &errors)
+	setString(&cfg.Files.TempDir, "GONGKAN_FILES_TEMP_DIR")
+	setStringSlice(&cfg.Files.AllowedExtensions, "GONGKAN_FILES_ALLOWED_EXTENSIONS")
+	setStringSlice(&cfg.Files.AllowedMIMETypes, "GONGKAN_FILES_ALLOWED_MIME_TYPES")
+	setBool(&cfg.Files.DeleteObjectOnSoftDelete, "GONGKAN_FILES_DELETE_OBJECT_ON_SOFT_DELETE", &errors)
+	setString(&cfg.Artifacts.DownloadMode, "GONGKAN_ARTIFACTS_DOWNLOAD_MODE")
+	setBool(&cfg.Artifacts.AllowPresignDownload, "GONGKAN_ARTIFACTS_ALLOW_PRESIGN_DOWNLOAD", &errors)
+	setDuration(&cfg.Artifacts.DefaultPresignTTL, "GONGKAN_ARTIFACTS_DEFAULT_PRESIGN_TTL", &errors)
 	setString(&cfg.Python.Executable, "GONGKAN_PYTHON_EXECUTABLE")
 	setString(&cfg.Python.ProjectDir, "GONGKAN_PYTHON_PROJECT_DIR")
 	setString(&cfg.Python.ConfigPath, "GONGKAN_PYTHON_CONFIG_PATH")
@@ -96,6 +104,17 @@ func setDuration(target *Duration, name string, errors *[]string) {
 			return
 		}
 		*target = NewDuration(parsed)
+	}
+}
+
+func setByteSize(target *ByteSize, name string, errors *[]string) {
+	if value, ok := os.LookupEnv(name); ok {
+		parsed, err := ParseByteSize(value)
+		if err != nil {
+			*errors = append(*errors, fmt.Sprintf("%s must be a byte size", name))
+			return
+		}
+		*target = NewByteSize(parsed)
 	}
 }
 
