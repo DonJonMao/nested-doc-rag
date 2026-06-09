@@ -90,9 +90,6 @@ Implemented in this block:
 
 Not implemented in Block 3:
 
-- PythonRunner
-- real fill_form handler
-- real ingest_knowledge handler
 - fill_runs business
 - knowledge_bases business
 - review queue business

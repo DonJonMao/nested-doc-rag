@@ -89,7 +89,6 @@ func main() {
 	jobService := jobs.NewService(jobRepo, runEventService, nil, workspaceAuthorizer, auditService, logger, cfg.Jobs.MaxAttempts)
 	limiter := jobs.NewResourceLimiter(cfg.Jobs)
 	worker := jobs.NewWorker(cfg.Redis, cfg.Jobs, jobRepo, jobService, limiter, logger)
-	worker.RegisterDefaultHandlers(runEventService)
 	commandBuilder := &pythonpkg.CommandBuilder{
 		PythonExecutable:  cfg.Python.Executable,
 		ProjectDir:        cfg.Python.ProjectDir,
@@ -111,9 +110,18 @@ func main() {
 		Step15DefaultRows:          cfg.Python.Step15DefaultRows,
 		IngestCommandEnabled:       cfg.Python.IngestCommandEnabled,
 	}
+	logger.Info("python runner configured",
+		zap.String("python_executable", cfg.Python.Executable),
+		zap.String("python_project_dir", cfg.Python.ProjectDir),
+		zap.Bool("artifact_validation_enabled", cfg.Python.ArtifactValidationEnabled),
+		zap.String("step15_default_retrieval_mode", cfg.Python.Step15DefaultRetrievalMode),
+		zap.String("step15_default_prompt_version", cfg.Python.Step15DefaultPromptVersion),
+	)
 	artifactArchiver := pythonpkg.NewArtifactArchiver(artifactService, logger)
+	worker.RegisterHandler(jobs.JobTypeNoop, jobs.NewNoopHandler(runEventService))
 	worker.RegisterHandler(jobs.JobTypeFillForm, jobs.NewFillFormPythonHandler(pythonRunner, artifactArchiver, runEventService, logger))
 	worker.RegisterHandler(jobs.JobTypeIngestKnowledge, jobs.NewIngestKnowledgePythonHandler(pythonRunner, runEventService, logger, cfg.Python.IngestCommandEnabled))
+	worker.RegisterHandler(jobs.JobTypeArchiveArtifacts, jobs.NewPlaceholderHandler(jobs.JobTypeArchiveArtifacts))
 
 	serverErrors := make(chan error, 1)
 	go func() {
