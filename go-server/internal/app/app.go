@@ -97,11 +97,22 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	}
 	userService := userpkg.NewService(userRepo, auditService)
 	workspaceService := workspacepkg.NewService(workspaceRepo, auditService)
+	workspaceAuthorizer := workspacepkg.NewAuthorizer(workspaceRepo)
 	fileRepo := filepkg.NewPGXRepo(db)
 	fileValidator := filepkg.NewValidator(cfg.Files.MaxUploadSize.Bytes, cfg.Files.AllowedExtensions, cfg.Files.AllowedMIMETypes)
-	fileService := filepkg.NewService(fileRepo, objectStorage, workspaceService, auditService, fileValidator, cfg.Files.TempDir, cfg.Files.DeleteObjectOnSoftDelete)
+	fileService := filepkg.NewService(fileRepo, objectStorage, workspaceAuthorizer, auditService, fileValidator, cfg.Files.TempDir, cfg.Files.DeleteObjectOnSoftDelete)
 	artifactRepo := artifactpkg.NewPGXRepo(db)
-	artifactService := artifactpkg.NewService(artifactRepo, objectStorage, workspaceService, auditService)
+	artifactService := artifactpkg.NewService(
+		artifactRepo,
+		objectStorage,
+		workspaceAuthorizer,
+		auditService,
+		artifactpkg.ServiceOptions{
+			DownloadMode:         cfg.Artifacts.DownloadMode,
+			AllowPresignDownload: cfg.Artifacts.AllowPresignDownload,
+			DefaultPresignTTL:    cfg.Artifacts.DefaultPresignTTL.Duration,
+		},
+	)
 	routes := platformRoutes{
 		tokenManager:     tokenManager,
 		authHandler:      auth.NewHandler(authService),

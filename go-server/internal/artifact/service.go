@@ -28,10 +28,27 @@ type Service struct {
 	storage    storage.ObjectStorage
 	authorizer WorkspaceAuthorizer
 	audit      *audit.Service
+	options    ServiceOptions
 }
 
-func NewService(repo Repo, objectStorage storage.ObjectStorage, authorizer WorkspaceAuthorizer, auditSvc *audit.Service) *Service {
-	return &Service{repo: repo, storage: objectStorage, authorizer: authorizer, audit: auditSvc}
+type ServiceOptions struct {
+	DownloadMode         string
+	AllowPresignDownload bool
+	DefaultPresignTTL    time.Duration
+}
+
+func NewService(repo Repo, objectStorage storage.ObjectStorage, authorizer WorkspaceAuthorizer, auditSvc *audit.Service, options ...ServiceOptions) *Service {
+	resolved := ServiceOptions{DownloadMode: "proxy", DefaultPresignTTL: 15 * time.Minute}
+	if len(options) > 0 {
+		resolved = options[0]
+	}
+	if resolved.DownloadMode == "" {
+		resolved.DownloadMode = "proxy"
+	}
+	if resolved.DefaultPresignTTL <= 0 {
+		resolved.DefaultPresignTTL = 15 * time.Minute
+	}
+	return &Service{repo: repo, storage: objectStorage, authorizer: authorizer, audit: auditSvc, options: resolved}
 }
 
 func (s *Service) RegisterArtifact(ctx context.Context, req RegisterArtifactRequest, actor auth.Principal) (*RunArtifact, error) {
@@ -126,18 +143,17 @@ func (s *Service) DownloadArtifact(ctx context.Context, artifactID uuid.UUID, ac
 	if err != nil {
 		return nil, err
 	}
+	if s.options.DownloadMode == "presign" && s.options.AllowPresignDownload {
+		if url, err := s.storage.PresignGet(ctx, record.ObjectKey, s.options.DefaultPresignTTL); err == nil && url != "" {
+			s.recordArtifactDownloaded(ctx, record, actor)
+			return &DownloadResult{Filename: record.Filename, ContentType: record.ContentType, ContentLength: record.FileSize, PresignedURL: url}, nil
+		}
+	}
 	reader, info, err := s.storage.Get(ctx, record.ObjectKey)
 	if err != nil {
 		return nil, httpx.NewAppError(httpx.CodeInternal, "read artifact failed", http.StatusInternalServerError, nil, err)
 	}
-	s.record(ctx, audit.AuditLog{
-		WorkspaceID:  &record.WorkspaceID,
-		UserID:       &actor.UserID,
-		Action:       "artifact.downloaded",
-		ResourceType: "run_artifact",
-		ResourceID:   record.ID.String(),
-		Payload:      map[string]any{"filename": record.Filename, "file_size": record.FileSize, "sha256": record.SHA256, "artifact_type": record.ArtifactType},
-	})
+	s.recordArtifactDownloaded(ctx, record, actor)
 	contentType := record.ContentType
 	if contentType == "" {
 		contentType = info.ContentType
@@ -149,6 +165,17 @@ func (s *Service) record(ctx context.Context, log audit.AuditLog) {
 	if s.audit != nil {
 		s.audit.Record(ctx, log)
 	}
+}
+
+func (s *Service) recordArtifactDownloaded(ctx context.Context, record *RunArtifact, actor auth.Principal) {
+	s.record(ctx, audit.AuditLog{
+		WorkspaceID:  &record.WorkspaceID,
+		UserID:       &actor.UserID,
+		Action:       "artifact.downloaded",
+		ResourceType: "run_artifact",
+		ResourceID:   record.ID.String(),
+		Payload:      map[string]any{"filename": record.Filename, "file_size": record.FileSize, "sha256": record.SHA256, "artifact_type": record.ArtifactType},
+	})
 }
 
 type tempArtifact struct {

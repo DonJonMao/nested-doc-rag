@@ -22,12 +22,13 @@ type Repository interface {
 }
 
 type Service struct {
-	repo  Repository
-	audit *audit.Service
+	repo       Repository
+	audit      *audit.Service
+	authorizer *Authorizer
 }
 
 func NewService(repo Repository, auditSvc *audit.Service) *Service {
-	return &Service{repo: repo, audit: auditSvc}
+	return &Service{repo: repo, audit: auditSvc, authorizer: NewAuthorizer(repo)}
 }
 
 func (s *Service) CreateWorkspace(ctx context.Context, req CreateWorkspaceRequest, actor auth.Principal) (*Workspace, error) {
@@ -108,21 +109,11 @@ func (s *Service) ListMembers(ctx context.Context, workspaceID uuid.UUID, actor 
 }
 
 func (s *Service) CanReadWorkspace(ctx context.Context, workspaceID uuid.UUID, actor auth.Principal) error {
-	return s.ensureWorkspaceMember(ctx, workspaceID, actor)
+	return s.authorizer.CanReadWorkspace(ctx, workspaceID, actor)
 }
 
 func (s *Service) CanWriteWorkspace(ctx context.Context, workspaceID uuid.UUID, actor auth.Principal) error {
-	if auth.IsAdminRoles(actor.Roles) {
-		return nil
-	}
-	memberRole, err := s.repo.GetMemberRole(ctx, workspaceID, actor.UserID)
-	if err != nil {
-		return httpx.NewAppError(httpx.CodeForbidden, "forbidden", http.StatusForbidden, nil, nil)
-	}
-	if memberRole != RoleOwner && memberRole != RoleOperator {
-		return httpx.NewAppError(httpx.CodeForbidden, "forbidden", http.StatusForbidden, nil, nil)
-	}
-	return nil
+	return s.authorizer.CanWriteWorkspace(ctx, workspaceID, actor)
 }
 
 func (s *Service) ensureWorkspaceMember(ctx context.Context, workspaceID uuid.UUID, actor auth.Principal) error {

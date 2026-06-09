@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/artifact"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/audit"
@@ -67,6 +68,31 @@ func TestArtifactServiceAuditOnDownload(t *testing.T) {
 	_, _ = io.ReadAll(download.Reader)
 	_ = download.Reader.Close()
 
+	require.Len(t, audits.logs, 1)
+	require.Equal(t, "artifact.downloaded", audits.logs[0].Action)
+}
+
+func TestArtifactServicePresignDownloadWhenEnabled(t *testing.T) {
+	repo := newFakeArtifactRepo()
+	objectStorage := newFakeObjectStorage()
+	objectStorage.presignURL = "https://storage.local/presigned"
+	authorizer := &fakeAuthorizer{}
+	audits := &fakeAuditRepo{}
+	service := artifact.NewService(
+		repo,
+		objectStorage,
+		authorizer,
+		audit.NewService(audits, zap.NewNop()),
+		artifact.ServiceOptions{DownloadMode: "presign", AllowPresignDownload: true, DefaultPresignTTL: time.Minute},
+	)
+	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}}
+	workspaceID := uuid.New()
+	item := seedArtifact(repo, objectStorage, workspaceID, uuid.New(), actor.UserID)
+
+	download, err := service.DownloadArtifact(context.Background(), item.ID, actor)
+
+	require.NoError(t, err)
+	require.Equal(t, "https://storage.local/presigned", download.PresignedURL)
 	require.Len(t, audits.logs, 1)
 	require.Equal(t, "artifact.downloaded", audits.logs[0].Action)
 }

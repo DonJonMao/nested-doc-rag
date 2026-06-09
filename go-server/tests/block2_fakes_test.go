@@ -18,12 +18,14 @@ import (
 )
 
 type fakeObjectStorage struct {
-	mu        sync.Mutex
-	objects   map[string][]byte
-	putErr    error
-	getErr    error
-	deleteLog []string
-	putLog    []string
+	mu         sync.Mutex
+	objects    map[string][]byte
+	putErr     error
+	getErr     error
+	presignURL string
+	presignErr error
+	deleteLog  []string
+	putLog     []string
 }
 
 func newFakeObjectStorage() *fakeObjectStorage {
@@ -67,6 +69,12 @@ func (f *fakeObjectStorage) Delete(ctx context.Context, key string) error {
 }
 
 func (f *fakeObjectStorage) PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	if f.presignErr != nil {
+		return "", f.presignErr
+	}
+	if f.presignURL != "" {
+		return f.presignURL, nil
+	}
 	return "", storage.ErrNotSupported
 }
 

@@ -17,6 +17,12 @@ func TestLoadConfigExample(t *testing.T) {
 	require.Equal(t, "minio", cfg.Storage.Type)
 	require.Equal(t, "python", cfg.Python.Executable)
 	require.Equal(t, 2, cfg.Jobs.FillConcurrency)
+	require.Equal(t, int64(200*1024*1024), cfg.Files.MaxUploadSize.Bytes)
+	require.Equal(t, "./runtime/tmp/uploads", cfg.Files.TempDir)
+	require.Contains(t, cfg.Files.AllowedExtensions, ".xlsx")
+	require.Equal(t, "proxy", cfg.Artifacts.DownloadMode)
+	require.False(t, cfg.Artifacts.AllowPresignDownload)
+	require.Equal(t, "15m0s", cfg.Artifacts.DefaultPresignTTL.String())
 }
 
 func TestEnvOverride(t *testing.T) {
@@ -25,6 +31,10 @@ func TestEnvOverride(t *testing.T) {
 	t.Setenv("GONGKAN_STORAGE_TYPE", "local")
 	t.Setenv("GONGKAN_STORAGE_LOCAL_DIR", t.TempDir())
 	t.Setenv("GONGKAN_PYTHON_EXECUTABLE", "python3")
+	t.Setenv("GONGKAN_FILES_MAX_UPLOAD_SIZE", "20MB")
+	t.Setenv("GONGKAN_FILES_TEMP_DIR", "/tmp/gongkan-uploads")
+	t.Setenv("GONGKAN_ARTIFACTS_DOWNLOAD_MODE", "presign")
+	t.Setenv("GONGKAN_ARTIFACTS_ALLOW_PRESIGN_DOWNLOAD", "true")
 
 	cfg, err := config.Load("../configs/config.example.yaml")
 
@@ -33,6 +43,10 @@ func TestEnvOverride(t *testing.T) {
 	require.Equal(t, "postgres://override", cfg.Database.DSN)
 	require.Equal(t, "local", cfg.Storage.Type)
 	require.Equal(t, "python3", cfg.Python.Executable)
+	require.Equal(t, int64(20*1024*1024), cfg.Files.MaxUploadSize.Bytes)
+	require.Equal(t, "/tmp/gongkan-uploads", cfg.Files.TempDir)
+	require.Equal(t, "presign", cfg.Artifacts.DownloadMode)
+	require.True(t, cfg.Artifacts.AllowPresignDownload)
 }
 
 func TestValidateMissingField(t *testing.T) {
@@ -53,4 +67,34 @@ func TestEnvOverrideInvalidValue(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "GONGKAN_JOBS_FILL_CONCURRENCY")
+}
+
+func TestValidateInvalidDownloadMode(t *testing.T) {
+	cfg := config.Default()
+	cfg.Artifacts.DownloadMode = "bad"
+
+	err := config.Validate(cfg)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "artifacts.download_mode")
+}
+
+func TestValidateInvalidMaxUploadSize(t *testing.T) {
+	cfg := config.Default()
+	cfg.Files.MaxUploadSize = config.NewByteSize(0)
+
+	err := config.Validate(cfg)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "files.max_upload_size")
+}
+
+func TestValidateMissingAllowedExtensions(t *testing.T) {
+	cfg := config.Default()
+	cfg.Files.AllowedExtensions = nil
+
+	err := config.Validate(cfg)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "files.allowed_extensions")
 }

@@ -172,6 +172,9 @@ func Validate(cfg *Config) error {
 	if strings.TrimSpace(cfg.Files.TempDir) == "" {
 		problems = append(problems, "files.temp_dir is required")
 	}
+	if len(cfg.Files.AllowedExtensions) == 0 {
+		problems = append(problems, "files.allowed_extensions is required")
+	}
 	switch cfg.Artifacts.DownloadMode {
 	case "proxy", "presign":
 	default:
