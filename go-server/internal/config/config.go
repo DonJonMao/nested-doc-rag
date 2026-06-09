@@ -89,10 +89,18 @@ type ArtifactsConfig struct {
 }
 
 type PythonConfig struct {
-	Executable     string   `yaml:"executable"`
-	ProjectDir     string   `yaml:"project_dir"`
-	ConfigPath     string   `yaml:"config_path"`
-	DefaultTimeout Duration `yaml:"default_timeout"`
+	Executable                 string   `yaml:"executable"`
+	ProjectDir                 string   `yaml:"project_dir"`
+	ConfigPath                 string   `yaml:"config_path"`
+	DefaultTimeout             Duration `yaml:"default_timeout"`
+	ArtifactValidationEnabled  bool     `yaml:"artifact_validation_enabled"`
+	KillGracePeriod            Duration `yaml:"kill_grace_period"`
+	StdoutLogMaxBytes          int64    `yaml:"stdout_log_max_bytes"`
+	StderrLogMaxBytes          int64    `yaml:"stderr_log_max_bytes"`
+	Step15DefaultRetrievalMode string   `yaml:"step15_default_retrieval_mode"`
+	Step15DefaultPromptVersion string   `yaml:"step15_default_prompt_version"`
+	Step15DefaultRows          string   `yaml:"step15_default_rows"`
+	IngestCommandEnabled       bool     `yaml:"ingest_command_enabled"`
 }
 
 type JobsConfig struct {
@@ -175,6 +183,35 @@ func Validate(cfg *Config) error {
 	}
 	if strings.TrimSpace(cfg.Python.Executable) == "" {
 		problems = append(problems, "python.executable is required")
+	}
+	if strings.TrimSpace(cfg.Python.ProjectDir) == "" {
+		problems = append(problems, "python.project_dir is required")
+	}
+	if strings.TrimSpace(cfg.Python.ConfigPath) == "" {
+		problems = append(problems, "python.config_path is required")
+	}
+	if cfg.Python.DefaultTimeout.Duration <= 0 {
+		problems = append(problems, "python.default_timeout must be greater than 0")
+	}
+	if cfg.Python.KillGracePeriod.Duration <= 0 {
+		problems = append(problems, "python.kill_grace_period must be greater than 0")
+	}
+	if cfg.Python.StdoutLogMaxBytes <= 0 {
+		problems = append(problems, "python.stdout_log_max_bytes must be greater than 0")
+	}
+	if cfg.Python.StderrLogMaxBytes <= 0 {
+		problems = append(problems, "python.stderr_log_max_bytes must be greater than 0")
+	}
+	switch strings.TrimSpace(cfg.Python.Step15DefaultRetrievalMode) {
+	case "flat", "layered":
+	default:
+		problems = append(problems, "python.step15_default_retrieval_mode must be flat or layered")
+	}
+	if strings.TrimSpace(cfg.Python.Step15DefaultPromptVersion) == "" {
+		problems = append(problems, "python.step15_default_prompt_version is required")
+	}
+	if strings.TrimSpace(cfg.Python.Step15DefaultRows) == "" {
+		problems = append(problems, "python.step15_default_rows is required")
 	}
 	if cfg.Files.MaxUploadSize.Bytes <= 0 {
 		problems = append(problems, "files.max_upload_size must be greater than 0")
@@ -286,10 +323,18 @@ func Default() *Config {
 			DefaultPresignTTL:    NewDuration(15 * time.Minute),
 		},
 		Python: PythonConfig{
-			Executable:     "python",
-			ProjectDir:     "../",
-			ConfigPath:     "config/local.yaml",
-			DefaultTimeout: NewDuration(2 * time.Hour),
+			Executable:                 "python",
+			ProjectDir:                 "../",
+			ConfigPath:                 "config/local.yaml",
+			DefaultTimeout:             NewDuration(2 * time.Hour),
+			ArtifactValidationEnabled:  true,
+			KillGracePeriod:            NewDuration(10 * time.Second),
+			StdoutLogMaxBytes:          1024 * 1024,
+			StderrLogMaxBytes:          1024 * 1024,
+			Step15DefaultRetrievalMode: "layered",
+			Step15DefaultPromptVersion: "step15_compat",
+			Step15DefaultRows:          "4-144",
+			IngestCommandEnabled:       false,
 		},
 		Jobs: JobsConfig{
 			FillConcurrency:      2,

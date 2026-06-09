@@ -7,14 +7,17 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/artifact"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/audit"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/config"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/database"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/eventbus"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/jobs"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/logging"
+	pythonpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/python"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/redisx"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/runevent"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/storage"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/workspace"
 	"go.uber.org/zap"
 )
@@ -52,6 +55,10 @@ func main() {
 	defer func() {
 		_ = redisx.Close(redisClient)
 	}()
+	objectStorage, err := storage.NewObjectStorage(cfg.Storage, logger)
+	if err != nil {
+		logger.Fatal("initialize object storage failed", zap.Error(err))
+	}
 	var runEventBus eventbus.EventBus = eventbus.NewNoopEventBus()
 	if cfg.Jobs.EventBusEnabled {
 		runEventBus = eventbus.NewRedisEventBus(redisClient, cfg.Jobs.EventChannel, logger)
@@ -64,6 +71,18 @@ func main() {
 	auditService := audit.NewService(auditRepo, logger)
 	workspaceRepo := workspace.NewPGXRepo(db)
 	workspaceAuthorizer := workspace.NewAuthorizer(workspaceRepo)
+	artifactRepo := artifact.NewPGXRepo(db)
+	artifactService := artifact.NewService(
+		artifactRepo,
+		objectStorage,
+		workspaceAuthorizer,
+		auditService,
+		artifact.ServiceOptions{
+			DownloadMode:         cfg.Artifacts.DownloadMode,
+			AllowPresignDownload: cfg.Artifacts.AllowPresignDownload,
+			DefaultPresignTTL:    cfg.Artifacts.DefaultPresignTTL.Duration,
+		},
+	)
 	runEventRepo := runevent.NewPGXRepo(db)
 	runEventService := runevent.NewService(runEventRepo, eventbus.NewRunEventPublisher(runEventBus, logger))
 	jobRepo := jobs.NewPGXRepo(db)
@@ -71,6 +90,30 @@ func main() {
 	limiter := jobs.NewResourceLimiter(cfg.Jobs)
 	worker := jobs.NewWorker(cfg.Redis, cfg.Jobs, jobRepo, jobService, limiter, logger)
 	worker.RegisterDefaultHandlers(runEventService)
+	commandBuilder := &pythonpkg.CommandBuilder{
+		PythonExecutable:  cfg.Python.Executable,
+		ProjectDir:        cfg.Python.ProjectDir,
+		DefaultConfigPath: cfg.Python.ConfigPath,
+	}
+	processRunner := &pythonpkg.ProcessRunner{
+		Logger:          logger,
+		KillGracePeriod: cfg.Python.KillGracePeriod.Duration,
+		StdoutLimit:     cfg.Python.StdoutLogMaxBytes,
+		StderrLimit:     cfg.Python.StderrLogMaxBytes,
+	}
+	pythonRunner := &pythonpkg.SubprocessPythonRunner{
+		Builder:                    commandBuilder,
+		Process:                    processRunner,
+		ArtifactValidationEnabled:  cfg.Python.ArtifactValidationEnabled,
+		DefaultTimeout:             cfg.Python.DefaultTimeout.Duration,
+		Step15DefaultRetrievalMode: cfg.Python.Step15DefaultRetrievalMode,
+		Step15DefaultPromptVersion: cfg.Python.Step15DefaultPromptVersion,
+		Step15DefaultRows:          cfg.Python.Step15DefaultRows,
+		IngestCommandEnabled:       cfg.Python.IngestCommandEnabled,
+	}
+	artifactArchiver := pythonpkg.NewArtifactArchiver(artifactService, logger)
+	worker.RegisterHandler(jobs.JobTypeFillForm, jobs.NewFillFormPythonHandler(pythonRunner, artifactArchiver, runEventService, logger))
+	worker.RegisterHandler(jobs.JobTypeIngestKnowledge, jobs.NewIngestKnowledgePythonHandler(pythonRunner, runEventService, logger, cfg.Python.IngestCommandEnabled))
 
 	serverErrors := make(chan error, 1)
 	go func() {

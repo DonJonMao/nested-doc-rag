@@ -97,6 +97,48 @@ Not implemented in Block 3:
 - knowledge_bases business
 - review queue business
 
+## Block 4 Scope
+
+Implemented in this block:
+
+- PythonRunner interface
+- SubprocessPythonRunner
+- Step15Agent command builder
+- validate-artifacts command runner
+- run_manifest parser
+- artifact validator
+- artifact archiver
+- fill_form Python job handler
+- ingest_knowledge Python job handler interface
+- process timeout/cancel
+- stdout/stderr tail capture
+- worker integration with Python handlers
+
+Not implemented in Block 4:
+
+- form_files
+- fill_runs
+- knowledge_bases
+- ingestion_jobs
+- review_items
+- public business APIs for form filling or knowledge ingestion
+
+Go/Python boundary:
+
+```text
+Go calls:
+python -m nested_doc_rag.cli run-step15-agent ...
+python -m nested_doc_rag.cli validate-artifacts --run-dir <out_dir>
+
+Go reads:
+<out_dir>/run_manifest.json
+
+Go archives:
+manifest artifacts into ObjectStorage and run_artifacts table
+```
+
+The worker registers the `fill_form` handler with `SubprocessPythonRunner` and `ArtifactArchiver`. `ingest_knowledge` keeps a full runner interface, but the command remains disabled unless `python.ingest_command_enabled=true`.
+
 ## Run Locally
 
 ```bash
@@ -211,6 +253,28 @@ When an SSE client connects, the API first replays persisted `run_events` after 
 
 This supports separate API and worker processes. Future API replicas can subscribe to the same `jobs.event_channel`.
 
+## Python Core Integration
+
+Python execution is configured under `python`:
+
+```yaml
+python:
+  executable: "python"
+  project_dir: "../"
+  config_path: "config/local.yaml"
+  default_timeout: "2h"
+  artifact_validation_enabled: true
+  kill_grace_period: "10s"
+  stdout_log_max_bytes: 1048576
+  stderr_log_max_bytes: 1048576
+  step15_default_retrieval_mode: "layered"
+  step15_default_prompt_version: "step15_compat"
+  step15_default_rows: "4-144"
+  ingest_command_enabled: false
+```
+
+The Go worker does not import Python code or inspect RAG/agent internals. Job payloads carry only lightweight paths and options. Python writes all execution outputs under `out_dir`; Go validates artifacts through the Python CLI, reads `run_manifest.json`, and registers manifest artifacts.
+
 ## Tests
 
 ```bash
@@ -219,7 +283,6 @@ go test ./...
 
 ## Next Blocks
 
-- Block 4: Python Core integration
 - Block 5: Gongkan form filling business
 - Block 6: Knowledge document management and ingestion
 - Block 7: Review queue and result download

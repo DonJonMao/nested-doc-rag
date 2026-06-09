@@ -42,6 +42,14 @@ func ApplyEnvOverrides(cfg *Config) error {
 	setString(&cfg.Python.ProjectDir, "GONGKAN_PYTHON_PROJECT_DIR")
 	setString(&cfg.Python.ConfigPath, "GONGKAN_PYTHON_CONFIG_PATH")
 	setDuration(&cfg.Python.DefaultTimeout, "GONGKAN_PYTHON_DEFAULT_TIMEOUT", &errors)
+	setBool(&cfg.Python.ArtifactValidationEnabled, "GONGKAN_PYTHON_ARTIFACT_VALIDATION_ENABLED", &errors)
+	setDuration(&cfg.Python.KillGracePeriod, "GONGKAN_PYTHON_KILL_GRACE_PERIOD", &errors)
+	setInt64(&cfg.Python.StdoutLogMaxBytes, "GONGKAN_PYTHON_STDOUT_LOG_MAX_BYTES", &errors)
+	setInt64(&cfg.Python.StderrLogMaxBytes, "GONGKAN_PYTHON_STDERR_LOG_MAX_BYTES", &errors)
+	setString(&cfg.Python.Step15DefaultRetrievalMode, "GONGKAN_PYTHON_STEP15_DEFAULT_RETRIEVAL_MODE")
+	setString(&cfg.Python.Step15DefaultPromptVersion, "GONGKAN_PYTHON_STEP15_DEFAULT_PROMPT_VERSION")
+	setString(&cfg.Python.Step15DefaultRows, "GONGKAN_PYTHON_STEP15_DEFAULT_ROWS")
+	setBool(&cfg.Python.IngestCommandEnabled, "GONGKAN_PYTHON_INGEST_COMMAND_ENABLED", &errors)
 	setInt(&cfg.Jobs.FillConcurrency, "GONGKAN_JOBS_FILL_CONCURRENCY", &errors)
 	setInt(&cfg.Jobs.IngestionConcurrency, "GONGKAN_JOBS_INGESTION_CONCURRENCY", &errors)
 	setInt(&cfg.Jobs.MaxPythonProcesses, "GONGKAN_JOBS_MAX_PYTHON_PROCESSES", &errors)
@@ -92,6 +100,17 @@ func setInt32(target *int32, name string, errors *[]string) {
 			return
 		}
 		*target = int32(parsed)
+	}
+}
+
+func setInt64(target *int64, name string, errors *[]string) {
+	if value, ok := os.LookupEnv(name); ok {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			*errors = append(*errors, fmt.Sprintf("%s must be an int64", name))
+			return
+		}
+		*target = parsed
 	}
 }
 

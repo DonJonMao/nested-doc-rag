@@ -64,6 +64,14 @@ python:
   project_dir: "../"
   config_path: "config/local.yaml"
   default_timeout: "2h"
+  artifact_validation_enabled: true
+  kill_grace_period: "10s"
+  stdout_log_max_bytes: 1048576
+  stderr_log_max_bytes: 1048576
+  step15_default_retrieval_mode: "layered"
+  step15_default_prompt_version: "step15_compat"
+  step15_default_rows: "4-144"
+  ingest_command_enabled: false
 
 jobs:
   fill_concurrency: 2

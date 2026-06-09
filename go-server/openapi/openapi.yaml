@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Gongkan Platform Go Backend
-  version: 0.3.0
-  description: Industrial platform API for nested-doc-rag Block 0 through Block 3.
+  version: 0.4.0
+  description: Industrial platform API for nested-doc-rag Block 0 through Block 4. Block 4 adds worker-side Python Core orchestration through CLI, run_manifest.json, validate-artifacts, and artifact registration without adding public form-filling or knowledge ingestion APIs.
 paths:
   /healthz:
     get:
@@ -454,6 +454,7 @@ paths:
   /api/v1/jobs:
     get:
       summary: List workspace jobs.
+      description: Lists platform jobs. fill_form and ingest_knowledge payloads are consumed by the worker; public business creation APIs are introduced in later blocks.
       security:
         - BearerAuth: []
       parameters:
@@ -488,6 +489,7 @@ paths:
   /api/v1/jobs/{job_id}:
     get:
       summary: Get job by id.
+      description: Returns job metadata and lightweight payload. Block 4 worker payloads may describe Python CLI inputs such as out_dir, template_path, target namespace, or ingestion input paths.
       security:
         - BearerAuth: []
       parameters:
@@ -955,6 +957,7 @@ components:
           type: integer
         payload:
           type: object
+          description: Lightweight worker payload. For fill_form this may include config_path, target_namespace, global_namespace, room_context, rows, retrieval_mode, prompt_version, judge flags, template_path, writeback, resume, out_dir, and env. For ingest_knowledge this may include input_dir, namespace, knowledge_base_id, out_dir, resume, and env. Large files are referenced by path or existing storage metadata, not embedded.
           additionalProperties: true
         error_message:
           type: string
@@ -1030,6 +1033,11 @@ components:
             - cancel_requested
             - review_item_created
             - writeback_completed
+            - python_started
+            - python_finished
+            - artifact_validation_succeeded
+            - artifact_validation_failed
+            - artifacts_registered
         sequence:
           type: integer
           format: int64

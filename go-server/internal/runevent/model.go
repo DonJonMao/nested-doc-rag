@@ -7,18 +7,23 @@ import (
 )
 
 const (
-	EventQueued                = "queued"
-	EventRunning               = "running"
-	EventHeartbeat             = "heartbeat"
-	EventProgress              = "progress"
-	EventCheckpointWritten     = "checkpoint_written"
-	EventSucceeded             = "succeeded"
-	EventCompletedWithFailures = "completed_with_failures"
-	EventFailed                = "failed"
-	EventCanceled              = "canceled"
-	EventCancelRequested       = "cancel_requested"
-	EventReviewItemCreated     = "review_item_created"
-	EventWritebackCompleted    = "writeback_completed"
+	EventQueued                      = "queued"
+	EventRunning                     = "running"
+	EventHeartbeat                   = "heartbeat"
+	EventProgress                    = "progress"
+	EventCheckpointWritten           = "checkpoint_written"
+	EventSucceeded                   = "succeeded"
+	EventCompletedWithFailures       = "completed_with_failures"
+	EventFailed                      = "failed"
+	EventCanceled                    = "canceled"
+	EventCancelRequested             = "cancel_requested"
+	EventReviewItemCreated           = "review_item_created"
+	EventWritebackCompleted          = "writeback_completed"
+	EventPythonStarted               = "python_started"
+	EventPythonFinished              = "python_finished"
+	EventArtifactValidationSucceeded = "artifact_validation_succeeded"
+	EventArtifactValidationFailed    = "artifact_validation_failed"
+	EventArtifactsRegistered         = "artifacts_registered"
 )
 
 type RunEvent struct {
