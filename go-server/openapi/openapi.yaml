@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Gongkan Platform Go Backend
-  version: 0.4.0
-  description: Industrial platform API for nested-doc-rag Block 0 through Block 4. Block 4 adds worker-side Python Core orchestration through CLI, run_manifest.json, validate-artifacts, and artifact registration without adding public form-filling or knowledge ingestion APIs.
+  version: 0.5.0
+  description: Industrial platform API for nested-doc-rag Block 0 through Block 5. Block 5 adds gongkan form upload and fill run business APIs backed by jobs, worker, PythonRunner, run_manifest, and artifacts.
 paths:
   /healthz:
     get:
@@ -451,6 +451,206 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ArtifactListResponse"
+  /api/v1/forms:
+    post:
+      summary: Upload a gongkan form template.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/UploadFormRequest"
+      responses:
+        "200":
+          description: Uploaded form file.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadFormResponse"
+    get:
+      summary: List gongkan form templates.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: workspace_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Form files.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FormFileListResponse"
+  /api/v1/forms/{form_id}:
+    get:
+      summary: Get gongkan form metadata.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: form_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Form file.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/FormFile"
+  /api/v1/fill-runs:
+    post:
+      summary: Create a gongkan form fill run.
+      description: Creates a fill_runs record and enqueues a fill_form job. Python execution happens asynchronously in the worker.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateFillRunRequest"
+      responses:
+        "200":
+          description: Fill run created and queued.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/FillRun"
+    get:
+      summary: List fill runs.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: workspace_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/FillRunStatus"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Fill runs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FillRunListResponse"
+  /api/v1/fill-runs/{run_id}:
+    get:
+      summary: Get fill run.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+      responses:
+        "200":
+          description: Fill run.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/FillRun"
+  /api/v1/fill-runs/{run_id}/cancel:
+    post:
+      summary: Cancel a fill run.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+      responses:
+        "200":
+          description: Fill run cancellation requested.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelFillRunResponse"
+  /api/v1/fill-runs/{run_id}/artifacts:
+    get:
+      summary: List artifacts for a fill run.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+      responses:
+        "200":
+          description: Fill run artifacts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FillRunArtifactListResponse"
+  /api/v1/fill-runs/{run_id}/download/{artifact_kind}:
+    get:
+      summary: Download a fill run artifact by shortcut.
+      description: artifact_kind supports filled-form, run-summary, review-items, and trace. These are read-only artifact shortcuts; review actions are not implemented in Block 5.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+        - name: artifact_kind
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [filled-form, run-summary, review-items, trace]
+      responses:
+        "200":
+          description: Artifact bytes or presigned URL depending on artifact settings.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
   /api/v1/jobs:
     get:
       summary: List workspace jobs.
@@ -866,6 +1066,241 @@ components:
           type: string
           format: date-time
           nullable: true
+    UploadFormRequest:
+      type: object
+      required: [workspace_id, file]
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+        file:
+          type: string
+          format: binary
+    FormFile:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        file_id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+    UploadFormResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/FormFile"
+    FormFileListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                forms:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/FormFile"
+    FillRunStatus:
+      type: string
+      enum:
+        - created
+        - queued
+        - running
+        - succeeded
+        - completed_with_failures
+        - failed
+        - canceled
+        - cancel_requested
+    CreateFillRunRequest:
+      type: object
+      required: [workspace_id, form_file_id, target_namespace]
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+        form_file_id:
+          type: string
+          format: uuid
+        knowledge_base_id:
+          type: string
+          format: uuid
+          nullable: true
+        index_version_id:
+          type: string
+          format: uuid
+          nullable: true
+        target_namespace:
+          type: string
+        global_namespace:
+          type: string
+          default: global
+        room_context:
+          type: string
+        rows:
+          type: string
+          default: 4-144
+        retrieval_mode:
+          type: string
+          enum: [flat, layered]
+          default: layered
+        prompt_version:
+          type: string
+          default: step15_compat
+        judge:
+          type: boolean
+          default: false
+        use_judge_cache:
+          type: boolean
+          default: false
+        writeback:
+          type: boolean
+          default: true
+    FillRun:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        form_file_id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+          nullable: true
+        knowledge_base_id:
+          type: string
+          format: uuid
+          nullable: true
+        index_version_id:
+          type: string
+          format: uuid
+          nullable: true
+        target_namespace:
+          type: string
+        global_namespace:
+          type: string
+        room_context:
+          type: string
+        rows:
+          type: string
+        retrieval_mode:
+          type: string
+        prompt_version:
+          type: string
+        judge_enabled:
+          type: boolean
+        use_judge_cache:
+          type: boolean
+        writeback_enabled:
+          type: boolean
+        status:
+          $ref: "#/components/schemas/FillRunStatus"
+        progress_total:
+          type: integer
+        progress_done:
+          type: integer
+        out_dir:
+          type: string
+        run_manifest_path:
+          type: string
+        summary_path:
+          type: string
+        filled_form_artifact_id:
+          type: string
+          format: uuid
+          nullable: true
+        answered_count:
+          type: integer
+        partial_clue_count:
+          type: integer
+        not_found_count:
+          type: integer
+        conflict_unresolved_count:
+          type: integer
+        review_required_count:
+          type: integer
+        writeback_allowed_count:
+          type: integer
+        failed_count:
+          type: integer
+        error_message:
+          type: string
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        queued_at:
+          type: string
+          format: date-time
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+    FillRunListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                fill_runs:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/FillRun"
+    FillRunArtifactListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                artifacts:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/RunArtifact"
+    CancelFillRunResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                fill_run:
+                  $ref: "#/components/schemas/FillRun"
+                canceled:
+                  type: boolean
     ArtifactListResponse:
       allOf:
         - $ref: "#/components/schemas/ApiResponse"

@@ -12,6 +12,8 @@ import (
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/config"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/database"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/eventbus"
+	filepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/file"
+	formpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/form"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/jobs"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/logging"
 	pythonpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/python"
@@ -87,6 +89,11 @@ func main() {
 	runEventService := runevent.NewService(runEventRepo, eventbus.NewRunEventPublisher(runEventBus, logger))
 	jobRepo := jobs.NewPGXRepo(db)
 	jobService := jobs.NewService(jobRepo, runEventService, nil, workspaceAuthorizer, auditService, logger, cfg.Jobs.MaxAttempts)
+	fileRepo := filepkg.NewPGXRepo(db)
+	formFileRepo := formpkg.NewPGXFormFileRepo(db)
+	fillRunRepo := formpkg.NewPGXFillRunRepo(db)
+	templateMaterializer := formpkg.NewTemplateMaterializer(formFileRepo, fileRepo, objectStorage, logger)
+	fillRunLifecycle := formpkg.NewFillRunLifecycleAdapter(fillRunRepo, logger)
 	limiter := jobs.NewResourceLimiter(cfg.Jobs)
 	worker := jobs.NewWorker(cfg.Redis, cfg.Jobs, jobRepo, jobService, limiter, logger)
 	commandBuilder := &pythonpkg.CommandBuilder{
@@ -119,7 +126,14 @@ func main() {
 	)
 	artifactArchiver := pythonpkg.NewArtifactArchiver(artifactService, logger)
 	worker.RegisterHandler(jobs.JobTypeNoop, jobs.NewNoopHandler(runEventService))
-	worker.RegisterHandler(jobs.JobTypeFillForm, jobs.NewFillFormPythonHandler(pythonRunner, artifactArchiver, runEventService, logger))
+	worker.RegisterHandler(jobs.JobTypeFillForm, jobs.NewFillFormPythonHandler(
+		pythonRunner,
+		artifactArchiver,
+		runEventService,
+		logger,
+		jobs.WithTemplateMaterializer(templateMaterializer),
+		jobs.WithFillRunLifecycle(fillRunLifecycle),
+	))
 	worker.RegisterHandler(jobs.JobTypeIngestKnowledge, jobs.NewIngestKnowledgePythonHandler(pythonRunner, runEventService, logger, cfg.Python.IngestCommandEnabled))
 	worker.RegisterHandler(jobs.JobTypeArchiveArtifacts, jobs.NewPlaceholderHandler(jobs.JobTypeArchiveArtifacts))
 

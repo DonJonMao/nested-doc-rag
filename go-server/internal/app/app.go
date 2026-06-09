@@ -12,6 +12,7 @@ import (
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/database"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/eventbus"
 	filepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/file"
+	formpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/form"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/httpx"
 	jobspkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/jobs"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/logging"
@@ -137,6 +138,10 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	jobRepo := jobspkg.NewPGXRepo(db)
 	jobQueue := jobspkg.NewAsynqQueue(cfg.Redis, cfg.Jobs)
 	jobService := jobspkg.NewService(jobRepo, runEventService, jobQueue, workspaceAuthorizer, auditService, logger, cfg.Jobs.MaxAttempts)
+	formFileRepo := formpkg.NewPGXFormFileRepo(db)
+	fillRunRepo := formpkg.NewPGXFillRunRepo(db)
+	formFileService := formpkg.NewFormFileService(formFileRepo, fileService, workspaceAuthorizer, auditService, logger)
+	fillRunService := formpkg.NewFillRunService(fillRunRepo, formFileRepo, jobService, artifactService, workspaceAuthorizer, auditService, logger, *cfg)
 	routes := platformRoutes{
 		tokenManager:     tokenManager,
 		authHandler:      auth.NewHandler(authService),
@@ -146,6 +151,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		artifactHandler:  artifactpkg.NewHandler(artifactService),
 		jobsHandler:      jobspkg.NewHandler(jobService, cfg.Jobs.EnableNoopJob),
 		sseHandler:       ssepkg.NewHandler(runEventService, sseBroker, workspaceAuthorizer),
+		formHandler:      formpkg.NewHandler(formFileService, fillRunService),
 		enableNoopJob:    cfg.Jobs.EnableNoopJob,
 	}
 	metrics := observability.NewMetrics()
@@ -257,6 +263,7 @@ type platformRoutes struct {
 	artifactHandler  *artifactpkg.Handler
 	jobsHandler      *jobspkg.Handler
 	sseHandler       *ssepkg.Handler
+	formHandler      *formpkg.Handler
 	enableNoopJob    bool
 }
 
@@ -283,6 +290,9 @@ func registerPlatformRoutes(r chi.Router, routes platformRoutes) {
 			}
 			if routes.sseHandler != nil {
 				routes.sseHandler.RegisterRoutes(protected)
+			}
+			if routes.formHandler != nil {
+				routes.formHandler.RegisterRoutes(protected)
 			}
 			if routes.userHandler != nil {
 				protected.Group(func(admin chi.Router) {

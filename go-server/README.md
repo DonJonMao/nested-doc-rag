@@ -136,6 +136,28 @@ manifest artifacts into ObjectStorage and run_artifacts table
 
 The worker registers the `fill_form` handler with `SubprocessPythonRunner` and `ArtifactArchiver`. `ingest_knowledge` keeps a full runner interface, but the command remains disabled unless `python.ingest_command_enabled=true`.
 
+## Block 5 Scope
+
+Implemented in this block:
+
+- gongkan form upload
+- form_files table
+- fill_runs table
+- create fill run
+- enqueue fill_form job
+- materialize uploaded form into Python out_dir
+- run Python Step15AgentRunner through Worker
+- sync fill_runs from run_manifest
+- artifact download shortcuts
+- cancel fill run
+
+Not implemented in Block 5:
+
+- knowledge base management
+- review approve/reject/edit
+- ingestion jobs API
+- human-edited re-writeback
+
 ## Run Locally
 
 ```bash
@@ -238,6 +260,49 @@ curl -X POST http://localhost:8080/api/v1/admin/noop-jobs \
 
 The noop endpoint is for queue/worker/SSE verification only. It is not a business job creation API.
 
+## Gongkan Form Filling
+
+Upload a form:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/forms \
+  -H "Authorization: Bearer <token>" \
+  -F "workspace_id=<workspace_id>" \
+  -F "file=@./基地云机房信息调研表.xlsx"
+```
+
+Create a fill run:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/fill-runs \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspace_id":"<workspace_id>",
+    "form_file_id":"<form_file_id>",
+    "target_namespace":"xixian_4",
+    "global_namespace":"global",
+    "room_context":"西咸4号楼 301机房",
+    "rows":"4-144",
+    "judge":false,
+    "writeback":true
+  }'
+```
+
+Watch events:
+
+```bash
+curl -N "http://localhost:8080/api/v1/runs/<fill_run_id>/events?workspace_id=<workspace_id>" \
+  -H "Authorization: Bearer <token>"
+```
+
+Download the filled form:
+
+```bash
+curl -OJ http://localhost:8080/api/v1/fill-runs/<run_id>/download/filled-form \
+  -H "Authorization: Bearer <token>"
+```
+
 ## Block 3 Event Delivery
 
 `run_events` is the source of truth. SSE delivery uses database replay plus Redis-backed realtime fanout:
@@ -280,7 +345,6 @@ go test ./...
 
 ## Next Blocks
 
-- Block 5: Gongkan form filling business
 - Block 6: Knowledge document management and ingestion
 - Block 7: Review queue and result download
 - Block 8: Observability, security hardening, operations, load testing
