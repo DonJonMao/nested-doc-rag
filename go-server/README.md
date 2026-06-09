@@ -69,6 +69,33 @@ Not implemented in Block 2:
 - PythonRunner
 - review queue
 
+## Block 3 Scope
+
+Implemented in this block:
+
+- jobs table
+- run_events table
+- JobService
+- Redis/Asynq queue
+- worker process
+- job state machine
+- cancellation
+- retry foundation
+- heartbeat
+- ResourceLimiter
+- SSE event broker
+- persisted run events
+- job query/cancel APIs
+
+Not implemented in Block 3:
+
+- PythonRunner
+- real fill_form handler
+- real ingest_knowledge handler
+- fill_runs business
+- knowledge_bases business
+- review queue business
+
 ## Run Locally
 
 ```bash
@@ -77,6 +104,12 @@ make docker-up
 export GONGKAN_JWT_SECRET='local-dev-secret-change-me'
 export GONGKAN_BOOTSTRAP_ADMIN_PASSWORD='ChangeMe123!'
 make run-api CONFIG=configs/config.local.yaml
+```
+
+Run the worker in a separate shell:
+
+```bash
+make run-worker CONFIG=configs/config.local.yaml
 ```
 
 ## Health Check
@@ -145,6 +178,26 @@ curl -OJ http://localhost:8080/api/v1/files/<file_id>/download \
   -H "Authorization: Bearer <access_token>"
 ```
 
+## Jobs and Events
+
+Subscribe to run events:
+
+```bash
+curl -N "http://localhost:8080/api/v1/runs/<run_id>/events?workspace_id=<workspace_id>" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Create an infrastructure-only noop job when `jobs.enable_noop_job=true`:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/admin/noop-jobs \
+  -H "Authorization: Bearer <admin_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"workspace_id":"<workspace_id>","sleep_ms":1000}'
+```
+
+The noop endpoint is for queue/worker/SSE verification only. It is not a business job creation API.
+
 ## Tests
 
 ```bash
@@ -153,7 +206,6 @@ go test ./...
 
 ## Next Blocks
 
-- Block 3: Task Queue, Worker, State Machine, SSE
 - Block 4: Python Core integration
 - Block 5: Gongkan form filling business
 - Block 6: Knowledge document management and ingestion

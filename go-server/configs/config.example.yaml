@@ -69,6 +69,14 @@ jobs:
   fill_concurrency: 2
   ingestion_concurrency: 2
   max_python_processes: 3
+  redis_namespace: "gongkan"
+  worker_concurrency: 4
+  default_timeout: "2h"
+  max_attempts: 3
+  retry_backoff: "30s"
+  heartbeat_interval: "10s"
+  event_buffer_size: 256
+  enable_noop_job: false
 
 cors:
   allowed_origins:

@@ -7,8 +7,13 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/DonJonMao/nested-doc-rag/go-server/internal/app"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/audit"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/config"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/database"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/jobs"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/logging"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/runevent"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/workspace"
 	"go.uber.org/zap"
 )
 
@@ -20,17 +25,53 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	application, err := app.New(context.Background(), cfg)
+	logger, err := logging.New(cfg.Logging)
 	if err != nil {
 		panic(err)
 	}
 	defer func() {
-		_ = application.Close(context.Background())
+		_ = logger.Sync()
 	}()
 
-	application.Logger.Info("worker placeholder started")
+	ctx := context.Background()
+	db, err := database.NewPool(ctx, cfg.Database)
+	if err != nil {
+		logger.Fatal("connect database failed", zap.Error(err))
+	}
+	defer database.Close(db)
+
+	if err := database.ApplyMigrations(ctx, db, "migrations"); err != nil {
+		logger.Fatal("apply migrations failed", zap.Error(err))
+	}
+
+	auditRepo := audit.NewPGXRepo(db)
+	auditService := audit.NewService(auditRepo, logger)
+	workspaceRepo := workspace.NewPGXRepo(db)
+	workspaceAuthorizer := workspace.NewAuthorizer(workspaceRepo)
+	runEventRepo := runevent.NewPGXRepo(db)
+	runEventService := runevent.NewService(runEventRepo, nil)
+	jobRepo := jobs.NewPGXRepo(db)
+	jobService := jobs.NewService(jobRepo, runEventService, nil, workspaceAuthorizer, auditService, logger, cfg.Jobs.MaxAttempts)
+	limiter := jobs.NewResourceLimiter(cfg.Jobs)
+	worker := jobs.NewWorker(cfg.Redis, cfg.Jobs, jobRepo, jobService, limiter, logger)
+	worker.RegisterDefaultHandlers(runEventService)
+
+	serverErrors := make(chan error, 1)
+	go func() {
+		logger.Info("worker starting", zap.Int("concurrency", cfg.Jobs.WorkerConcurrency), zap.String("redis_namespace", cfg.Jobs.RedisNamespace))
+		serverErrors <- worker.Run()
+	}()
+
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-shutdown
-	application.Logger.Info("worker placeholder shutting down", zap.String("signal", sig.String()))
+
+	select {
+	case err := <-serverErrors:
+		if err != nil {
+			logger.Fatal("worker failed", zap.Error(err))
+		}
+	case sig := <-shutdown:
+		logger.Info("worker shutting down", zap.String("signal", sig.String()))
+		worker.Shutdown()
+	}
 }

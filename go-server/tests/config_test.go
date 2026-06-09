@@ -17,6 +17,14 @@ func TestLoadConfigExample(t *testing.T) {
 	require.Equal(t, "minio", cfg.Storage.Type)
 	require.Equal(t, "python", cfg.Python.Executable)
 	require.Equal(t, 2, cfg.Jobs.FillConcurrency)
+	require.Equal(t, 4, cfg.Jobs.WorkerConcurrency)
+	require.Equal(t, 3, cfg.Jobs.MaxAttempts)
+	require.Equal(t, "gongkan", cfg.Jobs.RedisNamespace)
+	require.Equal(t, "2h0m0s", cfg.Jobs.DefaultTimeout.String())
+	require.Equal(t, "30s", cfg.Jobs.RetryBackoff.String())
+	require.Equal(t, "10s", cfg.Jobs.HeartbeatInterval.String())
+	require.Equal(t, 256, cfg.Jobs.EventBufferSize)
+	require.False(t, cfg.Jobs.EnableNoopJob)
 	require.Equal(t, int64(200*1024*1024), cfg.Files.MaxUploadSize.Bytes)
 	require.Equal(t, "./runtime/tmp/uploads", cfg.Files.TempDir)
 	require.Contains(t, cfg.Files.AllowedExtensions, ".xlsx")
@@ -35,6 +43,12 @@ func TestEnvOverride(t *testing.T) {
 	t.Setenv("GONGKAN_FILES_TEMP_DIR", "/tmp/gongkan-uploads")
 	t.Setenv("GONGKAN_ARTIFACTS_DOWNLOAD_MODE", "presign")
 	t.Setenv("GONGKAN_ARTIFACTS_ALLOW_PRESIGN_DOWNLOAD", "true")
+	t.Setenv("GONGKAN_JOBS_WORKER_CONCURRENCY", "7")
+	t.Setenv("GONGKAN_JOBS_MAX_ATTEMPTS", "5")
+	t.Setenv("GONGKAN_JOBS_DEFAULT_TIMEOUT", "30m")
+	t.Setenv("GONGKAN_JOBS_RETRY_BACKOFF", "5s")
+	t.Setenv("GONGKAN_JOBS_REDIS_NAMESPACE", "override")
+	t.Setenv("GONGKAN_JOBS_ENABLE_NOOP_JOB", "true")
 
 	cfg, err := config.Load("../configs/config.example.yaml")
 
@@ -47,6 +61,12 @@ func TestEnvOverride(t *testing.T) {
 	require.Equal(t, "/tmp/gongkan-uploads", cfg.Files.TempDir)
 	require.Equal(t, "presign", cfg.Artifacts.DownloadMode)
 	require.True(t, cfg.Artifacts.AllowPresignDownload)
+	require.Equal(t, 7, cfg.Jobs.WorkerConcurrency)
+	require.Equal(t, 5, cfg.Jobs.MaxAttempts)
+	require.Equal(t, "30m0s", cfg.Jobs.DefaultTimeout.String())
+	require.Equal(t, "5s", cfg.Jobs.RetryBackoff.String())
+	require.Equal(t, "override", cfg.Jobs.RedisNamespace)
+	require.True(t, cfg.Jobs.EnableNoopJob)
 }
 
 func TestValidateMissingField(t *testing.T) {
@@ -97,4 +117,22 @@ func TestValidateMissingAllowedExtensions(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "files.allowed_extensions")
+}
+
+func TestValidateInvalidJobsConfig(t *testing.T) {
+	cfg := config.Default()
+	cfg.Jobs.WorkerConcurrency = 0
+	cfg.Jobs.MaxAttempts = 0
+	cfg.Jobs.DefaultTimeout = config.NewDuration(0)
+	cfg.Jobs.RetryBackoff = config.NewDuration(0)
+	cfg.Jobs.EventBufferSize = 0
+
+	err := config.Validate(cfg)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "jobs.worker_concurrency")
+	require.Contains(t, err.Error(), "jobs.max_attempts")
+	require.Contains(t, err.Error(), "jobs.default_timeout")
+	require.Contains(t, err.Error(), "jobs.retry_backoff")
+	require.Contains(t, err.Error(), "jobs.event_buffer_size")
 }

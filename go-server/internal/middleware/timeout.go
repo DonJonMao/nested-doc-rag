@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if timeout <= 0 {
+			if timeout <= 0 || isSSERequest(r) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -34,6 +35,14 @@ func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 			}
 		})
 	}
+}
+
+func isSSERequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	path := r.URL.Path
+	return strings.HasPrefix(path, "/api/v1/runs/") && strings.HasSuffix(path, "/events")
 }
 
 type timeoutWriter struct {

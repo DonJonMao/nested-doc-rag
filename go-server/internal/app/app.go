@@ -12,10 +12,13 @@ import (
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/database"
 	filepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/file"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/httpx"
+	jobspkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/jobs"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/logging"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/middleware"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/observability"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/redisx"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/runevent"
+	ssepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/sse"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/storage"
 	userpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/user"
 	workspacepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/workspace"
@@ -33,6 +36,8 @@ type App struct {
 	Storage storage.ObjectStorage
 	Metrics *observability.Metrics
 	Router  http.Handler
+	Queue   jobspkg.Queue
+	Broker  *ssepkg.Broker
 }
 
 func New(ctx context.Context, cfg *config.Config) (*App, error) {
@@ -113,6 +118,12 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 			DefaultPresignTTL:    cfg.Artifacts.DefaultPresignTTL.Duration,
 		},
 	)
+	sseBroker := ssepkg.NewBroker(cfg.Jobs.EventBufferSize)
+	runEventRepo := runevent.NewPGXRepo(db)
+	runEventService := runevent.NewService(runEventRepo, sseBroker)
+	jobRepo := jobspkg.NewPGXRepo(db)
+	jobQueue := jobspkg.NewAsynqQueue(cfg.Redis, cfg.Jobs)
+	jobService := jobspkg.NewService(jobRepo, runEventService, jobQueue, workspaceAuthorizer, auditService, logger, cfg.Jobs.MaxAttempts)
 	routes := platformRoutes{
 		tokenManager:     tokenManager,
 		authHandler:      auth.NewHandler(authService),
@@ -120,6 +131,9 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		workspaceHandler: workspacepkg.NewHandler(workspaceService),
 		fileHandler:      filepkg.NewHandler(fileService),
 		artifactHandler:  artifactpkg.NewHandler(artifactService),
+		jobsHandler:      jobspkg.NewHandler(jobService, cfg.Jobs.EnableNoopJob),
+		sseHandler:       ssepkg.NewHandler(runEventService, sseBroker, workspaceAuthorizer),
+		enableNoopJob:    cfg.Jobs.EnableNoopJob,
 	}
 	metrics := observability.NewMetrics()
 	router := buildRouter(cfg, logger, db, redisClient, objectStorage, metrics, routes)
@@ -131,11 +145,19 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		Storage: objectStorage,
 		Metrics: metrics,
 		Router:  router,
+		Queue:   jobQueue,
+		Broker:  sseBroker,
 	}, nil
 }
 
 func (a *App) Close(ctx context.Context) error {
 	_ = ctx
+	if a.Broker != nil {
+		a.Broker.Close()
+	}
+	if a.Queue != nil {
+		_ = a.Queue.Close()
+	}
 	if a.Redis != nil {
 		_ = redisx.Close(a.Redis)
 	}
@@ -205,6 +227,9 @@ type platformRoutes struct {
 	workspaceHandler *workspacepkg.Handler
 	fileHandler      *filepkg.Handler
 	artifactHandler  *artifactpkg.Handler
+	jobsHandler      *jobspkg.Handler
+	sseHandler       *ssepkg.Handler
+	enableNoopJob    bool
 }
 
 func registerPlatformRoutes(r chi.Router, routes platformRoutes) {
@@ -225,10 +250,19 @@ func registerPlatformRoutes(r chi.Router, routes platformRoutes) {
 			if routes.artifactHandler != nil {
 				routes.artifactHandler.RegisterRoutes(protected)
 			}
+			if routes.jobsHandler != nil {
+				routes.jobsHandler.RegisterRoutes(protected)
+			}
+			if routes.sseHandler != nil {
+				routes.sseHandler.RegisterRoutes(protected)
+			}
 			if routes.userHandler != nil {
 				protected.Group(func(admin chi.Router) {
 					admin.Use(middleware.RequireRoles(auth.RoleAdmin))
 					routes.userHandler.RegisterRoutes(admin)
+					if routes.jobsHandler != nil && routes.enableNoopJob {
+						routes.jobsHandler.RegisterAdminRoutes(admin)
+					}
 				})
 			}
 		})

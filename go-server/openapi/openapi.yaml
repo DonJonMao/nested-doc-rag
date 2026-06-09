@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Gongkan Platform Go Backend
-  version: 0.2.0
-  description: Industrial platform API for nested-doc-rag Block 0 and Block 1.
+  version: 0.3.0
+  description: Industrial platform API for nested-doc-rag Block 0 through Block 3.
 paths:
   /healthz:
     get:
@@ -451,6 +451,124 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ArtifactListResponse"
+  /api/v1/jobs:
+    get:
+      summary: List workspace jobs.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: workspace_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/JobStatus"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Workspace jobs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobListResponse"
+  /api/v1/jobs/{job_id}:
+    get:
+      summary: Get job by id.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/JobID"
+      responses:
+        "200":
+          description: Job metadata.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Job"
+  /api/v1/jobs/{job_id}/cancel:
+    post:
+      summary: Request job cancellation.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/JobID"
+      responses:
+        "200":
+          description: Cancellation accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelJobResponse"
+  /api/v1/runs/{run_id}/events:
+    get:
+      summary: Subscribe to persisted and live run events.
+      description: Streams Server-Sent Events. The response uses text/event-stream with id, event, and data fields.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+        - name: workspace_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: after_sequence
+          in: query
+          schema:
+            type: integer
+            format: int64
+            default: 0
+      responses:
+        "200":
+          description: SSE stream of run events.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /api/v1/admin/noop-jobs:
+    post:
+      summary: Create an infrastructure-only noop job for queue and SSE verification.
+      description: Registered only when jobs.enable_noop_job is true. This is not a business job API.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoopJobRequest"
+      responses:
+        "200":
+          description: Noop job created and queued.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Job"
 components:
   securitySchemes:
     BearerAuth:
@@ -488,6 +606,13 @@ components:
         format: uuid
     RunID:
       name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    JobID:
+      name: job_id
       in: path
       required: true
       schema:
@@ -791,3 +916,148 @@ components:
         created_at:
           type: string
           format: date-time
+    JobStatus:
+      type: string
+      enum:
+        - created
+        - queued
+        - running
+        - succeeded
+        - completed_with_failures
+        - failed
+        - canceled
+        - cancel_requested
+    Job:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        job_type:
+          type: string
+          enum: [noop, ingest_knowledge, fill_form, archive_artifacts]
+        resource_type:
+          type: string
+          enum: [noop, knowledge_base, fill_run, artifact_archive]
+        resource_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        priority:
+          type: integer
+        attempt:
+          type: integer
+        max_attempts:
+          type: integer
+        payload:
+          type: object
+          additionalProperties: true
+        error_message:
+          type: string
+        cancel_requested_at:
+          type: string
+          format: date-time
+          nullable: true
+        queued_at:
+          type: string
+          format: date-time
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        heartbeat_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    JobListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                jobs:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/Job"
+    RunEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+          nullable: true
+        event_type:
+          type: string
+          enum:
+            - queued
+            - running
+            - heartbeat
+            - progress
+            - checkpoint_written
+            - succeeded
+            - completed_with_failures
+            - failed
+            - canceled
+            - cancel_requested
+            - review_item_created
+            - writeback_completed
+        sequence:
+          type: integer
+          format: int64
+        payload:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+    NoopJobRequest:
+      type: object
+      required: [workspace_id]
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+        sleep_ms:
+          type: integer
+          default: 0
+    CancelJobResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                job:
+                  $ref: "#/components/schemas/Job"
+                canceled:
+                  type: boolean

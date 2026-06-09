@@ -96,9 +96,17 @@ type PythonConfig struct {
 }
 
 type JobsConfig struct {
-	FillConcurrency      int `yaml:"fill_concurrency"`
-	IngestionConcurrency int `yaml:"ingestion_concurrency"`
-	MaxPythonProcesses   int `yaml:"max_python_processes"`
+	FillConcurrency      int      `yaml:"fill_concurrency"`
+	IngestionConcurrency int      `yaml:"ingestion_concurrency"`
+	MaxPythonProcesses   int      `yaml:"max_python_processes"`
+	RedisNamespace       string   `yaml:"redis_namespace"`
+	WorkerConcurrency    int      `yaml:"worker_concurrency"`
+	DefaultTimeout       Duration `yaml:"default_timeout"`
+	MaxAttempts          int      `yaml:"max_attempts"`
+	RetryBackoff         Duration `yaml:"retry_backoff"`
+	HeartbeatInterval    Duration `yaml:"heartbeat_interval"`
+	EventBufferSize      int      `yaml:"event_buffer_size"`
+	EnableNoopJob        bool     `yaml:"enable_noop_job"`
 }
 
 type CORSConfig struct {
@@ -189,6 +197,27 @@ func Validate(cfg *Config) error {
 	if cfg.Jobs.MaxPythonProcesses <= 0 {
 		problems = append(problems, "jobs.max_python_processes must be greater than 0")
 	}
+	if strings.TrimSpace(cfg.Jobs.RedisNamespace) == "" {
+		problems = append(problems, "jobs.redis_namespace is required")
+	}
+	if cfg.Jobs.WorkerConcurrency <= 0 {
+		problems = append(problems, "jobs.worker_concurrency must be greater than 0")
+	}
+	if cfg.Jobs.DefaultTimeout.Duration <= 0 {
+		problems = append(problems, "jobs.default_timeout must be greater than 0")
+	}
+	if cfg.Jobs.MaxAttempts <= 0 {
+		problems = append(problems, "jobs.max_attempts must be greater than 0")
+	}
+	if cfg.Jobs.RetryBackoff.Duration <= 0 {
+		problems = append(problems, "jobs.retry_backoff must be greater than 0")
+	}
+	if cfg.Jobs.HeartbeatInterval.Duration <= 0 {
+		problems = append(problems, "jobs.heartbeat_interval must be greater than 0")
+	}
+	if cfg.Jobs.EventBufferSize <= 0 {
+		problems = append(problems, "jobs.event_buffer_size must be greater than 0")
+	}
 	if len(problems) > 0 {
 		return fmt.Errorf("invalid config: %s", strings.Join(problems, "; "))
 	}
@@ -257,7 +286,19 @@ func Default() *Config {
 			ConfigPath:     "config/local.yaml",
 			DefaultTimeout: NewDuration(2 * time.Hour),
 		},
-		Jobs: JobsConfig{FillConcurrency: 2, IngestionConcurrency: 2, MaxPythonProcesses: 3},
+		Jobs: JobsConfig{
+			FillConcurrency:      2,
+			IngestionConcurrency: 2,
+			MaxPythonProcesses:   3,
+			RedisNamespace:       "gongkan",
+			WorkerConcurrency:    4,
+			DefaultTimeout:       NewDuration(2 * time.Hour),
+			MaxAttempts:          3,
+			RetryBackoff:         NewDuration(30 * time.Second),
+			HeartbeatInterval:    NewDuration(10 * time.Second),
+			EventBufferSize:      256,
+			EnableNoopJob:        false,
+		},
 		CORS: CORSConfig{
 			AllowedOrigins: []string{"http://localhost:3000"},
 			AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
