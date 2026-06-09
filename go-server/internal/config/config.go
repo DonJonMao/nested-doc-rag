@@ -107,6 +107,8 @@ type JobsConfig struct {
 	HeartbeatInterval    Duration `yaml:"heartbeat_interval"`
 	EventBufferSize      int      `yaml:"event_buffer_size"`
 	EnableNoopJob        bool     `yaml:"enable_noop_job"`
+	EventBusEnabled      bool     `yaml:"event_bus_enabled"`
+	EventChannel         string   `yaml:"event_channel"`
 }
 
 type CORSConfig struct {
@@ -218,6 +220,9 @@ func Validate(cfg *Config) error {
 	if cfg.Jobs.EventBufferSize <= 0 {
 		problems = append(problems, "jobs.event_buffer_size must be greater than 0")
 	}
+	if cfg.Jobs.EventBusEnabled && strings.TrimSpace(cfg.Jobs.EventChannel) == "" {
+		problems = append(problems, "jobs.event_channel is required when jobs.event_bus_enabled=true")
+	}
 	if len(problems) > 0 {
 		return fmt.Errorf("invalid config: %s", strings.Join(problems, "; "))
 	}
@@ -298,6 +303,8 @@ func Default() *Config {
 			HeartbeatInterval:    NewDuration(10 * time.Second),
 			EventBufferSize:      256,
 			EnableNoopJob:        false,
+			EventBusEnabled:      true,
+			EventChannel:         "gongkan:run_events",
 		},
 		CORS: CORSConfig{
 			AllowedOrigins: []string{"http://localhost:3000"},

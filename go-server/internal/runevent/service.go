@@ -13,6 +13,34 @@ type Publisher interface {
 	PublishRunEvent(event RunEvent)
 }
 
+type CompositePublisher struct {
+	publishers []Publisher
+}
+
+func NewCompositePublisher(publishers ...Publisher) *CompositePublisher {
+	var filtered []Publisher
+	for _, publisher := range publishers {
+		if publisher != nil {
+			filtered = append(filtered, publisher)
+		}
+	}
+	return &CompositePublisher{publishers: filtered}
+}
+
+func (p *CompositePublisher) PublishRunEvent(event RunEvent) {
+	if p == nil {
+		return
+	}
+	for _, publisher := range p.publishers {
+		func() {
+			defer func() {
+				_ = recover()
+			}()
+			publisher.PublishRunEvent(event)
+		}()
+	}
+}
+
 type Service struct {
 	repo      Repo
 	publisher Publisher

@@ -107,6 +107,16 @@ func (s *Service) EnqueueJob(ctx context.Context, jobID uuid.UUID, actor auth.Pr
 	job.QueuedAt = &now
 	if s.queue != nil {
 		if err := s.queue.Enqueue(ctx, *job); err != nil {
+			failedAt := time.Now().UTC()
+			errMsg := err.Error()
+			if markErr := s.repo.MarkEnqueueFailed(ctx, job.ID, failedAt, errMsg); markErr != nil {
+				s.logger.Error("mark enqueue failed job failed", zap.String("job_id", job.ID.String()), zap.Error(markErr))
+			}
+			job.Status = JobStatusFailed
+			job.FinishedAt = &failedAt
+			job.ErrorMessage = errMsg
+			s.emit(ctx, *job, runevent.EventFailed, map[string]any{"enqueue_failed": true, "error_message": errMsg})
+			s.record(ctx, audit.AuditLog{WorkspaceID: &job.WorkspaceID, UserID: &actor.UserID, Action: "job.enqueue_failed", ResourceType: "job", ResourceID: job.ID.String(), Payload: map[string]any{"job_type": job.JobType, "error_message": errMsg}})
 			return httpx.NewAppError(httpx.CodeInternal, "enqueue job failed", http.StatusInternalServerError, nil, err)
 		}
 	}

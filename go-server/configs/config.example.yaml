@@ -77,6 +77,8 @@ jobs:
   heartbeat_interval: "10s"
   event_buffer_size: 256
   enable_noop_job: false
+  event_bus_enabled: true
+  event_channel: "gongkan:run_events"
 
 cors:
   allowed_origins:

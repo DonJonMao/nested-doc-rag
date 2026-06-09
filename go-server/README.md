@@ -84,6 +84,7 @@ Implemented in this block:
 - heartbeat
 - ResourceLimiter
 - SSE event broker
+- Redis Pub/Sub event bridge
 - persisted run events
 - job query/cancel APIs
 
@@ -197,6 +198,18 @@ curl -X POST http://localhost:8080/api/v1/admin/noop-jobs \
 ```
 
 The noop endpoint is for queue/worker/SSE verification only. It is not a business job creation API.
+
+## Block 3 Event Delivery
+
+`run_events` is the source of truth. SSE delivery uses database replay plus Redis-backed realtime fanout:
+
+```text
+Worker -> run_events table -> Redis Pub/Sub -> API SSE Broker -> Frontend SSE
+```
+
+When an SSE client connects, the API first replays persisted `run_events` after `after_sequence`, then subscribes to the in-process broker for live events. Worker events are written to PostgreSQL and published to Redis so a separate API process can forward them to its local SSE broker.
+
+This supports separate API and worker processes. Future API replicas can subscribe to the same `jobs.event_channel`.
 
 ## Tests
 

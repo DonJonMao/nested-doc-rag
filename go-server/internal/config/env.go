@@ -53,6 +53,8 @@ func ApplyEnvOverrides(cfg *Config) error {
 	setDuration(&cfg.Jobs.HeartbeatInterval, "GONGKAN_JOBS_HEARTBEAT_INTERVAL", &errors)
 	setInt(&cfg.Jobs.EventBufferSize, "GONGKAN_JOBS_EVENT_BUFFER_SIZE", &errors)
 	setBool(&cfg.Jobs.EnableNoopJob, "GONGKAN_JOBS_ENABLE_NOOP_JOB", &errors)
+	setBool(&cfg.Jobs.EventBusEnabled, "GONGKAN_JOBS_EVENT_BUS_ENABLED", &errors)
+	setString(&cfg.Jobs.EventChannel, "GONGKAN_JOBS_EVENT_CHANNEL")
 	setStringSlice(&cfg.CORS.AllowedOrigins, "GONGKAN_CORS_ALLOWED_ORIGINS")
 	setStringSlice(&cfg.CORS.AllowedMethods, "GONGKAN_CORS_ALLOWED_METHODS")
 	setStringSlice(&cfg.CORS.AllowedHeaders, "GONGKAN_CORS_ALLOWED_HEADERS")

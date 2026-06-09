@@ -10,6 +10,7 @@ import (
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/auth"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/config"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/database"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/eventbus"
 	filepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/file"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/httpx"
 	jobspkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/jobs"
@@ -29,15 +30,18 @@ import (
 )
 
 type App struct {
-	Config  *config.Config
-	Logger  *zap.Logger
-	DB      *pgxpool.Pool
-	Redis   *redis.Client
-	Storage storage.ObjectStorage
-	Metrics *observability.Metrics
-	Router  http.Handler
-	Queue   jobspkg.Queue
-	Broker  *ssepkg.Broker
+	Config   *config.Config
+	Logger   *zap.Logger
+	DB       *pgxpool.Pool
+	Redis    *redis.Client
+	Storage  storage.ObjectStorage
+	Metrics  *observability.Metrics
+	Router   http.Handler
+	Queue    jobspkg.Queue
+	Broker   *ssepkg.Broker
+	EventBus eventbus.EventBus
+
+	eventBusCancel context.CancelFunc
 }
 
 func New(ctx context.Context, cfg *config.Config) (*App, error) {
@@ -119,6 +123,15 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		},
 	)
 	sseBroker := ssepkg.NewBroker(cfg.Jobs.EventBufferSize)
+	runEventBus := newEventBus(redisClient, cfg, logger)
+	eventBusCtx, eventBusCancel := context.WithCancel(context.Background())
+	go func() {
+		if err := runEventBus.Subscribe(eventBusCtx, func(event runevent.RunEvent) {
+			sseBroker.PublishRunEvent(event)
+		}); err != nil {
+			logger.Error("run event bus subscription stopped", zap.Error(err))
+		}
+	}()
 	runEventRepo := runevent.NewPGXRepo(db)
 	runEventService := runevent.NewService(runEventRepo, sseBroker)
 	jobRepo := jobspkg.NewPGXRepo(db)
@@ -138,20 +151,28 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	metrics := observability.NewMetrics()
 	router := buildRouter(cfg, logger, db, redisClient, objectStorage, metrics, routes)
 	return &App{
-		Config:  cfg,
-		Logger:  logger,
-		DB:      db,
-		Redis:   redisClient,
-		Storage: objectStorage,
-		Metrics: metrics,
-		Router:  router,
-		Queue:   jobQueue,
-		Broker:  sseBroker,
+		Config:         cfg,
+		Logger:         logger,
+		DB:             db,
+		Redis:          redisClient,
+		Storage:        objectStorage,
+		Metrics:        metrics,
+		Router:         router,
+		Queue:          jobQueue,
+		Broker:         sseBroker,
+		EventBus:       runEventBus,
+		eventBusCancel: eventBusCancel,
 	}, nil
 }
 
 func (a *App) Close(ctx context.Context) error {
 	_ = ctx
+	if a.eventBusCancel != nil {
+		a.eventBusCancel()
+	}
+	if a.EventBus != nil {
+		_ = a.EventBus.Close()
+	}
 	if a.Broker != nil {
 		a.Broker.Close()
 	}
@@ -168,6 +189,13 @@ func (a *App) Close(ctx context.Context) error {
 		_ = a.Logger.Sync()
 	}
 	return nil
+}
+
+func newEventBus(redisClient *redis.Client, cfg *config.Config, logger *zap.Logger) eventbus.EventBus {
+	if cfg == nil || !cfg.Jobs.EventBusEnabled {
+		return eventbus.NewNoopEventBus()
+	}
+	return eventbus.NewRedisEventBus(redisClient, cfg.Jobs.EventChannel, logger)
 }
 
 func buildRouter(

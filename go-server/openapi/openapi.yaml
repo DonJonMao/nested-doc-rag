@@ -521,7 +521,7 @@ paths:
   /api/v1/runs/{run_id}/events:
     get:
       summary: Subscribe to persisted and live run events.
-      description: Streams Server-Sent Events. The response uses text/event-stream with id, event, and data fields.
+      description: Streams Server-Sent Events from persisted run_events plus a Redis-backed realtime bridge. Use after_sequence to replay missed events after reconnect.
       security:
         - BearerAuth: []
       parameters:

@@ -25,6 +25,7 @@ type Repo interface {
 	MarkSucceeded(ctx context.Context, id uuid.UUID, finishedAt time.Time) error
 	MarkCompletedWithFailures(ctx context.Context, id uuid.UUID, finishedAt time.Time, errMsg string) error
 	MarkFailed(ctx context.Context, id uuid.UUID, finishedAt time.Time, errMsg string) error
+	MarkEnqueueFailed(ctx context.Context, id uuid.UUID, finishedAt time.Time, errMsg string) error
 	RequestCancel(ctx context.Context, id uuid.UUID, t time.Time) error
 	MarkCanceled(ctx context.Context, id uuid.UUID, finishedAt time.Time) error
 	IncrementAttempt(ctx context.Context, id uuid.UUID) error
@@ -162,6 +163,10 @@ func (r *PGXRepo) MarkCompletedWithFailures(ctx context.Context, id uuid.UUID, f
 
 func (r *PGXRepo) MarkFailed(ctx context.Context, id uuid.UUID, finishedAt time.Time, errMsg string) error {
 	return r.updateStatusAny(ctx, id, []string{JobStatusRunning, JobStatusCancelRequested}, JobStatusFailed, UpdateStatusFields{FinishedAt: &finishedAt, ErrorMessage: errMsg})
+}
+
+func (r *PGXRepo) MarkEnqueueFailed(ctx context.Context, id uuid.UUID, finishedAt time.Time, errMsg string) error {
+	return r.updateStatusAny(ctx, id, []string{JobStatusCreated, JobStatusQueued}, JobStatusFailed, UpdateStatusFields{FinishedAt: &finishedAt, ErrorMessage: errMsg})
 }
 
 func (r *PGXRepo) RequestCancel(ctx context.Context, id uuid.UUID, t time.Time) error {

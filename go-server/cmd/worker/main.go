@@ -10,8 +10,10 @@ import (
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/audit"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/config"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/database"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/eventbus"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/jobs"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/logging"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/redisx"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/runevent"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/workspace"
 	"go.uber.org/zap"
@@ -43,13 +45,27 @@ func main() {
 	if err := database.ApplyMigrations(ctx, db, "migrations"); err != nil {
 		logger.Fatal("apply migrations failed", zap.Error(err))
 	}
+	redisClient, err := redisx.NewClient(cfg.Redis)
+	if err != nil {
+		logger.Fatal("connect redis failed", zap.Error(err))
+	}
+	defer func() {
+		_ = redisx.Close(redisClient)
+	}()
+	var runEventBus eventbus.EventBus = eventbus.NewNoopEventBus()
+	if cfg.Jobs.EventBusEnabled {
+		runEventBus = eventbus.NewRedisEventBus(redisClient, cfg.Jobs.EventChannel, logger)
+	}
+	defer func() {
+		_ = runEventBus.Close()
+	}()
 
 	auditRepo := audit.NewPGXRepo(db)
 	auditService := audit.NewService(auditRepo, logger)
 	workspaceRepo := workspace.NewPGXRepo(db)
 	workspaceAuthorizer := workspace.NewAuthorizer(workspaceRepo)
 	runEventRepo := runevent.NewPGXRepo(db)
-	runEventService := runevent.NewService(runEventRepo, nil)
+	runEventService := runevent.NewService(runEventRepo, eventbus.NewRunEventPublisher(runEventBus, logger))
 	jobRepo := jobs.NewPGXRepo(db)
 	jobService := jobs.NewService(jobRepo, runEventService, nil, workspaceAuthorizer, auditService, logger, cfg.Jobs.MaxAttempts)
 	limiter := jobs.NewResourceLimiter(cfg.Jobs)

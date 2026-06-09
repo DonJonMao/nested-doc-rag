@@ -25,6 +25,8 @@ func TestLoadConfigExample(t *testing.T) {
 	require.Equal(t, "10s", cfg.Jobs.HeartbeatInterval.String())
 	require.Equal(t, 256, cfg.Jobs.EventBufferSize)
 	require.False(t, cfg.Jobs.EnableNoopJob)
+	require.True(t, cfg.Jobs.EventBusEnabled)
+	require.Equal(t, "gongkan:run_events", cfg.Jobs.EventChannel)
 	require.Equal(t, int64(200*1024*1024), cfg.Files.MaxUploadSize.Bytes)
 	require.Equal(t, "./runtime/tmp/uploads", cfg.Files.TempDir)
 	require.Contains(t, cfg.Files.AllowedExtensions, ".xlsx")
@@ -49,6 +51,8 @@ func TestEnvOverride(t *testing.T) {
 	t.Setenv("GONGKAN_JOBS_RETRY_BACKOFF", "5s")
 	t.Setenv("GONGKAN_JOBS_REDIS_NAMESPACE", "override")
 	t.Setenv("GONGKAN_JOBS_ENABLE_NOOP_JOB", "true")
+	t.Setenv("GONGKAN_JOBS_EVENT_BUS_ENABLED", "false")
+	t.Setenv("GONGKAN_JOBS_EVENT_CHANNEL", "override:events")
 
 	cfg, err := config.Load("../configs/config.example.yaml")
 
@@ -67,6 +71,8 @@ func TestEnvOverride(t *testing.T) {
 	require.Equal(t, "5s", cfg.Jobs.RetryBackoff.String())
 	require.Equal(t, "override", cfg.Jobs.RedisNamespace)
 	require.True(t, cfg.Jobs.EnableNoopJob)
+	require.False(t, cfg.Jobs.EventBusEnabled)
+	require.Equal(t, "override:events", cfg.Jobs.EventChannel)
 }
 
 func TestValidateMissingField(t *testing.T) {
@@ -126,6 +132,7 @@ func TestValidateInvalidJobsConfig(t *testing.T) {
 	cfg.Jobs.DefaultTimeout = config.NewDuration(0)
 	cfg.Jobs.RetryBackoff = config.NewDuration(0)
 	cfg.Jobs.EventBufferSize = 0
+	cfg.Jobs.EventChannel = ""
 
 	err := config.Validate(cfg)
 
@@ -135,4 +142,5 @@ func TestValidateInvalidJobsConfig(t *testing.T) {
 	require.Contains(t, err.Error(), "jobs.default_timeout")
 	require.Contains(t, err.Error(), "jobs.retry_backoff")
 	require.Contains(t, err.Error(), "jobs.event_buffer_size")
+	require.Contains(t, err.Error(), "jobs.event_channel")
 }

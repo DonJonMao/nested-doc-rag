@@ -111,6 +111,10 @@ func (f *fakeJobRepo) MarkFailed(ctx context.Context, id uuid.UUID, finishedAt t
 	return f.updateAny(id, []string{jobs.JobStatusRunning, jobs.JobStatusCancelRequested}, jobs.JobStatusFailed, jobs.UpdateStatusFields{FinishedAt: &finishedAt, ErrorMessage: errMsg})
 }
 
+func (f *fakeJobRepo) MarkEnqueueFailed(ctx context.Context, id uuid.UUID, finishedAt time.Time, errMsg string) error {
+	return f.updateAny(id, []string{jobs.JobStatusCreated, jobs.JobStatusQueued}, jobs.JobStatusFailed, jobs.UpdateStatusFields{FinishedAt: &finishedAt, ErrorMessage: errMsg})
+}
+
 func (f *fakeJobRepo) RequestCancel(ctx context.Context, id uuid.UUID, t time.Time) error {
 	return f.UpdateStatus(ctx, id, jobs.JobStatusRunning, jobs.JobStatusCancelRequested, jobs.UpdateStatusFields{CancelRequestedAt: &t})
 }
