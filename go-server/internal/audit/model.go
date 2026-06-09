@@ -1,14 +1,20 @@
 package audit
 
-import "time"
+import (
+	"time"
 
-type Event struct {
-	ID          string
-	ActorID     string
-	WorkspaceID string
-	Action      string
-	Resource    string
-	ResourceID  string
-	Metadata    map[string]any
-	CreatedAt   time.Time
+	"github.com/google/uuid"
+)
+
+type AuditLog struct {
+	ID           uuid.UUID
+	WorkspaceID  *uuid.UUID
+	UserID       *uuid.UUID
+	Action       string
+	ResourceType string
+	ResourceID   string
+	IP           string
+	UserAgent    string
+	Payload      map[string]any
+	CreatedAt    time.Time
 }

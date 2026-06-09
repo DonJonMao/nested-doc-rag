@@ -20,9 +20,7 @@ func RegisterRoutes(r chi.Router, deps RouteDeps) {
 	} else {
 		r.Handle("/metrics", promhttp.Handler())
 	}
-	r.Route("/api/v1", func(api chi.Router) {
-		api.Get("/ping", func(w http.ResponseWriter, r *http.Request) {
-			WriteOK(w, r, map[string]string{"service": "gongkan-platform", "version": "dev"})
-		})
+	r.Get("/api/v1/ping", func(w http.ResponseWriter, r *http.Request) {
+		WriteOK(w, r, map[string]string{"service": "gongkan-platform", "version": "dev"})
 	})
 }

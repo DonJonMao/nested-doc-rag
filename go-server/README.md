@@ -22,11 +22,37 @@ Implemented in this block:
 
 Business modules are intentionally not implemented in Block 0.
 
+## Block 1 Scope
+
+Implemented in this block:
+
+- users
+- roles
+- JWT access token
+- refresh token with rotation
+- RBAC middleware
+- workspace
+- workspace members
+- audit logs
+- bootstrap admin
+
+Not implemented in Block 1:
+
+- file upload APIs
+- knowledge base management
+- form filling APIs
+- task queues
+- PythonRunner
+- review queue
+- artifact management APIs
+
 ## Run Locally
 
 ```bash
 cp configs/config.example.yaml configs/config.local.yaml
 make docker-up
+export GONGKAN_JWT_SECRET='local-dev-secret-change-me'
+export GONGKAN_BOOTSTRAP_ADMIN_PASSWORD='ChangeMe123!'
 make run-api CONFIG=configs/config.local.yaml
 ```
 
@@ -39,6 +65,44 @@ curl http://localhost:8080/api/v1/ping
 curl http://localhost:8080/metrics
 ```
 
+## Bootstrap Admin
+
+Bootstrap admin is controlled by config:
+
+```yaml
+auth:
+  bootstrap_admin:
+    enabled: true
+    username: "admin"
+    password_env: "GONGKAN_BOOTSTRAP_ADMIN_PASSWORD"
+```
+
+The password is read from `GONGKAN_BOOTSTRAP_ADMIN_PASSWORD`. It is never stored in config or logs.
+
+## Auth Example
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"ChangeMe123!"}'
+```
+
+Use the returned access token:
+
+```bash
+curl http://localhost:8080/api/v1/auth/me \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Create a workspace:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/workspaces \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"西咸数据中心","description":"测试工作区"}'
+```
+
 ## Tests
 
 ```bash
@@ -47,7 +111,6 @@ go test ./...
 
 ## Next Blocks
 
-- Block 1: Auth/RBAC/Workspace
 - Block 2: File Storage and Artifact Management
 - Block 3: Task Queue, Worker, State Machine, SSE
 - Block 4: Python Core integration

@@ -30,6 +30,10 @@ auth:
   access_token_ttl: "30m"
   refresh_token_ttl: "168h"
   jwt_secret_env: "GONGKAN_JWT_SECRET"
+  bootstrap_admin:
+    enabled: true
+    username: "admin"
+    password_env: "GONGKAN_BOOTSTRAP_ADMIN_PASSWORD"
 
 python:
   executable: "python"

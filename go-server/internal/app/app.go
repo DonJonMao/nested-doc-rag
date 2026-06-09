@@ -3,7 +3,10 @@ package app
 import (
 	"context"
 	"net/http"
+	"os"
 
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/audit"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/auth"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/config"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/database"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/httpx"
@@ -12,6 +15,8 @@ import (
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/observability"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/redisx"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/storage"
+	userpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/user"
+	workspacepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/workspace"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -51,8 +56,53 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		_ = logger.Sync()
 		return nil, err
 	}
+	if err := database.ApplyMigrations(ctx, db, "migrations"); err != nil {
+		_ = redisx.Close(redisClient)
+		database.Close(db)
+		_ = logger.Sync()
+		return nil, err
+	}
+	auditRepo := audit.NewPGXRepo(db)
+	auditService := audit.NewService(auditRepo, logger)
+	userRepo := userpkg.NewPGXRepo(db)
+	refreshRepo := auth.NewPGXRefreshTokenRepo(db)
+	workspaceRepo := workspacepkg.NewPGXRepo(db)
+	jwtSecret := os.Getenv(cfg.Auth.JWTSecretEnv)
+	tokenManager, err := auth.NewTokenManager(jwtSecret, cfg.Auth.AccessTokenTTL.Duration)
+	if err != nil {
+		_ = redisx.Close(redisClient)
+		database.Close(db)
+		_ = logger.Sync()
+		return nil, err
+	}
+	authService := auth.NewService(userRepo, userRepo, refreshRepo, tokenManager, cfg.Auth.RefreshTokenTTL.Duration, auditService)
+	if err := authService.EnsureDefaultRoles(ctx); err != nil {
+		_ = redisx.Close(redisClient)
+		database.Close(db)
+		_ = logger.Sync()
+		return nil, err
+	}
+	if cfg.Auth.BootstrapAdmin.Enabled {
+		password := os.Getenv(cfg.Auth.BootstrapAdmin.PasswordEnv)
+		if password == "" {
+			logger.Warn("bootstrap admin password env is not set", zap.String("password_env", cfg.Auth.BootstrapAdmin.PasswordEnv))
+		} else if err := authService.BootstrapAdmin(ctx, cfg.Auth.BootstrapAdmin.Username, password); err != nil {
+			_ = redisx.Close(redisClient)
+			database.Close(db)
+			_ = logger.Sync()
+			return nil, err
+		}
+	}
+	userService := userpkg.NewService(userRepo, auditService)
+	workspaceService := workspacepkg.NewService(workspaceRepo, auditService)
+	routes := block1Routes{
+		tokenManager:     tokenManager,
+		authHandler:      auth.NewHandler(authService),
+		userHandler:      userpkg.NewHandler(userService),
+		workspaceHandler: workspacepkg.NewHandler(workspaceService),
+	}
 	metrics := observability.NewMetrics()
-	router := buildRouter(cfg, logger, db, redisClient, objectStorage, metrics)
+	router := buildRouter(cfg, logger, db, redisClient, objectStorage, metrics, routes)
 	return &App{
 		Config:  cfg,
 		Logger:  logger,
@@ -85,6 +135,7 @@ func buildRouter(
 	redisClient *redis.Client,
 	objectStorage storage.ObjectStorage,
 	metrics *observability.Metrics,
+	routes block1Routes,
 ) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -123,5 +174,35 @@ func buildRouter(
 			},
 		},
 	})
+	registerBlock1Routes(r, routes)
 	return r
+}
+
+type block1Routes struct {
+	tokenManager     *auth.TokenManager
+	authHandler      *auth.Handler
+	userHandler      *userpkg.Handler
+	workspaceHandler *workspacepkg.Handler
+}
+
+func registerBlock1Routes(r chi.Router, routes block1Routes) {
+	if routes.authHandler == nil || routes.tokenManager == nil {
+		return
+	}
+	r.Route("/api/v1", func(api chi.Router) {
+		routes.authHandler.RegisterPublicRoutes(api)
+		api.Group(func(protected chi.Router) {
+			protected.Use(middleware.Auth(routes.tokenManager))
+			routes.authHandler.RegisterProtectedRoutes(protected)
+			if routes.workspaceHandler != nil {
+				routes.workspaceHandler.RegisterRoutes(protected)
+			}
+			if routes.userHandler != nil {
+				protected.Group(func(admin chi.Router) {
+					admin.Use(middleware.RequireRoles(auth.RoleAdmin))
+					routes.userHandler.RegisterRoutes(admin)
+				})
+			}
+		})
+	})
 }

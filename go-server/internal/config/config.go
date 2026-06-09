@@ -60,9 +60,16 @@ type MinIOConfig struct {
 }
 
 type AuthConfig struct {
-	AccessTokenTTL  Duration `yaml:"access_token_ttl"`
-	RefreshTokenTTL Duration `yaml:"refresh_token_ttl"`
-	JWTSecretEnv    string   `yaml:"jwt_secret_env"`
+	AccessTokenTTL  Duration             `yaml:"access_token_ttl"`
+	RefreshTokenTTL Duration             `yaml:"refresh_token_ttl"`
+	JWTSecretEnv    string               `yaml:"jwt_secret_env"`
+	BootstrapAdmin  BootstrapAdminConfig `yaml:"bootstrap_admin"`
+}
+
+type BootstrapAdminConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	Username    string `yaml:"username"`
+	PasswordEnv string `yaml:"password_env"`
 }
 
 type PythonConfig struct {
@@ -188,6 +195,11 @@ func Default() *Config {
 			AccessTokenTTL:  NewDuration(30 * time.Minute),
 			RefreshTokenTTL: NewDuration(168 * time.Hour),
 			JWTSecretEnv:    "GONGKAN_JWT_SECRET",
+			BootstrapAdmin: BootstrapAdminConfig{
+				Enabled:     true,
+				Username:    "admin",
+				PasswordEnv: "GONGKAN_BOOTSTRAP_ADMIN_PASSWORD",
+			},
 		},
 		Python: PythonConfig{
 			Executable:     "python",
