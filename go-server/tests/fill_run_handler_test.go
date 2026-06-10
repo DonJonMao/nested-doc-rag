@@ -11,6 +11,7 @@ import (
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/artifact"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/auth"
 	formpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/form"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/httpx"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -31,6 +32,72 @@ func TestFormHandlerUploadForm(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Len(t, forms.uploads, 1)
 	require.Equal(t, workspaceID, forms.uploads[0].WorkspaceID)
+}
+
+func TestFormHandlerUploadFormMissingWorkspaceID(t *testing.T) {
+	forms := &fakeFormUseCase{}
+	handler := formpkg.NewHandler(forms, &fakeFillRunUseCase{})
+	body, contentType := multipartBody(t, nil, "file", "form.xlsx", []byte("content"))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/forms", body)
+	req.Header.Set("Content-Type", contentType)
+	req = req.WithContext(auth.ContextWithPrincipal(req.Context(), auth.Principal{UserID: uuid.New()}))
+	rec := httptest.NewRecorder()
+
+	handler.UploadForm(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), httpx.CodeInvalidArgument)
+	require.Empty(t, forms.uploads)
+}
+
+func TestFormHandlerUploadFormMissingFile(t *testing.T) {
+	workspaceID := uuid.New()
+	forms := &fakeFormUseCase{}
+	handler := formpkg.NewHandler(forms, &fakeFillRunUseCase{})
+	body, contentType := multipartBody(t, map[string]string{"workspace_id": workspaceID.String()}, "", "", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/forms", body)
+	req.Header.Set("Content-Type", contentType)
+	req = req.WithContext(auth.ContextWithPrincipal(req.Context(), auth.Principal{UserID: uuid.New()}))
+	rec := httptest.NewRecorder()
+
+	handler.UploadForm(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), httpx.CodeInvalidArgument)
+	require.Empty(t, forms.uploads)
+}
+
+func TestFormHandlerListFormsRequiresWorkspaceID(t *testing.T) {
+	handler := formpkg.NewHandler(&fakeFormUseCase{}, &fakeFillRunUseCase{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/forms", nil)
+	req = req.WithContext(auth.ContextWithPrincipal(req.Context(), auth.Principal{UserID: uuid.New()}))
+	rec := httptest.NewRecorder()
+
+	handler.ListForms(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), httpx.CodeInvalidArgument)
+}
+
+func TestFormHandlerGetAndListForms(t *testing.T) {
+	workspaceID := uuid.New()
+	formID := uuid.New()
+	forms := &fakeFormUseCase{
+		form:  &formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, Filename: "form.xlsx"},
+		forms: []formpkg.FormFile{{ID: formID, WorkspaceID: workspaceID, Filename: "form.xlsx"}},
+	}
+	handler := formpkg.NewHandler(forms, &fakeFillRunUseCase{})
+	router := chi.NewRouter()
+	handler.RegisterRoutes(router)
+	actorCtx := auth.ContextWithPrincipal(context.Background(), auth.Principal{UserID: uuid.New()})
+
+	getRec := httptest.NewRecorder()
+	router.ServeHTTP(getRec, httptest.NewRequest(http.MethodGet, "/forms/"+formID.String(), nil).WithContext(actorCtx))
+	require.Equal(t, http.StatusOK, getRec.Code)
+
+	listRec := httptest.NewRecorder()
+	router.ServeHTTP(listRec, httptest.NewRequest(http.MethodGet, "/forms?workspace_id="+workspaceID.String(), nil).WithContext(actorCtx))
+	require.Equal(t, http.StatusOK, listRec.Code)
 }
 
 func TestFillRunHandlerCreateGetListCancel(t *testing.T) {
@@ -63,6 +130,21 @@ func TestFillRunHandlerCreateGetListCancel(t *testing.T) {
 	router.ServeHTTP(cancelRec, cancelReq)
 	require.Equal(t, http.StatusOK, cancelRec.Code)
 	require.Equal(t, []uuid.UUID{runID}, runs.canceled)
+}
+
+func TestFillRunHandlerCreateReturnsServiceError(t *testing.T) {
+	workspaceID := uuid.New()
+	runs := &fakeFillRunUseCase{err: httpx.NewAppError(httpx.CodeInvalidArgument, "target_namespace is required", http.StatusBadRequest, nil, nil)}
+	handler := formpkg.NewHandler(&fakeFormUseCase{}, runs)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/fill-runs", strings.NewReader(`{"workspace_id":"`+workspaceID.String()+`","form_file_id":"`+uuid.New().String()+`"}`))
+	req = req.WithContext(auth.ContextWithPrincipal(req.Context(), auth.Principal{UserID: uuid.New()}))
+	rec := httptest.NewRecorder()
+
+	handler.CreateFillRun(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "target_namespace is required")
+	require.Len(t, runs.created, 1)
 }
 
 func TestFillRunHandlerDownloadShortcut(t *testing.T) {

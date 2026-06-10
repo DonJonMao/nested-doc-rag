@@ -180,6 +180,7 @@ func (f *fakeFillRunRepo) update(runID uuid.UUID, fn func(*formpkg.FillRun)) err
 
 type fakeFileUploader struct {
 	uploaded []filepkg.UploadFileRequest
+	got      []uuid.UUID
 	file     *filepkg.File
 	getFile  *filepkg.File
 	err      error
@@ -197,6 +198,7 @@ func (f *fakeFileUploader) Upload(ctx context.Context, req filepkg.UploadFileReq
 }
 
 func (f *fakeFileUploader) Get(ctx context.Context, fileID uuid.UUID, actor auth.Principal) (*filepkg.File, error) {
+	f.got = append(f.got, fileID)
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -237,12 +239,15 @@ func (f *fakeJobUseCase) CancelJob(ctx context.Context, jobID uuid.UUID, actor a
 }
 
 type fakeFillArtifactService struct {
-	artifacts []artifact.RunArtifact
-	download  *artifact.DownloadResult
-	err       error
+	artifacts     []artifact.RunArtifact
+	download      *artifact.DownloadResult
+	err           error
+	listCalls     []uuid.UUID
+	downloadCalls []uuid.UUID
 }
 
 func (f *fakeFillArtifactService) ListRunArtifacts(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, actor auth.Principal) ([]artifact.RunArtifact, error) {
+	f.listCalls = append(f.listCalls, runID)
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -250,6 +255,7 @@ func (f *fakeFillArtifactService) ListRunArtifacts(ctx context.Context, workspac
 }
 
 func (f *fakeFillArtifactService) DownloadArtifact(ctx context.Context, artifactID uuid.UUID, actor auth.Principal) (*artifact.DownloadResult, error) {
+	f.downloadCalls = append(f.downloadCalls, artifactID)
 	if f.err != nil {
 		return nil, f.err
 	}
