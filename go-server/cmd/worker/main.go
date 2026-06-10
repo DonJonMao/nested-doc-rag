@@ -17,6 +17,7 @@ import (
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/jobs"
 	knowledgepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/knowledge"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/logging"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/observability"
 	pythonpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/python"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/redisx"
 	reviewpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/review"
@@ -91,7 +92,8 @@ func main() {
 	runEventRepo := runevent.NewPGXRepo(db)
 	runEventService := runevent.NewService(runEventRepo, eventbus.NewRunEventPublisher(runEventBus, logger))
 	jobRepo := jobs.NewPGXRepo(db)
-	jobService := jobs.NewService(jobRepo, runEventService, nil, workspaceAuthorizer, auditService, logger, cfg.Jobs.MaxAttempts)
+	metrics := observability.NewMetrics(cfg.Observability.MetricsEnabled)
+	jobService := jobs.NewService(jobRepo, runEventService, nil, workspaceAuthorizer, auditService, logger, cfg.Jobs.MaxAttempts, metrics)
 	fileRepo := filepkg.NewPGXRepo(db)
 	formFileRepo := formpkg.NewPGXFormFileRepo(db)
 	fillRunRepo := formpkg.NewPGXFillRunRepo(db)
@@ -117,6 +119,7 @@ func main() {
 		KillGracePeriod: cfg.Python.KillGracePeriod.Duration,
 		StdoutLimit:     cfg.Python.StdoutLogMaxBytes,
 		StderrLimit:     cfg.Python.StderrLogMaxBytes,
+		Metrics:         metrics,
 	}
 	pythonRunner := &pythonpkg.SubprocessPythonRunner{
 		Builder:                    commandBuilder,

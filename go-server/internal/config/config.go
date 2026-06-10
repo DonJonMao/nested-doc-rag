@@ -13,17 +13,20 @@ import (
 const DefaultConfigPath = "configs/config.example.yaml"
 
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
-	Database  DatabaseConfig  `yaml:"database"`
-	Redis     RedisConfig     `yaml:"redis"`
-	Storage   StorageConfig   `yaml:"storage"`
-	Auth      AuthConfig      `yaml:"auth"`
-	Files     FilesConfig     `yaml:"files"`
-	Artifacts ArtifactsConfig `yaml:"artifacts"`
-	Python    PythonConfig    `yaml:"python"`
-	Jobs      JobsConfig      `yaml:"jobs"`
-	CORS      CORSConfig      `yaml:"cors"`
-	Logging   LoggingConfig   `yaml:"logging"`
+	Server        ServerConfig        `yaml:"server"`
+	Database      DatabaseConfig      `yaml:"database"`
+	Redis         RedisConfig         `yaml:"redis"`
+	Storage       StorageConfig       `yaml:"storage"`
+	Auth          AuthConfig          `yaml:"auth"`
+	Files         FilesConfig         `yaml:"files"`
+	Artifacts     ArtifactsConfig     `yaml:"artifacts"`
+	Python        PythonConfig        `yaml:"python"`
+	Jobs          JobsConfig          `yaml:"jobs"`
+	CORS          CORSConfig          `yaml:"cors"`
+	Logging       LoggingConfig       `yaml:"logging"`
+	Observability ObservabilityConfig `yaml:"observability"`
+	Security      SecurityConfig      `yaml:"security"`
+	Operations    OperationsConfig    `yaml:"operations"`
 }
 
 type ServerConfig struct {
@@ -120,15 +123,47 @@ type JobsConfig struct {
 }
 
 type CORSConfig struct {
-	AllowedOrigins []string `yaml:"allowed_origins"`
-	AllowedMethods []string `yaml:"allowed_methods"`
-	AllowedHeaders []string `yaml:"allowed_headers"`
+	AllowedOrigins   []string `yaml:"allowed_origins"`
+	AllowedMethods   []string `yaml:"allowed_methods"`
+	AllowedHeaders   []string `yaml:"allowed_headers"`
+	AllowCredentials bool     `yaml:"allow_credentials"`
 }
 
 type LoggingConfig struct {
 	Level       string `yaml:"level"`
 	Encoding    string `yaml:"encoding"`
 	Development bool   `yaml:"development"`
+}
+
+type ObservabilityConfig struct {
+	MetricsEnabled     bool   `yaml:"metrics_enabled"`
+	PprofEnabled       bool   `yaml:"pprof_enabled"`
+	PprofAddr          string `yaml:"pprof_addr"`
+	TracingEnabled     bool   `yaml:"tracing_enabled"`
+	TracingServiceName string `yaml:"tracing_service_name"`
+	TracingExporter    string `yaml:"tracing_exporter"`
+	OTLPEndpoint       string `yaml:"otlp_endpoint"`
+	LogRequestBody     bool   `yaml:"log_request_body"`
+	LogResponseBody    bool   `yaml:"log_response_body"`
+}
+
+type SecurityConfig struct {
+	SecurityHeadersEnabled bool     `yaml:"security_headers_enabled"`
+	RateLimitEnabled       bool     `yaml:"rate_limit_enabled"`
+	RateLimitRPS           int      `yaml:"rate_limit_rps"`
+	RateLimitBurst         int      `yaml:"rate_limit_burst"`
+	BodyLimitEnabled       bool     `yaml:"body_limit_enabled"`
+	MaxBodySize            ByteSize `yaml:"max_body_size"`
+	TrustedProxies         []string `yaml:"trusted_proxies"`
+	CORSAllowCredentials   bool     `yaml:"cors_allow_credentials"`
+	HSTSEnabled            bool     `yaml:"hsts_enabled"`
+	HSTSMaxAge             Duration `yaml:"hsts_max_age"`
+}
+
+type OperationsConfig struct {
+	GracefulShutdownTimeout Duration `yaml:"graceful_shutdown_timeout"`
+	DiagnosticsEnabled      bool     `yaml:"diagnostics_enabled"`
+	ExposeBuildInfo         bool     `yaml:"expose_build_info"`
 }
 
 func Load(path string) (*Config, error) {
@@ -260,6 +295,29 @@ func Validate(cfg *Config) error {
 	if cfg.Jobs.EventBusEnabled && strings.TrimSpace(cfg.Jobs.EventChannel) == "" {
 		problems = append(problems, "jobs.event_channel is required when jobs.event_bus_enabled=true")
 	}
+	if cfg.Security.RateLimitEnabled && cfg.Security.RateLimitRPS <= 0 {
+		problems = append(problems, "security.rate_limit_rps must be greater than 0 when rate limit is enabled")
+	}
+	if cfg.Security.RateLimitEnabled && cfg.Security.RateLimitBurst <= 0 {
+		problems = append(problems, "security.rate_limit_burst must be greater than 0 when rate limit is enabled")
+	}
+	if cfg.Security.MaxBodySize.Bytes <= 0 {
+		problems = append(problems, "security.max_body_size must be greater than 0")
+	}
+	if cfg.Observability.PprofEnabled && strings.TrimSpace(cfg.Observability.PprofAddr) == "" {
+		problems = append(problems, "observability.pprof_addr is required when pprof is enabled")
+	}
+	switch strings.TrimSpace(cfg.Observability.TracingExporter) {
+	case "", "none", "stdout", "otlp":
+	default:
+		problems = append(problems, "observability.tracing_exporter must be none, stdout, or otlp")
+	}
+	if strings.TrimSpace(cfg.Observability.TracingExporter) == "otlp" && strings.TrimSpace(cfg.Observability.OTLPEndpoint) == "" {
+		problems = append(problems, "observability.otlp_endpoint is required when tracing_exporter=otlp")
+	}
+	if cfg.Operations.GracefulShutdownTimeout.Duration <= 0 {
+		problems = append(problems, "operations.graceful_shutdown_timeout must be greater than 0")
+	}
 	if len(problems) > 0 {
 		return fmt.Errorf("invalid config: %s", strings.Join(problems, "; "))
 	}
@@ -357,5 +415,28 @@ func Default() *Config {
 			AllowedHeaders: []string{"Authorization", "Content-Type", "X-Request-ID"},
 		},
 		Logging: LoggingConfig{Level: "info", Encoding: "json", Development: true},
+		Observability: ObservabilityConfig{
+			MetricsEnabled:     true,
+			PprofEnabled:       false,
+			PprofAddr:          "127.0.0.1:6060",
+			TracingEnabled:     false,
+			TracingServiceName: "gongkan-platform",
+			TracingExporter:    "none",
+		},
+		Security: SecurityConfig{
+			SecurityHeadersEnabled: true,
+			RateLimitEnabled:       true,
+			RateLimitRPS:           20,
+			RateLimitBurst:         40,
+			BodyLimitEnabled:       true,
+			MaxBodySize:            NewByteSize(256 * 1024 * 1024),
+			HSTSEnabled:            false,
+			HSTSMaxAge:             NewDuration(720 * time.Hour),
+		},
+		Operations: OperationsConfig{
+			GracefulShutdownTimeout: NewDuration(30 * time.Second),
+			DiagnosticsEnabled:      true,
+			ExposeBuildInfo:         true,
+		},
 	}
 }

@@ -22,6 +22,17 @@ type RunEventWriter interface {
 	Create(ctx context.Context, event runevent.RunEvent) (*runevent.RunEvent, error)
 }
 
+type Metrics interface {
+	ObserveJobCreated(jobType string)
+	ObserveJobQueued(jobType string)
+	ObserveJobStarted(jobType string)
+	ObserveJobFinished(jobType string, status string, duration time.Duration)
+	ObserveJobFailed(jobType string, errorClass string)
+	ObserveJobAttempt(jobType string)
+	ObserveJobCancelRequested(jobType string)
+	ObserveWorkerRunning(jobType string, delta float64)
+}
+
 type Service struct {
 	repo        Repo
 	events      RunEventWriter
@@ -30,16 +41,21 @@ type Service struct {
 	audit       *audit.Service
 	logger      *zap.Logger
 	maxAttempts int
+	metrics     Metrics
 }
 
-func NewService(repo Repo, events RunEventWriter, queue Queue, authorizer WorkspaceAuthorizer, auditSvc *audit.Service, logger *zap.Logger, maxAttempts int) *Service {
+func NewService(repo Repo, events RunEventWriter, queue Queue, authorizer WorkspaceAuthorizer, auditSvc *audit.Service, logger *zap.Logger, maxAttempts int, metrics ...Metrics) *Service {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 	if maxAttempts <= 0 {
 		maxAttempts = 3
 	}
-	return &Service{repo: repo, events: events, queue: queue, authorizer: authorizer, audit: auditSvc, logger: logger, maxAttempts: maxAttempts}
+	var observer Metrics
+	if len(metrics) > 0 {
+		observer = metrics[0]
+	}
+	return &Service{repo: repo, events: events, queue: queue, authorizer: authorizer, audit: auditSvc, logger: logger, maxAttempts: maxAttempts, metrics: observer}
 }
 
 func (s *Service) CreateJob(ctx context.Context, req CreateJobRequest, actor auth.Principal) (*Job, error) {
@@ -81,6 +97,9 @@ func (s *Service) CreateJob(ctx context.Context, req CreateJobRequest, actor aut
 	if err := s.repo.Create(ctx, job); err != nil {
 		return nil, err
 	}
+	if s.metrics != nil {
+		s.metrics.ObserveJobCreated(job.JobType)
+	}
 	s.record(ctx, audit.AuditLog{WorkspaceID: &job.WorkspaceID, UserID: &actor.UserID, Action: "job.created", ResourceType: "job", ResourceID: job.ID.String(), Payload: map[string]any{"job_type": job.JobType, "resource_type": job.ResourceType}})
 	if err := s.EnqueueJob(ctx, job.ID, actor); err != nil {
 		return nil, err
@@ -115,12 +134,19 @@ func (s *Service) EnqueueJob(ctx context.Context, jobID uuid.UUID, actor auth.Pr
 			job.Status = JobStatusFailed
 			job.FinishedAt = &failedAt
 			job.ErrorMessage = errMsg
+			if s.metrics != nil {
+				s.metrics.ObserveJobFailed(job.JobType, "enqueue")
+				s.metrics.ObserveJobFinished(job.JobType, JobStatusFailed, 0)
+			}
 			s.emit(ctx, *job, runevent.EventFailed, map[string]any{"enqueue_failed": true, "error_message": errMsg})
 			s.record(ctx, audit.AuditLog{WorkspaceID: &job.WorkspaceID, UserID: &actor.UserID, Action: "job.enqueue_failed", ResourceType: "job", ResourceID: job.ID.String(), Payload: map[string]any{"job_type": job.JobType, "error_message": errMsg}})
 			return httpx.NewAppError(httpx.CodeInternal, "enqueue job failed", http.StatusInternalServerError, nil, err)
 		}
 	}
 	s.emit(ctx, *job, runevent.EventQueued, map[string]any{"job_type": job.JobType})
+	if s.metrics != nil {
+		s.metrics.ObserveJobQueued(job.JobType)
+	}
 	s.record(ctx, audit.AuditLog{WorkspaceID: &job.WorkspaceID, UserID: &actor.UserID, Action: "job.queued", ResourceType: "job", ResourceID: job.ID.String(), Payload: map[string]any{"job_type": job.JobType}})
 	return nil
 }
@@ -167,6 +193,9 @@ func (s *Service) CancelJob(ctx context.Context, jobID uuid.UUID, actor auth.Pri
 		job.Status = JobStatusCancelRequested
 		job.CancelRequestedAt = &now
 		s.emit(ctx, *job, runevent.EventCancelRequested, nil)
+		if s.metrics != nil {
+			s.metrics.ObserveJobCancelRequested(job.JobType)
+		}
 	case JobStatusCancelRequested:
 	default:
 		return nil, httpx.NewAppError(httpx.CodeConflict, "job cannot be canceled from current status", http.StatusConflict, map[string]string{"status": job.Status}, nil)
@@ -186,6 +215,11 @@ func (s *Service) MarkRunning(ctx context.Context, job Job) error {
 	job.Status = JobStatusRunning
 	job.StartedAt = &now
 	s.emit(ctx, job, runevent.EventRunning, nil)
+	if s.metrics != nil {
+		s.metrics.ObserveJobAttempt(job.JobType)
+		s.metrics.ObserveJobStarted(job.JobType)
+		s.metrics.ObserveWorkerRunning(job.JobType, 1)
+	}
 	return nil
 }
 
@@ -206,6 +240,7 @@ func (s *Service) MarkSucceeded(ctx context.Context, job Job) error {
 	job.Status = JobStatusSucceeded
 	job.FinishedAt = &now
 	s.emit(ctx, job, runevent.EventSucceeded, nil)
+	s.observeTerminal(job, JobStatusSucceeded, "")
 	return nil
 }
 
@@ -217,6 +252,7 @@ func (s *Service) MarkCompletedWithFailures(ctx context.Context, job Job, errMsg
 	job.Status = JobStatusCompletedWithFailures
 	job.FinishedAt = &now
 	s.emit(ctx, job, runevent.EventCompletedWithFailures, map[string]any{"error_message": errMsg})
+	s.observeTerminal(job, JobStatusCompletedWithFailures, "post_process")
 	return nil
 }
 
@@ -228,6 +264,7 @@ func (s *Service) MarkFailed(ctx context.Context, job Job, errMsg string) error 
 	job.Status = JobStatusFailed
 	job.FinishedAt = &now
 	s.emit(ctx, job, runevent.EventFailed, map[string]any{"error_message": errMsg})
+	s.observeTerminal(job, JobStatusFailed, "handler")
 	return nil
 }
 
@@ -239,7 +276,23 @@ func (s *Service) MarkCanceled(ctx context.Context, job Job) error {
 	job.Status = JobStatusCanceled
 	job.FinishedAt = &now
 	s.emit(ctx, job, runevent.EventCanceled, nil)
+	s.observeTerminal(job, JobStatusCanceled, "")
 	return nil
+}
+
+func (s *Service) observeTerminal(job Job, status string, errorClass string) {
+	if s.metrics == nil {
+		return
+	}
+	duration := time.Duration(0)
+	if job.StartedAt != nil && job.FinishedAt != nil {
+		duration = job.FinishedAt.Sub(*job.StartedAt)
+	}
+	if status == JobStatusFailed && errorClass != "" {
+		s.metrics.ObserveJobFailed(job.JobType, errorClass)
+	}
+	s.metrics.ObserveJobFinished(job.JobType, status, duration)
+	s.metrics.ObserveWorkerRunning(job.JobType, -1)
 }
 
 func (s *Service) emit(ctx context.Context, job Job, eventType string, payload map[string]any) {

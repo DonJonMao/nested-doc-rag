@@ -18,11 +18,18 @@ type CommandExecutor interface {
 	Run(ctx context.Context, spec CommandSpec, timeout time.Duration) (*ProcessResult, error)
 }
 
+type Metrics interface {
+	ObservePythonRun(command string, status string, duration time.Duration)
+	ObservePythonProcessRunning(command string, delta float64)
+	ObservePythonProcessExit(command string, exitCode int)
+}
+
 type ProcessRunner struct {
 	Logger          *zap.Logger
 	KillGracePeriod time.Duration
 	StdoutLimit     int64
 	StderrLimit     int64
+	Metrics         Metrics
 }
 
 func (r *ProcessRunner) Run(ctx context.Context, spec CommandSpec, timeout time.Duration) (*ProcessResult, error) {
@@ -45,6 +52,7 @@ func (r *ProcessRunner) Run(ctx context.Context, spec CommandSpec, timeout time.
 	stdout := newTailBuffer(r.StdoutLimit)
 	stderr := newTailBuffer(r.StderrLimit)
 	started := time.Now().UTC()
+	command := commandLabel(spec.Args)
 	cmd := exec.CommandContext(runCtx, spec.Args[0], spec.Args[1:]...)
 	cmd.Cancel = func() error { return nil }
 	if spec.Dir != "" {
@@ -55,10 +63,15 @@ func (r *ProcessRunner) Run(ctx context.Context, spec CommandSpec, timeout time.
 	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	logger.Info("starting python command", zap.Strings("args", spec.RedactedArgs), zap.String("dir", cmd.Dir))
+	if r.Metrics != nil {
+		r.Metrics.ObservePythonProcessRunning(command, 1)
+		defer r.Metrics.ObservePythonProcessRunning(command, -1)
+	}
 
 	if err := cmd.Start(); err != nil {
 		finished := time.Now().UTC()
 		result := processResult(-1, stdout, stderr, started, finished)
+		r.observePython(command, "failed", result)
 		return result, &PythonRunError{Message: "start python command failed", ExitCode: -1, StdoutTail: result.StdoutTail, StderrTail: result.StderrTail}
 	}
 
@@ -83,6 +96,11 @@ func (r *ProcessRunner) Run(ctx context.Context, spec CommandSpec, timeout time.
 		finished := time.Now().UTC()
 		exitCode := exitCodeFromError(waitErr)
 		result := processResult(exitCode, stdout, stderr, started, finished)
+		status := "canceled"
+		if timedOut {
+			status = "timeout"
+		}
+		r.observePython(command, status, result)
 		return result, &PythonRunError{
 			Message:    cancelMessage(timedOut, canceled),
 			ExitCode:   exitCode,
@@ -97,6 +115,7 @@ func (r *ProcessRunner) Run(ctx context.Context, spec CommandSpec, timeout time.
 	exitCode := exitCodeFromError(waitErr)
 	result := processResult(exitCode, stdout, stderr, started, finished)
 	if waitErr != nil {
+		r.observePython(command, "failed", result)
 		return result, &PythonRunError{
 			Message:    fmt.Sprintf("python command failed with exit code %d", exitCode),
 			ExitCode:   exitCode,
@@ -104,7 +123,30 @@ func (r *ProcessRunner) Run(ctx context.Context, spec CommandSpec, timeout time.
 			StderrTail: result.StderrTail,
 		}
 	}
+	r.observePython(command, "succeeded", result)
 	return result, nil
+}
+
+func (r *ProcessRunner) observePython(command string, status string, result *ProcessResult) {
+	if r.Metrics == nil || result == nil {
+		return
+	}
+	r.Metrics.ObservePythonRun(command, status, result.FinishedAt.Sub(result.StartedAt))
+	r.Metrics.ObservePythonProcessExit(command, result.ExitCode)
+}
+
+func commandLabel(args []string) string {
+	for _, arg := range args {
+		switch arg {
+		case "run-step15-agent":
+			return "run_step15_agent"
+		case "ingest-knowledge":
+			return "ingest_knowledge"
+		case "validate-artifacts":
+			return "validate_artifacts"
+		}
+	}
+	return "python"
 }
 
 func (r *ProcessRunner) killGracePeriod() time.Duration {

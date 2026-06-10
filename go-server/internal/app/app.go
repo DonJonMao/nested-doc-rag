@@ -139,13 +139,14 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	runEventService := runevent.NewService(runEventRepo, sseBroker)
 	jobRepo := jobspkg.NewPGXRepo(db)
 	jobQueue := jobspkg.NewAsynqQueue(cfg.Redis, cfg.Jobs)
-	jobService := jobspkg.NewService(jobRepo, runEventService, jobQueue, workspaceAuthorizer, auditService, logger, cfg.Jobs.MaxAttempts)
+	metrics := observability.NewMetrics(cfg.Observability.MetricsEnabled)
+	jobService := jobspkg.NewService(jobRepo, runEventService, jobQueue, workspaceAuthorizer, auditService, logger, cfg.Jobs.MaxAttempts, metrics)
 	formFileRepo := formpkg.NewPGXFormFileRepo(db)
 	fillRunRepo := formpkg.NewPGXFillRunRepo(db)
 	formFileService := formpkg.NewFormFileService(formFileRepo, fileService, workspaceAuthorizer, auditService, logger)
 	fillRunService := formpkg.NewFillRunService(fillRunRepo, formFileRepo, jobService, artifactService, workspaceAuthorizer, auditService, logger, *cfg)
 	reviewRepo := reviewpkg.NewPGXRepo(db)
-	reviewService := reviewpkg.NewService(reviewRepo, fillRunRepo, workspaceAuthorizer, auditService, logger)
+	reviewService := reviewpkg.NewService(reviewRepo, fillRunRepo, workspaceAuthorizer, auditService, logger, metrics)
 	knowledgeBaseRepo := knowledgepkg.NewPGXKnowledgeBaseRepo(db)
 	knowledgeDocumentRepo := knowledgepkg.NewPGXKnowledgeDocumentRepo(db)
 	knowledgeIndexVersionRepo := knowledgepkg.NewPGXKnowledgeIndexVersionRepo(db)
@@ -161,13 +162,12 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		fileHandler:      filepkg.NewHandler(fileService),
 		artifactHandler:  artifactpkg.NewHandler(artifactService),
 		jobsHandler:      jobspkg.NewHandler(jobService, cfg.Jobs.EnableNoopJob),
-		sseHandler:       ssepkg.NewHandler(runEventService, sseBroker, workspaceAuthorizer),
+		sseHandler:       ssepkg.NewHandler(runEventService, sseBroker, workspaceAuthorizer, metrics),
 		formHandler:      formpkg.NewHandler(formFileService, fillRunService),
 		knowledgeHandler: knowledgepkg.NewHandler(knowledgeBaseService, knowledgeDocumentService, ingestionService),
 		reviewHandler:    reviewpkg.NewHandler(reviewService, fillRunService),
 		enableNoopJob:    cfg.Jobs.EnableNoopJob,
 	}
-	metrics := observability.NewMetrics()
 	router := buildRouter(cfg, logger, db, redisClient, objectStorage, metrics, routes)
 	return &App{
 		Config:         cfg,
@@ -227,13 +227,19 @@ func buildRouter(
 	routes platformRoutes,
 ) http.Handler {
 	r := chi.NewRouter()
+	tracingProvider := observability.NewTracerProvider(cfg.Observability, logger)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recover(logger))
+	r.Use(middleware.SecurityHeaders(cfg.Security))
 	r.Use(middleware.Logger(logger))
-	r.Use(middleware.Timeout(cfg.Server.WriteTimeout.Duration))
-	r.Use(middleware.CORS(cfg.CORS))
-	r.Use(middleware.RateLimit())
 	r.Use(metrics.HTTPMiddleware)
+	r.Use(tracingProvider.Middleware)
+	r.Use(middleware.BodyLimit(cfg.Security))
+	r.Use(middleware.RateLimit(cfg.Security))
+	r.Use(middleware.Timeout(cfg.Server.WriteTimeout.Duration))
+	corsCfg := cfg.CORS
+	corsCfg.AllowCredentials = corsCfg.AllowCredentials || cfg.Security.CORSAllowCredentials
+	r.Use(middleware.CORS(corsCfg))
 	httpx.RegisterRoutes(r, httpx.RouteDeps{
 		MetricsHandler: metrics.Handler(),
 		ReadyChecks: []httpx.ReadyCheck{

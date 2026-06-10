@@ -11,6 +11,7 @@ import (
 
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/app"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/config"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/observability"
 	"go.uber.org/zap"
 )
 
@@ -40,6 +41,15 @@ func main() {
 	}
 
 	serverErrors := make(chan error, 1)
+	pprofServer := observability.NewPprofServer(cfg.Observability, application.Logger)
+	if pprofServer != nil {
+		go func() {
+			application.Logger.Info("pprof server starting", zap.String("addr", cfg.Observability.PprofAddr))
+			if err := pprofServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				application.Logger.Error("pprof server failed", zap.Error(err))
+			}
+		}()
+	}
 	go func() {
 		application.Logger.Info("api server starting", zap.String("addr", cfg.Server.Addr))
 		serverErrors <- server.ListenAndServe()
@@ -55,8 +65,15 @@ func main() {
 		}
 	case sig := <-shutdown:
 		application.Logger.Info("api server shutting down", zap.String("signal", sig.String()))
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout.Duration)
+		shutdownTimeout := cfg.Operations.GracefulShutdownTimeout.Duration
+		if shutdownTimeout <= 0 {
+			shutdownTimeout = cfg.Server.ShutdownTimeout.Duration
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
+		if err := observability.ShutdownServer(shutdownCtx, pprofServer); err != nil {
+			application.Logger.Error("pprof graceful shutdown failed", zap.Error(err))
+		}
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			application.Logger.Error("graceful shutdown failed", zap.Error(err))
 			_ = server.Close()

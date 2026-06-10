@@ -27,3 +27,7 @@ qdrant/
 *.log
 *.tmp
 *.bak
+
+# Go server local build outputs.
+go-server/api
+go-server/worker

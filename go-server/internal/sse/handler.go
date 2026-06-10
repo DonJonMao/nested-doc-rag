@@ -24,14 +24,25 @@ type EventReader interface {
 	ListByRun(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, afterSequence int64, limit int) ([]runevent.RunEvent, error)
 }
 
+type Metrics interface {
+	ObserveSSEConnect()
+	ObserveSSEDisconnect()
+	ObserveSSEEvent(eventType string)
+}
+
 type Handler struct {
 	reader     EventReader
 	broker     *Broker
 	authorizer WorkspaceAuthorizer
+	metrics    Metrics
 }
 
-func NewHandler(reader EventReader, broker *Broker, authorizer WorkspaceAuthorizer) *Handler {
-	return &Handler{reader: reader, broker: broker, authorizer: authorizer}
+func NewHandler(reader EventReader, broker *Broker, authorizer WorkspaceAuthorizer, metrics ...Metrics) *Handler {
+	var observer Metrics
+	if len(metrics) > 0 {
+		observer = metrics[0]
+	}
+	return &Handler{reader: reader, broker: broker, authorizer: authorizer, metrics: observer}
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -67,6 +78,10 @@ func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	if h.metrics != nil {
+		h.metrics.ObserveSSEConnect()
+		defer h.metrics.ObserveSSEDisconnect()
+	}
 
 	history, err := h.reader.ListByRun(r.Context(), workspaceID, runID, afterSequence, 500)
 	if err != nil {
@@ -76,6 +91,9 @@ func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
 	for _, event := range history {
 		if err := writeSSE(w, flusher, Event{RunID: event.RunID, EventType: event.EventType, Sequence: event.Sequence, Payload: event.Payload, CreatedAt: event.CreatedAt}); err != nil {
 			return
+		}
+		if h.metrics != nil {
+			h.metrics.ObserveSSEEvent(event.EventType)
 		}
 	}
 
@@ -96,6 +114,9 @@ func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := writeSSE(w, flusher, event); err != nil {
 				return
+			}
+			if h.metrics != nil {
+				h.metrics.ObserveSSEEvent(event.EventType)
 			}
 		}
 	}

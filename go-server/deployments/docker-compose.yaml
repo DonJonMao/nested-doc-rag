@@ -1,4 +1,45 @@
 services:
+  api:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile.api
+    env_file:
+      - .env
+    command: ["--config", "configs/config.example.yaml"]
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - app
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile.worker
+    env_file:
+      - .env
+    command: ["--config", "configs/config.example.yaml"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    profiles:
+      - app
+
   postgres:
     image: postgres:16
     environment:
@@ -9,6 +50,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gongkan -d gongkan"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7

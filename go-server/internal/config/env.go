@@ -69,6 +69,18 @@ func ApplyEnvOverrides(cfg *Config) error {
 	setString(&cfg.Logging.Level, "GONGKAN_LOGGING_LEVEL")
 	setString(&cfg.Logging.Encoding, "GONGKAN_LOGGING_ENCODING")
 	setBool(&cfg.Logging.Development, "GONGKAN_LOGGING_DEVELOPMENT", &errors)
+	setBool(&cfg.Observability.MetricsEnabled, "GONGKAN_OBSERVABILITY_METRICS_ENABLED", &errors)
+	setBool(&cfg.Observability.PprofEnabled, "GONGKAN_OBSERVABILITY_PPROF_ENABLED", &errors)
+	setString(&cfg.Observability.PprofAddr, "GONGKAN_OBSERVABILITY_PPROF_ADDR")
+	setBool(&cfg.Observability.TracingEnabled, "GONGKAN_OBSERVABILITY_TRACING_ENABLED", &errors)
+	setString(&cfg.Observability.TracingExporter, "GONGKAN_OBSERVABILITY_TRACING_EXPORTER")
+	setString(&cfg.Observability.OTLPEndpoint, "GONGKAN_OBSERVABILITY_OTLP_ENDPOINT")
+	setBool(&cfg.Security.RateLimitEnabled, "GONGKAN_SECURITY_RATE_LIMIT_ENABLED", &errors)
+	setInt(&cfg.Security.RateLimitRPS, "GONGKAN_SECURITY_RATE_LIMIT_RPS", &errors)
+	setInt(&cfg.Security.RateLimitBurst, "GONGKAN_SECURITY_RATE_LIMIT_BURST", &errors)
+	setByteSize(&cfg.Security.MaxBodySize, "GONGKAN_SECURITY_MAX_BODY_SIZE", &errors)
+	setBool(&cfg.Security.HSTSEnabled, "GONGKAN_SECURITY_HSTS_ENABLED", &errors)
+	setDuration(&cfg.Operations.GracefulShutdownTimeout, "GONGKAN_OPERATIONS_GRACEFUL_SHUTDOWN_TIMEOUT", &errors)
 	if len(errors) > 0 {
 		return fmt.Errorf("apply environment overrides: %s", strings.Join(errors, "; "))
 	}

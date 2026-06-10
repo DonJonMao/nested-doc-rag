@@ -23,19 +23,28 @@ type FillRunGetter interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*form.FillRun, error)
 }
 
+type Metrics interface {
+	ObserveReviewAction(action string)
+}
+
 type Service struct {
 	repo       Repo
 	runs       FillRunGetter
 	authorizer WorkspaceAuthorizer
 	audit      *audit.Service
 	logger     *zap.Logger
+	metrics    Metrics
 }
 
-func NewService(repo Repo, runs FillRunGetter, authorizer WorkspaceAuthorizer, auditSvc *audit.Service, logger *zap.Logger) *Service {
+func NewService(repo Repo, runs FillRunGetter, authorizer WorkspaceAuthorizer, auditSvc *audit.Service, logger *zap.Logger, metrics ...Metrics) *Service {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &Service{repo: repo, runs: runs, authorizer: authorizer, audit: auditSvc, logger: logger}
+	var observer Metrics
+	if len(metrics) > 0 {
+		observer = metrics[0]
+	}
+	return &Service{repo: repo, runs: runs, authorizer: authorizer, audit: auditSvc, logger: logger, metrics: observer}
 }
 
 func (s *Service) ListByRun(ctx context.Context, runID uuid.UUID, filter ReviewFilter, actor auth.Principal) ([]ReviewItem, ReviewCounts, error) {
@@ -188,6 +197,9 @@ func (s *Service) update(ctx context.Context, item *ReviewItem, status string, c
 		"field_id": item.FieldID,
 		"status":   status,
 	})
+	if s.metrics != nil {
+		s.metrics.ObserveReviewAction(strings.TrimPrefix(auditAction, "review."))
+	}
 	return nil
 }
 

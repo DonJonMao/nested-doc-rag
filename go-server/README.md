@@ -297,6 +297,65 @@ Next Block:
 
 Block 8: Observability, security hardening, operations, load testing.
 
+## Block 8 Scope
+
+Implemented:
+
+- expanded Prometheus metrics
+- HTTP metrics middleware with route/status/body/response tracking
+- security headers
+- in-memory per-IP rate limiting
+- request body size limit
+- optional pprof server bound separately from the main API router
+- tracing foundation with no-op provider and HTTP/job/Python span hooks
+- log and config secret redaction
+- operational docs and runbooks
+- k6 load test scripts
+- smoke scripts
+- CI workflow
+- Docker and Makefile operation commands
+
+Not implemented in Block 8:
+
+- new business modules
+- Go-native RAG, LLM, Qdrant, or Office parsing
+- human-edited re-writeback
+- distributed Redis rate limiting
+- full OpenTelemetry exporter wiring
+
+## Production Notes
+
+- pprof is disabled by default. If enabled, bind it to localhost or an internal network only.
+- Secrets must come from env or a secret manager; do not commit `.env`.
+- Authorization headers, passwords, refresh tokens, DB passwords, and provider API keys are redacted from config summaries and logs.
+- Prometheus metrics are exposed at `/metrics` and avoid high-cardinality IDs as labels.
+- API and worker should run as separate processes.
+- Python Core remains a separate CLI engine; Go does not call LLMs directly.
+
+## Operational Commands
+
+```bash
+make ci
+make docker-up
+make docker-down
+make docker-logs
+make run-api CONFIG=configs/config.local.yaml
+make run-worker CONFIG=configs/config.local.yaml
+make smoke-api
+make smoke-auth
+make smoke-files
+make smoke-jobs
+make loadtest-smoke
+```
+
+Detailed operations docs:
+
+- [Operations](docs/OPERATIONS.md)
+- [Security](docs/SECURITY.md)
+- [Runbook](docs/RUNBOOK.md)
+- [Load testing](docs/LOAD_TESTING.md)
+- [Metrics](docs/METRICS.md)
+
 ## Run Locally
 
 ```bash
@@ -482,9 +541,19 @@ The Go worker does not import Python code or inspect RAG/agent internals. Job pa
 go test ./...
 ```
 
-## Next Blocks
+## Next Step
 
-- Block 8: Observability, security hardening, operations, load testing
+This completes the initial industrial V1 backend blocks.
+
+Future work:
+
+- human-edited re-writeback
+- advanced review workflow
+- distributed Redis rate limit
+- OIDC/SSO
+- Kubernetes deployment
+- HA PostgreSQL/Redis
+- model gateway
 
 Detailed design:
 

@@ -102,8 +102,37 @@ cors:
     - "Authorization"
     - "Content-Type"
     - "X-Request-ID"
+  allow_credentials: false
 
 logging:
   level: "info"
   encoding: "json"
   development: true
+
+observability:
+  metrics_enabled: true
+  pprof_enabled: false
+  pprof_addr: "127.0.0.1:6060"
+  tracing_enabled: false
+  tracing_service_name: "gongkan-platform"
+  tracing_exporter: "none"
+  otlp_endpoint: ""
+  log_request_body: false
+  log_response_body: false
+
+security:
+  security_headers_enabled: true
+  rate_limit_enabled: true
+  rate_limit_rps: 20
+  rate_limit_burst: 40
+  body_limit_enabled: true
+  max_body_size: "256MB"
+  trusted_proxies: []
+  cors_allow_credentials: false
+  hsts_enabled: false
+  hsts_max_age: "720h"
+
+operations:
+  graceful_shutdown_timeout: "30s"
+  diagnostics_enabled: true
+  expose_build_info: true

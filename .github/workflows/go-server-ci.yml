@@ -1,0 +1,45 @@
+name: go-server-ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - chore/python-core-freeze
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go-server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go-server/go.mod
+          cache-dependency-path: go-server/go.sum
+
+      - name: Tidy check
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Gofmt check
+        run: |
+          test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build API
+        run: go build ./cmd/api
+
+      - name: Build Worker
+        run: go build ./cmd/worker
