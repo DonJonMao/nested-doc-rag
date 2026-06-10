@@ -19,9 +19,11 @@ import (
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/logging"
 	pythonpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/python"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/redisx"
+	reviewpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/review"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/runevent"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/storage"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/workspace"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -95,6 +97,8 @@ func main() {
 	fillRunRepo := formpkg.NewPGXFillRunRepo(db)
 	templateMaterializer := formpkg.NewTemplateMaterializer(formFileRepo, fileRepo, objectStorage, logger)
 	fillRunLifecycle := formpkg.NewFillRunLifecycleAdapter(fillRunRepo, logger)
+	reviewRepo := reviewpkg.NewPGXRepo(db)
+	reviewImporter := reviewpkg.NewImporter(reviewRepo, nil, nil, logger)
 	knowledgeBaseRepo := knowledgepkg.NewPGXKnowledgeBaseRepo(db)
 	knowledgeDocumentRepo := knowledgepkg.NewPGXKnowledgeDocumentRepo(db)
 	knowledgeIndexVersionRepo := knowledgepkg.NewPGXKnowledgeIndexVersionRepo(db)
@@ -140,6 +144,7 @@ func main() {
 		logger,
 		jobs.WithTemplateMaterializer(templateMaterializer),
 		jobs.WithFillRunLifecycle(fillRunLifecycle),
+		jobs.WithReviewImporter(reviewImporterAdapter{inner: reviewImporter}),
 	))
 	worker.RegisterHandler(jobs.JobTypeIngestKnowledge, jobs.NewIngestKnowledgePythonHandler(
 		pythonRunner,
@@ -170,4 +175,21 @@ func main() {
 		logger.Info("worker shutting down", zap.String("signal", sig.String()))
 		worker.Shutdown()
 	}
+}
+
+type reviewImporterAdapter struct {
+	inner *reviewpkg.Importer
+}
+
+func (a reviewImporterAdapter) ImportForFillRun(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, manifest *pythonpkg.RunManifest) (jobs.ReviewImportResult, error) {
+	result, err := a.inner.ImportForFillRun(ctx, workspaceID, runID, manifest)
+	return jobs.ReviewImportResult{
+		TotalParsed:      result.TotalParsed,
+		Created:          result.Created,
+		Updated:          result.Updated,
+		Skipped:          result.Skipped,
+		ParseErrors:      result.ParseErrors,
+		ReviewRequired:   result.ReviewRequired,
+		WritebackAllowed: result.WritebackAllowed,
+	}, err
 }

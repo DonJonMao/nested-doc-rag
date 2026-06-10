@@ -18,6 +18,8 @@ const (
 	EventCanceled                    = "canceled"
 	EventCancelRequested             = "cancel_requested"
 	EventReviewItemCreated           = "review_item_created"
+	EventReviewItemsImported         = "review_items_imported"
+	EventReviewImportFailed          = "review_import_failed"
 	EventWritebackCompleted          = "writeback_completed"
 	EventPythonStarted               = "python_started"
 	EventPythonFinished              = "python_finished"

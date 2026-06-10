@@ -23,6 +23,7 @@ type FillFormPythonHandler struct {
 	Logger               *zap.Logger
 	TemplateMaterializer TemplateMaterializer
 	Lifecycle            FillRunLifecycle
+	ReviewImporter       ReviewImporter
 }
 
 type FillFormPythonHandlerOption func(*FillFormPythonHandler)
@@ -39,6 +40,20 @@ type FillRunLifecycle interface {
 	MarkFillRunCanceled(ctx context.Context, runID uuid.UUID) error
 }
 
+type ReviewImporter interface {
+	ImportForFillRun(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, manifest *python.RunManifest) (ReviewImportResult, error)
+}
+
+type ReviewImportResult struct {
+	TotalParsed      int
+	Created          int
+	Updated          int
+	Skipped          int
+	ParseErrors      int
+	ReviewRequired   int
+	WritebackAllowed int
+}
+
 func WithTemplateMaterializer(materializer TemplateMaterializer) FillFormPythonHandlerOption {
 	return func(h *FillFormPythonHandler) {
 		h.TemplateMaterializer = materializer
@@ -48,6 +63,12 @@ func WithTemplateMaterializer(materializer TemplateMaterializer) FillFormPythonH
 func WithFillRunLifecycle(lifecycle FillRunLifecycle) FillFormPythonHandlerOption {
 	return func(h *FillFormPythonHandler) {
 		h.Lifecycle = lifecycle
+	}
+}
+
+func WithReviewImporter(importer ReviewImporter) FillFormPythonHandlerOption {
+	return func(h *FillFormPythonHandler) {
+		h.ReviewImporter = importer
 	}
 }
 
@@ -165,6 +186,22 @@ func (h *FillFormPythonHandler) Handle(ctx context.Context, job *Job) error {
 		return err
 	}
 	h.emit(ctx, job, runevent.EventArtifactsRegistered, map[string]any{"count": len(registered)})
+	if h.ReviewImporter != nil && payload.FillRunID != uuid.Nil {
+		importResult, err := h.ReviewImporter.ImportForFillRun(ctx, job.WorkspaceID, payload.FillRunID, result.Manifest)
+		if err != nil {
+			h.emit(context.Background(), job, runevent.EventReviewImportFailed, map[string]any{"error_message": err.Error()})
+			h.markFailed(context.Background(), payload.FillRunID, err)
+			return err
+		}
+		h.emit(ctx, job, runevent.EventReviewItemsImported, map[string]any{
+			"total_parsed":      importResult.TotalParsed,
+			"created":           importResult.Created,
+			"updated":           importResult.Updated,
+			"parse_errors":      importResult.ParseErrors,
+			"review_required":   importResult.ReviewRequired,
+			"writeback_allowed": importResult.WritebackAllowed,
+		})
+	}
 	if h.Lifecycle != nil && payload.FillRunID != uuid.Nil {
 		if result.Manifest.Status == JobStatusCompletedWithFailures || result.Manifest.Counts.Failed > 0 {
 			if err := h.Lifecycle.MarkFillRunCompletedWithFailures(context.Background(), payload.FillRunID, result, registered, "completed with failures"); err != nil {

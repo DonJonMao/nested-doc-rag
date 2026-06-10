@@ -20,6 +20,7 @@ import (
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/middleware"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/observability"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/redisx"
+	reviewpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/review"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/runevent"
 	ssepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/sse"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/storage"
@@ -143,6 +144,8 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	fillRunRepo := formpkg.NewPGXFillRunRepo(db)
 	formFileService := formpkg.NewFormFileService(formFileRepo, fileService, workspaceAuthorizer, auditService, logger)
 	fillRunService := formpkg.NewFillRunService(fillRunRepo, formFileRepo, jobService, artifactService, workspaceAuthorizer, auditService, logger, *cfg)
+	reviewRepo := reviewpkg.NewPGXRepo(db)
+	reviewService := reviewpkg.NewService(reviewRepo, fillRunRepo, workspaceAuthorizer, auditService, logger)
 	knowledgeBaseRepo := knowledgepkg.NewPGXKnowledgeBaseRepo(db)
 	knowledgeDocumentRepo := knowledgepkg.NewPGXKnowledgeDocumentRepo(db)
 	knowledgeIndexVersionRepo := knowledgepkg.NewPGXKnowledgeIndexVersionRepo(db)
@@ -161,6 +164,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		sseHandler:       ssepkg.NewHandler(runEventService, sseBroker, workspaceAuthorizer),
 		formHandler:      formpkg.NewHandler(formFileService, fillRunService),
 		knowledgeHandler: knowledgepkg.NewHandler(knowledgeBaseService, knowledgeDocumentService, ingestionService),
+		reviewHandler:    reviewpkg.NewHandler(reviewService, fillRunService),
 		enableNoopJob:    cfg.Jobs.EnableNoopJob,
 	}
 	metrics := observability.NewMetrics()
@@ -274,6 +278,7 @@ type platformRoutes struct {
 	sseHandler       *ssepkg.Handler
 	formHandler      *formpkg.Handler
 	knowledgeHandler *knowledgepkg.Handler
+	reviewHandler    *reviewpkg.Handler
 	enableNoopJob    bool
 }
 
@@ -306,6 +311,9 @@ func registerPlatformRoutes(r chi.Router, routes platformRoutes) {
 			}
 			if routes.knowledgeHandler != nil {
 				routes.knowledgeHandler.RegisterRoutes(protected)
+			}
+			if routes.reviewHandler != nil {
+				routes.reviewHandler.RegisterRoutes(protected)
 			}
 			if routes.userHandler != nil {
 				protected.Group(func(admin chi.Router) {

@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Gongkan Platform Go Backend
-  version: 0.6.0
-  description: Industrial platform API for nested-doc-rag Block 0 through Block 6. Block 6 adds knowledge base, knowledge document, index version, and ingestion run APIs backed by jobs, worker, PythonRunner, and artifacts.
+  version: 0.7.0
+  description: Industrial platform API for nested-doc-rag Block 0 through Block 7. Block 7 adds review queue, review actions, review exports, result center, and worker-side review item import from Python artifacts.
 paths:
   /healthz:
     get:
@@ -629,7 +629,7 @@ paths:
   /api/v1/fill-runs/{run_id}/download/{artifact_kind}:
     get:
       summary: Download a fill run artifact by shortcut.
-      description: artifact_kind supports filled-form, run-summary, review-items, and trace. These are read-only artifact shortcuts; review actions are not implemented in Block 5.
+      description: artifact_kind supports filled-form, run-summary, review-items, and trace. These are read-only artifact shortcuts; review actions are managed by the Block 7 review queue APIs.
       security:
         - BearerAuth: []
       parameters:
@@ -651,6 +651,211 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
+  /api/v1/fill-runs/{run_id}/review-items:
+    get:
+      summary: List review queue items for a fill run.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/ReviewStatus"
+        - name: risk_level
+          in: query
+          schema:
+            $ref: "#/components/schemas/ReviewRiskLevel"
+        - name: review_required
+          in: query
+          schema:
+            type: boolean
+        - name: writeback_allowed
+          in: query
+          schema:
+            type: boolean
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Review items and summary counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewItemListResponse"
+  /api/v1/fill-runs/{run_id}/review-items/export:
+    get:
+      summary: Export review items as JSON or CSV.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/ReviewStatus"
+        - name: risk_level
+          in: query
+          schema:
+            $ref: "#/components/schemas/ReviewRiskLevel"
+      responses:
+        "200":
+          description: Review export attachment.
+          content:
+            application/json:
+              schema:
+                type: string
+                format: binary
+            text/csv:
+              schema:
+                type: string
+                format: binary
+  /api/v1/fill-runs/{run_id}/result:
+    get:
+      summary: Get fill run result center data.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+      responses:
+        "200":
+          description: Fill run, artifacts, review counts, and download shortcuts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FillRunResultResponse"
+  /api/v1/review-items/{item_id}:
+    get:
+      summary: Get one review item.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ReviewItemID"
+      responses:
+        "200":
+          description: Review item.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ReviewItem"
+  /api/v1/review-items/{item_id}/approve:
+    post:
+      summary: Approve a review item.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ReviewItemID"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewActionRequest"
+      responses:
+        "200":
+          description: Review item approved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewItemResponse"
+  /api/v1/review-items/{item_id}/reject:
+    post:
+      summary: Reject a review item.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ReviewItemID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewActionRequest"
+      responses:
+        "200":
+          description: Review item rejected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewItemResponse"
+  /api/v1/review-items/{item_id}/edit:
+    post:
+      summary: Save a human-edited answer in the review item.
+      description: This does not generate a new Excel file or call Python writeback.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ReviewItemID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewEditRequest"
+      responses:
+        "200":
+          description: Review item edited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewItemResponse"
+  /api/v1/review-items/{item_id}/ignore:
+    post:
+      summary: Ignore a review item.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ReviewItemID"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewActionRequest"
+      responses:
+        "200":
+          description: Review item ignored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewItemResponse"
+  /api/v1/review-items/{item_id}/reopen:
+    post:
+      summary: Reopen a review item.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ReviewItemID"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewActionRequest"
+      responses:
+        "200":
+          description: Review item reopened.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewItemResponse"
   /api/v1/knowledge-bases:
     post:
       summary: Create a knowledge base.
@@ -1079,6 +1284,13 @@ components:
         format: uuid
     RunID:
       name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ReviewItemID:
+      name: item_id
       in: path
       required: true
       schema:
@@ -1593,6 +1805,188 @@ components:
                   $ref: "#/components/schemas/FillRun"
                 canceled:
                   type: boolean
+    ReviewStatus:
+      type: string
+      enum: [pending, approved, rejected, edited, ignored, reopened]
+    ReviewRiskLevel:
+      type: string
+      enum: [low, medium, high]
+    ReviewItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+        field_id:
+          type: string
+        row_index:
+          type: integer
+        target_cell:
+          type: string
+        question_text:
+          type: string
+        answer_status:
+          type: string
+        answer_value:
+          type: string
+        confidence:
+          type: number
+          format: double
+        source_chunk_ids:
+          type: array
+          items:
+            type: string
+        evidence_attachment_ids:
+          type: array
+          items:
+            type: string
+        reference_chunk_ids:
+          type: array
+          items:
+            type: string
+        reference_source_documents:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        reference_snippets:
+          type: array
+          items:
+            type: string
+        critic_flags:
+          type: array
+          items:
+            type: string
+        risk_level:
+          $ref: "#/components/schemas/ReviewRiskLevel"
+        review_required:
+          type: boolean
+        writeback_allowed:
+          type: boolean
+        suggested_status:
+          type: string
+        suggested_answer_value:
+          type: string
+        suggested_reference_source_documents:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        reasons:
+          type: array
+          items:
+            type: string
+        status:
+          $ref: "#/components/schemas/ReviewStatus"
+        reviewer_id:
+          type: string
+          format: uuid
+          nullable: true
+        reviewed_at:
+          type: string
+          format: date-time
+          nullable: true
+        review_comment:
+          type: string
+        edited_answer:
+          type: string
+        raw_payload:
+          type: object
+          additionalProperties: true
+        overlay_payload:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ReviewCounts:
+      type: object
+      properties:
+        total:
+          type: integer
+        pending:
+          type: integer
+        approved:
+          type: integer
+        rejected:
+          type: integer
+        edited:
+          type: integer
+        ignored:
+          type: integer
+        reopened:
+          type: integer
+        high_risk:
+          type: integer
+        review_required:
+          type: integer
+        writeback_allowed:
+          type: integer
+    ReviewItemListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/ReviewItem"
+                counts:
+                  $ref: "#/components/schemas/ReviewCounts"
+    ReviewItemResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/ReviewItem"
+    ReviewActionRequest:
+      type: object
+      properties:
+        comment:
+          type: string
+        reason:
+          type: string
+    ReviewEditRequest:
+      type: object
+      required: [edited_answer]
+      properties:
+        edited_answer:
+          type: string
+        comment:
+          type: string
+    FillRunResultResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                run:
+                  $ref: "#/components/schemas/FillRun"
+                artifacts:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/RunArtifact"
+                review_counts:
+                  $ref: "#/components/schemas/ReviewCounts"
+                downloads:
+                  type: object
+                  additionalProperties:
+                    type: string
     CreateKnowledgeBaseRequest:
       type: object
       required: [workspace_id, name]
@@ -2037,6 +2431,8 @@ components:
             - canceled
             - cancel_requested
             - review_item_created
+            - review_items_imported
+            - review_import_failed
             - writeback_completed
             - python_started
             - python_finished

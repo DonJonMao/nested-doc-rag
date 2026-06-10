@@ -234,6 +234,69 @@ Next Block:
 
 Block 7: Review queue and result download.
 
+## Block 7 Scope
+
+Implemented:
+
+- review_items table
+- review item import from Python artifacts
+- review queue API
+- approve/reject/edit/ignore/reopen
+- review audit logs
+- review export JSON/CSV
+- result center API
+- fill_form worker integration with review import
+
+Not implemented in Block 7:
+
+- human-edited re-writeback
+- reviewed_filled_form.xlsx generation
+- multi-level approval workflow
+- front-end UI
+
+List review items:
+
+```bash
+curl "http://localhost:8080/api/v1/fill-runs/<run_id>/review-items?status=pending" \
+  -H "Authorization: Bearer <token>"
+```
+
+Approve:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/review-items/<item_id>/approve \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"comment":"确认可用"}'
+```
+
+Edit:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/review-items/<item_id>/edit \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"edited_answer":"人工确认后的答案","comment":"现场确认"}'
+```
+
+Export:
+
+```bash
+curl -OJ "http://localhost:8080/api/v1/fill-runs/<run_id>/review-items/export?format=csv" \
+  -H "Authorization: Bearer <token>"
+```
+
+Result center:
+
+```bash
+curl "http://localhost:8080/api/v1/fill-runs/<run_id>/result" \
+  -H "Authorization: Bearer <token>"
+```
+
+Next Block:
+
+Block 8: Observability, security hardening, operations, load testing.
+
 ## Run Locally
 
 ```bash
@@ -421,8 +484,6 @@ go test ./...
 
 ## Next Blocks
 
-- Block 6: Knowledge document management and ingestion
-- Block 7: Review queue and result download
 - Block 8: Observability, security hardening, operations, load testing
 
 Detailed design:
