@@ -78,12 +78,15 @@ func TestReviewHandlerExportJSONAndCSV(t *testing.T) {
 	jsonRec := httptest.NewRecorder()
 	router.ServeHTTP(jsonRec, httptest.NewRequest(http.MethodGet, "/fill-runs/"+runID.String()+"/review-items/export?format=json", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, jsonRec.Code)
+	require.Contains(t, jsonRec.Header().Get("Content-Type"), "application/json")
 	require.Contains(t, jsonRec.Header().Get("Content-Disposition"), "review_items.json")
 
 	csvRec := httptest.NewRecorder()
 	router.ServeHTTP(csvRec, httptest.NewRequest(http.MethodGet, "/fill-runs/"+runID.String()+"/review-items/export?format=csv", nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, csvRec.Code)
+	require.Contains(t, csvRec.Header().Get("Content-Type"), "text/csv")
 	require.Contains(t, csvRec.Header().Get("Content-Disposition"), "review_items.csv")
+	require.Contains(t, csvRec.Body.String(), "row_index,target_cell,question_text")
 	require.Contains(t, csvRec.Body.String(), "西咸4号楼")
 }
 
@@ -106,4 +109,15 @@ func TestReviewHandlerResultCenter(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"review_counts"`)
 	require.Contains(t, rec.Body.String(), "/download/filled-form")
+}
+
+func TestReviewHandlerUnauthenticatedReturnsUnauthorized(t *testing.T) {
+	handler := reviewpkg.NewHandler(&fakeReviewUseCase{}, &fakeReviewResultRuns{})
+	req := httptest.NewRequest(http.MethodGet, "/fill-runs/"+uuid.NewString()+"/review-items", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ListReviewItems(rec, req)
+
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Contains(t, rec.Body.String(), "UNAUTHORIZED")
 }

@@ -57,7 +57,7 @@ func TestReviewServiceApproveChecksReviewPermissionAndAudits(t *testing.T) {
 }
 
 func TestReviewServiceRejectRequiresReason(t *testing.T) {
-	service, repo, _, _, _, actor, workspaceID, runID := newReviewServiceFixture(t)
+	service, repo, _, _, audits, actor, workspaceID, runID := newReviewServiceFixture(t)
 	itemID := uuid.New()
 	require.NoError(t, repo.Create(context.Background(), reviewpkg.ReviewItem{ID: itemID, WorkspaceID: workspaceID, RunID: runID, Status: reviewpkg.ReviewStatusPending}))
 
@@ -65,10 +65,16 @@ func TestReviewServiceRejectRequiresReason(t *testing.T) {
 
 	require.Error(t, err)
 	require.Equal(t, httpx.CodeInvalidArgument, httpx.ErrorFrom(err).Code)
+
+	item, err := service.Reject(context.Background(), itemID, "证据不足", actor)
+	require.NoError(t, err)
+	require.Equal(t, reviewpkg.ReviewStatusRejected, item.Status)
+	require.Equal(t, "证据不足", item.ReviewComment)
+	require.Equal(t, "review.rejected", audits.logs[0].Action)
 }
 
 func TestReviewServiceEditRequiresEditedAnswer(t *testing.T) {
-	service, repo, _, _, _, actor, workspaceID, runID := newReviewServiceFixture(t)
+	service, repo, _, _, audits, actor, workspaceID, runID := newReviewServiceFixture(t)
 	itemID := uuid.New()
 	require.NoError(t, repo.Create(context.Background(), reviewpkg.ReviewItem{ID: itemID, WorkspaceID: workspaceID, RunID: runID, Status: reviewpkg.ReviewStatusPending}))
 
@@ -76,6 +82,12 @@ func TestReviewServiceEditRequiresEditedAnswer(t *testing.T) {
 
 	require.Error(t, err)
 	require.Equal(t, httpx.CodeInvalidArgument, httpx.ErrorFrom(err).Code)
+
+	item, err := service.Edit(context.Background(), itemID, "人工确认", "现场确认", actor)
+	require.NoError(t, err)
+	require.Equal(t, reviewpkg.ReviewStatusEdited, item.Status)
+	require.Equal(t, "人工确认", item.EditedAnswer)
+	require.Equal(t, "review.edited", audits.logs[0].Action)
 }
 
 func TestReviewServiceIgnoreAndReopen(t *testing.T) {
@@ -86,10 +98,12 @@ func TestReviewServiceIgnoreAndReopen(t *testing.T) {
 	ignored, err := service.Ignore(context.Background(), itemID, "无需处理", actor)
 	require.NoError(t, err)
 	require.Equal(t, reviewpkg.ReviewStatusIgnored, ignored.Status)
+	require.Equal(t, "review.ignored", audits.logs[0].Action)
 
 	reopened, err := service.Reopen(context.Background(), itemID, "重新审核", actor)
 	require.NoError(t, err)
 	require.Equal(t, reviewpkg.ReviewStatusReopened, reopened.Status)
+	require.Equal(t, "review.reopened", audits.logs[1].Action)
 	require.Len(t, audits.logs, 2)
 }
 
@@ -103,6 +117,19 @@ func TestReviewServiceViewerCannotApprove(t *testing.T) {
 
 	require.Error(t, err)
 	require.Equal(t, httpx.CodeForbidden, httpx.ErrorFrom(err).Code)
+	require.Zero(t, repo.updates)
+}
+
+func TestReviewServiceInvalidCurrentStatusConflict(t *testing.T) {
+	service, repo, _, _, _, actor, workspaceID, runID := newReviewServiceFixture(t)
+	itemID := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), reviewpkg.ReviewItem{ID: itemID, WorkspaceID: workspaceID, RunID: runID, Status: reviewpkg.ReviewStatusApproved}))
+
+	_, err := service.Approve(context.Background(), itemID, "重复确认", actor)
+
+	require.Error(t, err)
+	require.Equal(t, httpx.CodeConflict, httpx.ErrorFrom(err).Code)
+	require.Zero(t, repo.updates)
 }
 
 func newReviewServiceFixture(t *testing.T) (*reviewpkg.Service, *fakeReviewRepo, *fakeFillRunRepo, *fakeReviewAuthorizer, *fakeAuditRepo, auth.Principal, uuid.UUID, uuid.UUID) {

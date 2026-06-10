@@ -28,6 +28,8 @@ func TestReviewExporterCSVEscapingAndChinese(t *testing.T) {
 		WritebackAllowed: true,
 		EditedAnswer:     "人工确认",
 		ReviewComment:    "现场确认",
+		RawPayload:       map[string]any{"large": "raw-json"},
+		OverlayPayload:   map[string]any{"large": "overlay-json"},
 	}})
 
 	require.NoError(t, err)
@@ -36,4 +38,6 @@ func TestReviewExporterCSVEscapingAndChinese(t *testing.T) {
 	require.Contains(t, text, "\"西咸\"\"4号楼\"")
 	require.Contains(t, text, "人工确认")
 	require.True(t, strings.HasPrefix(text, "row_index,target_cell"))
+	require.NotContains(t, text, "raw-json")
+	require.NotContains(t, text, "overlay-json")
 }

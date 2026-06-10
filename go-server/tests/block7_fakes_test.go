@@ -20,6 +20,7 @@ type fakeReviewRepo struct {
 	mu      sync.Mutex
 	items   map[uuid.UUID]reviewpkg.ReviewItem
 	upserts int
+	updates int
 }
 
 func newFakeReviewRepo() *fakeReviewRepo {
@@ -140,6 +141,7 @@ func (f *fakeReviewRepo) CountByRun(ctx context.Context, runID uuid.UUID) (revie
 func (f *fakeReviewRepo) UpdateStatus(ctx context.Context, id uuid.UUID, update reviewpkg.ReviewStatusUpdate) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.updates++
 	item, ok := f.items[id]
 	if !ok {
 		return httpx.NewAppError(httpx.CodeNotFound, "review item not found", http.StatusNotFound, nil, nil)

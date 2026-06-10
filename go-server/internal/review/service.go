@@ -88,8 +88,8 @@ func (s *Service) Approve(ctx context.Context, itemID uuid.UUID, comment string,
 	if err != nil {
 		return nil, err
 	}
-	if item.Status != ReviewStatusPending && item.Status != ReviewStatusReopened && item.Status != ReviewStatusEdited {
-		return nil, httpx.NewAppError(httpx.CodeConflict, "review item cannot be approved from current status", http.StatusConflict, map[string]string{"status": item.Status}, nil)
+	if err := ensureStatusAllowed(item.Status, "approved", ReviewStatusPending, ReviewStatusReopened, ReviewStatusEdited); err != nil {
+		return nil, err
 	}
 	if err := s.update(ctx, item, ReviewStatusApproved, strings.TrimSpace(comment), "", actor, "review.approved"); err != nil {
 		return nil, err
@@ -106,6 +106,9 @@ func (s *Service) Reject(ctx context.Context, itemID uuid.UUID, reason string, a
 	if reason == "" {
 		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "reason is required", http.StatusBadRequest, nil, nil)
 	}
+	if err := ensureStatusAllowed(item.Status, "rejected", ReviewStatusPending, ReviewStatusReopened, ReviewStatusEdited); err != nil {
+		return nil, err
+	}
 	if err := s.update(ctx, item, ReviewStatusRejected, reason, "", actor, "review.rejected"); err != nil {
 		return nil, err
 	}
@@ -121,6 +124,9 @@ func (s *Service) Edit(ctx context.Context, itemID uuid.UUID, editedAnswer strin
 	if editedAnswer == "" {
 		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "edited_answer is required", http.StatusBadRequest, nil, nil)
 	}
+	if err := ensureStatusAllowed(item.Status, "edited", ReviewStatusPending, ReviewStatusReopened, ReviewStatusApproved, ReviewStatusRejected); err != nil {
+		return nil, err
+	}
 	if err := s.update(ctx, item, ReviewStatusEdited, strings.TrimSpace(comment), editedAnswer, actor, "review.edited"); err != nil {
 		return nil, err
 	}
@@ -132,6 +138,9 @@ func (s *Service) Ignore(ctx context.Context, itemID uuid.UUID, comment string, 
 	if err != nil {
 		return nil, err
 	}
+	if err := ensureStatusAllowed(item.Status, "ignored", ReviewStatusPending, ReviewStatusReopened); err != nil {
+		return nil, err
+	}
 	if err := s.update(ctx, item, ReviewStatusIgnored, strings.TrimSpace(comment), "", actor, "review.ignored"); err != nil {
 		return nil, err
 	}
@@ -141,6 +150,9 @@ func (s *Service) Ignore(ctx context.Context, itemID uuid.UUID, comment string, 
 func (s *Service) Reopen(ctx context.Context, itemID uuid.UUID, comment string, actor auth.Principal) (*ReviewItem, error) {
 	item, err := s.requireReview(ctx, itemID, actor)
 	if err != nil {
+		return nil, err
+	}
+	if err := ensureStatusAllowed(item.Status, "reopened", ReviewStatusApproved, ReviewStatusRejected, ReviewStatusIgnored, ReviewStatusEdited); err != nil {
 		return nil, err
 	}
 	if err := s.update(ctx, item, ReviewStatusReopened, strings.TrimSpace(comment), "", actor, "review.reopened"); err != nil {
@@ -193,4 +205,13 @@ func validateFilter(filter ReviewFilter) error {
 		return httpx.NewAppError(httpx.CodeInvalidArgument, "invalid risk_level", http.StatusBadRequest, map[string]string{"risk_level": filter.RiskLevel}, nil)
 	}
 	return nil
+}
+
+func ensureStatusAllowed(current string, action string, allowed ...string) error {
+	for _, status := range allowed {
+		if current == status {
+			return nil
+		}
+	}
+	return httpx.NewAppError(httpx.CodeConflict, "review item cannot be "+action+" from current status", http.StatusConflict, map[string]string{"status": current}, nil)
 }

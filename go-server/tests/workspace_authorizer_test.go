@@ -67,3 +67,29 @@ func TestWorkspaceAuthorizerReviewerViewerWriteForbidden(t *testing.T) {
 		requireAppError(t, err, httpx.CodeForbidden, http.StatusForbidden)
 	}
 }
+
+func TestWorkspaceAuthorizerReviewRoles(t *testing.T) {
+	for _, role := range []string{workspace.RoleOwner, workspace.RoleOperator, workspace.RoleReviewer} {
+		repo := newFakeWorkspaceRepo()
+		workspaceID := uuid.New()
+		userID := uuid.New()
+		require.NoError(t, repo.AddMember(context.Background(), workspaceID, userID, role))
+		authorizer := workspace.NewAuthorizer(repo)
+
+		err := authorizer.CanReviewWorkspace(context.Background(), workspaceID, auth.Principal{UserID: userID, Roles: []string{auth.RoleReviewer}})
+
+		require.NoError(t, err)
+	}
+}
+
+func TestWorkspaceAuthorizerViewerReviewForbidden(t *testing.T) {
+	repo := newFakeWorkspaceRepo()
+	workspaceID := uuid.New()
+	userID := uuid.New()
+	require.NoError(t, repo.AddMember(context.Background(), workspaceID, userID, workspace.RoleViewer))
+	authorizer := workspace.NewAuthorizer(repo)
+
+	err := authorizer.CanReviewWorkspace(context.Background(), workspaceID, auth.Principal{UserID: userID, Roles: []string{auth.RoleViewer}})
+
+	requireAppError(t, err, httpx.CodeForbidden, http.StatusForbidden)
+}

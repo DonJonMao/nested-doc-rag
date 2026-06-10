@@ -19,12 +19,14 @@ func TestFillFormHandlerSuccessCallsReviewImporter(t *testing.T) {
 	outDir, manifest := manifestWithArtifacts(t)
 	runner := &pythonpkg.FakeRunner{Step15Result: &pythonpkg.Step15RunResult{RunID: runID, OutDir: outDir, Manifest: manifest}}
 	eventRepo := &fakeRunEventRepo{}
+	lifecycle := &recordingFillRunLifecycle{}
 	importer := &recordingReviewImporter{result: reviewImportResultCompat{TotalParsed: 2, Created: 2, ReviewRequired: 1, WritebackAllowed: 1}}
 	handler := jobs.NewFillFormPythonHandler(
 		runner,
 		pythonpkg.NewArtifactArchiver(&fakeArtifactRegistrar{}, zap.NewNop()),
 		runevent.NewService(eventRepo, nil),
 		zap.NewNop(),
+		jobs.WithFillRunLifecycle(lifecycle),
 		jobs.WithReviewImporter(importer),
 	)
 	job := fillFormWorkerTestJob(workspaceID, runID, map[string]any{"writeback": false, "out_dir": outDir})
@@ -33,6 +35,7 @@ func TestFillFormHandlerSuccessCallsReviewImporter(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, []uuid.UUID{runID}, importer.calls)
+	require.Equal(t, []uuid.UUID{runID}, lifecycle.succeeded)
 	requireEventTypes(t, eventRepo, runevent.EventArtifactsRegistered, runevent.EventReviewItemsImported)
 }
 
@@ -61,4 +64,52 @@ func TestFillFormHandlerReviewImportFailureReturnsError(t *testing.T) {
 	require.Equal(t, []uuid.UUID{runID}, lifecycle.failed)
 	require.Empty(t, lifecycle.succeeded)
 	requireEventTypes(t, eventRepo, runevent.EventReviewImportFailed)
+}
+
+func TestFillFormHandlerNilReviewImporterStillSucceeds(t *testing.T) {
+	workspaceID := uuid.New()
+	runID := uuid.New()
+	outDir, manifest := manifestWithArtifacts(t)
+	runner := &pythonpkg.FakeRunner{Step15Result: &pythonpkg.Step15RunResult{RunID: runID, OutDir: outDir, Manifest: manifest}}
+	lifecycle := &recordingFillRunLifecycle{}
+	handler := jobs.NewFillFormPythonHandler(
+		runner,
+		pythonpkg.NewArtifactArchiver(&fakeArtifactRegistrar{}, zap.NewNop()),
+		nil,
+		zap.NewNop(),
+		jobs.WithFillRunLifecycle(lifecycle),
+	)
+	job := fillFormWorkerTestJob(workspaceID, runID, map[string]any{"writeback": false, "out_dir": outDir})
+
+	err := handler.Handle(context.Background(), &job)
+
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{runID}, lifecycle.succeeded)
+}
+
+func TestFillFormHandlerCompletedWithFailuresStillImportsReviews(t *testing.T) {
+	workspaceID := uuid.New()
+	runID := uuid.New()
+	outDir, manifest := manifestWithArtifacts(t)
+	manifest.Status = jobs.JobStatusCompletedWithFailures
+	manifest.Counts.Failed = 1
+	runner := &pythonpkg.FakeRunner{Step15Result: &pythonpkg.Step15RunResult{RunID: runID, OutDir: outDir, Manifest: manifest}}
+	lifecycle := &recordingFillRunLifecycle{}
+	importer := &recordingReviewImporter{result: reviewImportResultCompat{TotalParsed: 1, Created: 1}}
+	handler := jobs.NewFillFormPythonHandler(
+		runner,
+		pythonpkg.NewArtifactArchiver(&fakeArtifactRegistrar{}, zap.NewNop()),
+		nil,
+		zap.NewNop(),
+		jobs.WithFillRunLifecycle(lifecycle),
+		jobs.WithReviewImporter(importer),
+	)
+	job := fillFormWorkerTestJob(workspaceID, runID, map[string]any{"writeback": false, "out_dir": outDir})
+
+	err := handler.Handle(context.Background(), &job)
+
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{runID}, importer.calls)
+	require.Equal(t, []uuid.UUID{runID}, lifecycle.completedWithFailures)
+	require.Empty(t, lifecycle.succeeded)
 }
