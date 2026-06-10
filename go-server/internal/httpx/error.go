@@ -16,6 +16,7 @@ const (
 	CodeInternal                 = "INTERNAL"
 	CodePythonRunFailed          = "PYTHON_RUN_FAILED"
 	CodeArtifactValidationFailed = "ARTIFACT_VALIDATION_FAILED"
+	CodeFeatureDisabled          = "FEATURE_DISABLED"
 )
 
 type AppError struct {

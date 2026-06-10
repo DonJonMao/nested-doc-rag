@@ -15,6 +15,7 @@ import (
 	formpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/form"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/httpx"
 	jobspkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/jobs"
+	knowledgepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/knowledge"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/logging"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/middleware"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/observability"
@@ -142,6 +143,13 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	fillRunRepo := formpkg.NewPGXFillRunRepo(db)
 	formFileService := formpkg.NewFormFileService(formFileRepo, fileService, workspaceAuthorizer, auditService, logger)
 	fillRunService := formpkg.NewFillRunService(fillRunRepo, formFileRepo, jobService, artifactService, workspaceAuthorizer, auditService, logger, *cfg)
+	knowledgeBaseRepo := knowledgepkg.NewPGXKnowledgeBaseRepo(db)
+	knowledgeDocumentRepo := knowledgepkg.NewPGXKnowledgeDocumentRepo(db)
+	knowledgeIndexVersionRepo := knowledgepkg.NewPGXKnowledgeIndexVersionRepo(db)
+	ingestionJobRepo := knowledgepkg.NewPGXIngestionJobRepo(db)
+	knowledgeBaseService := knowledgepkg.NewKnowledgeBaseService(knowledgeBaseRepo, knowledgeIndexVersionRepo, workspaceAuthorizer, auditService, logger)
+	knowledgeDocumentService := knowledgepkg.NewKnowledgeDocumentService(knowledgeBaseRepo, knowledgeDocumentRepo, fileService, workspaceAuthorizer, auditService, logger)
+	ingestionService := knowledgepkg.NewIngestionService(knowledgeBaseRepo, knowledgeDocumentRepo, knowledgeIndexVersionRepo, ingestionJobRepo, jobService, workspaceAuthorizer, auditService, logger, *cfg)
 	routes := platformRoutes{
 		tokenManager:     tokenManager,
 		authHandler:      auth.NewHandler(authService),
@@ -152,6 +160,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		jobsHandler:      jobspkg.NewHandler(jobService, cfg.Jobs.EnableNoopJob),
 		sseHandler:       ssepkg.NewHandler(runEventService, sseBroker, workspaceAuthorizer),
 		formHandler:      formpkg.NewHandler(formFileService, fillRunService),
+		knowledgeHandler: knowledgepkg.NewHandler(knowledgeBaseService, knowledgeDocumentService, ingestionService),
 		enableNoopJob:    cfg.Jobs.EnableNoopJob,
 	}
 	metrics := observability.NewMetrics()
@@ -264,6 +273,7 @@ type platformRoutes struct {
 	jobsHandler      *jobspkg.Handler
 	sseHandler       *ssepkg.Handler
 	formHandler      *formpkg.Handler
+	knowledgeHandler *knowledgepkg.Handler
 	enableNoopJob    bool
 }
 
@@ -293,6 +303,9 @@ func registerPlatformRoutes(r chi.Router, routes platformRoutes) {
 			}
 			if routes.formHandler != nil {
 				routes.formHandler.RegisterRoutes(protected)
+			}
+			if routes.knowledgeHandler != nil {
+				routes.knowledgeHandler.RegisterRoutes(protected)
 			}
 			if routes.userHandler != nil {
 				protected.Group(func(admin chi.Router) {

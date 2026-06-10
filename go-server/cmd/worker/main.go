@@ -15,6 +15,7 @@ import (
 	filepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/file"
 	formpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/form"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/jobs"
+	knowledgepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/knowledge"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/logging"
 	pythonpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/python"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/redisx"
@@ -94,6 +95,12 @@ func main() {
 	fillRunRepo := formpkg.NewPGXFillRunRepo(db)
 	templateMaterializer := formpkg.NewTemplateMaterializer(formFileRepo, fileRepo, objectStorage, logger)
 	fillRunLifecycle := formpkg.NewFillRunLifecycleAdapter(fillRunRepo, logger)
+	knowledgeBaseRepo := knowledgepkg.NewPGXKnowledgeBaseRepo(db)
+	knowledgeDocumentRepo := knowledgepkg.NewPGXKnowledgeDocumentRepo(db)
+	knowledgeIndexVersionRepo := knowledgepkg.NewPGXKnowledgeIndexVersionRepo(db)
+	ingestionJobRepo := knowledgepkg.NewPGXIngestionJobRepo(db)
+	ingestionMaterializer := knowledgepkg.NewIngestionMaterializer(knowledgeBaseRepo, knowledgeDocumentRepo, fileRepo, objectStorage, logger)
+	ingestionLifecycle := knowledgepkg.NewIngestionLifecycleAdapter(ingestionJobRepo, knowledgeIndexVersionRepo, knowledgeBaseRepo, knowledgeDocumentRepo, logger)
 	limiter := jobs.NewResourceLimiter(cfg.Jobs)
 	worker := jobs.NewWorker(cfg.Redis, cfg.Jobs, jobRepo, jobService, limiter, logger)
 	commandBuilder := &pythonpkg.CommandBuilder{
@@ -134,7 +141,15 @@ func main() {
 		jobs.WithTemplateMaterializer(templateMaterializer),
 		jobs.WithFillRunLifecycle(fillRunLifecycle),
 	))
-	worker.RegisterHandler(jobs.JobTypeIngestKnowledge, jobs.NewIngestKnowledgePythonHandler(pythonRunner, runEventService, logger, cfg.Python.IngestCommandEnabled))
+	worker.RegisterHandler(jobs.JobTypeIngestKnowledge, jobs.NewIngestKnowledgePythonHandler(
+		pythonRunner,
+		runEventService,
+		logger,
+		cfg.Python.IngestCommandEnabled,
+		jobs.WithIngestionMaterializer(ingestionMaterializer),
+		jobs.WithIngestionLifecycle(ingestionLifecycle),
+		jobs.WithIngestionArtifactArchiver(artifactArchiver),
+	))
 	worker.RegisterHandler(jobs.JobTypeArchiveArtifacts, jobs.NewPlaceholderHandler(jobs.JobTypeArchiveArtifacts))
 
 	serverErrors := make(chan error, 1)

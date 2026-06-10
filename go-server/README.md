@@ -158,6 +158,82 @@ Not implemented in Block 5:
 - ingestion jobs API
 - human-edited re-writeback
 
+## Block 6 Scope
+
+Implemented in this block:
+
+- knowledge_bases table
+- knowledge_documents table
+- knowledge_index_versions table
+- ingestion_jobs table
+- create/list/get knowledge base
+- upload/list/delete knowledge documents
+- create/list/cancel ingestion run
+- index version management
+- ingest_knowledge job payload
+- worker integration with Python RunKnowledgeIngestion
+- document materialization into ingestion out_dir
+- ingestion lifecycle sync
+
+Not implemented in Block 6:
+
+- review approve/reject/edit
+- human-edited writeback
+- front-end
+- Go-native document parsing
+- Go-native embedding/Qdrant indexing
+
+If `python.ingest_command_enabled=false`, knowledge bases and documents can still be managed, but creating an ingestion run returns `FEATURE_DISABLED`.
+
+Create a knowledge base:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/knowledge-bases \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspace_id":"<workspace_id>",
+    "name":"西咸4号楼知识库",
+    "description":"测试知识库",
+    "qdrant_collection":"datacenter_chunks_v1"
+  }'
+```
+
+Upload a knowledge document:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/knowledge-bases/<kb_id>/documents \
+  -H "Authorization: Bearer <access_token>" \
+  -F "document_role=knowledge_base" \
+  -F "namespace=xixian_4" \
+  -F "file=@./能力清单.xlsx"
+```
+
+Create an ingestion run:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/knowledge-bases/<kb_id>/ingestion-runs \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "namespace":"xixian_4",
+    "qdrant_collection":"datacenter_chunks_v1",
+    "qdrant_namespace":"xixian_4",
+    "resume":true
+  }'
+```
+
+Watch ingestion events:
+
+```bash
+curl -N "http://localhost:8080/api/v1/runs/<ingestion_job_id>/events?workspace_id=<workspace_id>" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Next Block:
+
+Block 7: Review queue and result download.
+
 ## Run Locally
 
 ```bash

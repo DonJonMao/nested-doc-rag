@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/artifact"
@@ -177,35 +178,77 @@ func (h *FillFormPythonHandler) Handle(ctx context.Context, job *Job) error {
 }
 
 type IngestKnowledgePythonHandler struct {
-	Runner  python.Runner
-	Events  RunEventWriter
-	Logger  *zap.Logger
-	Enabled bool
+	Runner       python.Runner
+	Events       RunEventWriter
+	Logger       *zap.Logger
+	Enabled      bool
+	Materializer IngestionMaterializer
+	Lifecycle    IngestionLifecycle
+	Archiver     *python.ArtifactArchiver
 }
 
-func NewIngestKnowledgePythonHandler(runner python.Runner, events RunEventWriter, logger *zap.Logger, enabled bool) *IngestKnowledgePythonHandler {
+type IngestKnowledgePythonHandlerOption func(*IngestKnowledgePythonHandler)
+
+type IngestionMaterializer interface {
+	MaterializeDocuments(ctx context.Context, workspaceID uuid.UUID, knowledgeBaseID uuid.UUID, outDir string) (inputDir string, documentCount int, cleanup func(), err error)
+}
+
+type IngestionLifecycle interface {
+	MarkIngestionRunning(ctx context.Context, ingestionJobID uuid.UUID, jobID uuid.UUID) error
+	MarkIngestionSucceeded(ctx context.Context, ingestionJobID uuid.UUID, result *python.IngestionResult) error
+	MarkIngestionFailed(ctx context.Context, ingestionJobID uuid.UUID, err error) error
+	MarkIngestionCanceled(ctx context.Context, ingestionJobID uuid.UUID) error
+}
+
+func WithIngestionMaterializer(materializer IngestionMaterializer) IngestKnowledgePythonHandlerOption {
+	return func(h *IngestKnowledgePythonHandler) {
+		h.Materializer = materializer
+	}
+}
+
+func WithIngestionLifecycle(lifecycle IngestionLifecycle) IngestKnowledgePythonHandlerOption {
+	return func(h *IngestKnowledgePythonHandler) {
+		h.Lifecycle = lifecycle
+	}
+}
+
+func WithIngestionArtifactArchiver(archiver *python.ArtifactArchiver) IngestKnowledgePythonHandlerOption {
+	return func(h *IngestKnowledgePythonHandler) {
+		h.Archiver = archiver
+	}
+}
+
+func NewIngestKnowledgePythonHandler(runner python.Runner, events RunEventWriter, logger *zap.Logger, enabled bool, options ...IngestKnowledgePythonHandlerOption) *IngestKnowledgePythonHandler {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &IngestKnowledgePythonHandler{Runner: runner, Events: events, Logger: logger, Enabled: enabled}
+	handler := &IngestKnowledgePythonHandler{Runner: runner, Events: events, Logger: logger, Enabled: enabled}
+	for _, option := range options {
+		if option != nil {
+			option(handler)
+		}
+	}
+	return handler
 }
 
 func (h *IngestKnowledgePythonHandler) Handle(ctx context.Context, job *Job) error {
 	if job == nil {
 		return errors.New("job is nil")
 	}
-	if h == nil || !h.Enabled {
-		return fmt.Errorf("%w: ingest-knowledge command is disabled in Block 4 config", ErrHandlerNotImplemented)
-	}
-	if h.Runner == nil {
-		return errors.New("python runner is not configured")
+	if h == nil {
+		return fmt.Errorf("%w: ingest-knowledge handler is not configured", ErrHandlerNotImplemented)
 	}
 	var payload ingestKnowledgePythonPayload
 	if err := decodeJobPayload(job.Payload, &payload); err != nil {
 		return err
 	}
-	if strings.TrimSpace(payload.InputDir) == "" {
-		return errors.New("ingest_knowledge payload input_dir is required")
+	if !h.Enabled {
+		err := fmt.Errorf("%w: ingest-knowledge command is disabled", ErrHandlerNotImplemented)
+		h.markIngestionFailed(context.Background(), payload.IngestionJobID, err)
+		return err
+	}
+	if h.Runner == nil {
+		return errors.New("python runner is not configured")
 	}
 	if strings.TrimSpace(payload.Namespace) == "" {
 		return errors.New("ingest_knowledge payload namespace is required")
@@ -213,26 +256,82 @@ func (h *IngestKnowledgePythonHandler) Handle(ctx context.Context, job *Job) err
 	if strings.TrimSpace(payload.OutDir) == "" {
 		return errors.New("ingest_knowledge payload out_dir is required")
 	}
+	if h.Lifecycle != nil && payload.IngestionJobID != uuid.Nil {
+		if err := h.Lifecycle.MarkIngestionRunning(ctx, payload.IngestionJobID, job.ID); err != nil {
+			h.Logger.Warn("mark ingestion running failed", zap.String("ingestion_job_id", payload.IngestionJobID.String()), zap.Error(err))
+		}
+	}
+	h.emit(ctx, job, runevent.EventIngestionStarted, map[string]any{"out_dir": payload.OutDir, "ingestion_job_id": payload.IngestionJobID.String()})
 	h.emit(ctx, job, runevent.EventPythonStarted, map[string]any{"out_dir": payload.OutDir})
+	if strings.TrimSpace(payload.InputDir) == "" {
+		if h.Materializer == nil {
+			err := errors.New("ingest_knowledge payload input_dir is required when materializer is not configured")
+			h.markIngestionFailed(context.Background(), payload.IngestionJobID, err)
+			return err
+		}
+		knowledgeBaseID, err := uuid.Parse(strings.TrimSpace(payload.KnowledgeBaseID))
+		if err != nil {
+			err := errors.New("ingest_knowledge payload knowledge_base_id must be a UUID when materializing documents")
+			h.markIngestionFailed(context.Background(), payload.IngestionJobID, err)
+			return err
+		}
+		inputDir, documentCount, cleanup, err := h.Materializer.MaterializeDocuments(ctx, job.WorkspaceID, knowledgeBaseID, payload.OutDir)
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if err != nil {
+			h.markIngestionFailed(context.Background(), payload.IngestionJobID, err)
+			return err
+		}
+		payload.InputDir = inputDir
+		h.emit(ctx, job, runevent.EventIngestionMaterialized, map[string]any{"input_dir": inputDir, "document_count": documentCount})
+	}
+	externalID := strings.TrimSpace(payload.KnowledgeBaseExternalID)
+	if externalID == "" {
+		externalID = strings.TrimSpace(payload.KnowledgeBaseID)
+	}
+	ingestionID := payload.IngestionJobID
+	if ingestionID == uuid.Nil {
+		ingestionID = job.ResourceID
+	}
 	result, err := h.Runner.RunKnowledgeIngestion(ctx, python.IngestionRequest{
 		WorkspaceID:     job.WorkspaceID,
 		JobID:           job.ID,
-		IngestionID:     job.ResourceID,
+		IngestionID:     ingestionID,
 		ConfigPath:      payload.ConfigPath,
 		InputDir:        payload.InputDir,
 		Namespace:       payload.Namespace,
-		KnowledgeBaseID: payload.KnowledgeBaseID,
+		KnowledgeBaseID: externalID,
 		OutDir:          payload.OutDir,
 		Resume:          payload.Resume,
 		Env:             payload.Env,
 	})
 	if err != nil {
+		h.emit(ctx, job, runevent.EventIngestionFailed, map[string]any{"error_message": err.Error()})
+		if ctx.Err() != nil {
+			h.markIngestionCanceled(context.Background(), payload.IngestionJobID)
+		} else {
+			h.markIngestionFailed(context.Background(), payload.IngestionJobID, err)
+		}
 		return err
 	}
 	if result == nil {
-		return errors.New("python runner returned nil ingestion result")
+		err := errors.New("python runner returned nil ingestion result")
+		h.markIngestionFailed(context.Background(), payload.IngestionJobID, err)
+		return err
 	}
+	h.emit(ctx, job, runevent.EventIngestionFinished, map[string]any{"exit_code": result.ExitCode, "out_dir": result.OutDir, "manifest_path": result.ManifestPath})
 	h.emit(ctx, job, runevent.EventPythonFinished, map[string]any{"exit_code": result.ExitCode, "out_dir": result.OutDir, "manifest_path": result.ManifestPath})
+	if err := h.archiveIngestionArtifacts(ctx, job, payload, result); err != nil {
+		h.markIngestionFailed(context.Background(), payload.IngestionJobID, err)
+		return err
+	}
+	if h.Lifecycle != nil && payload.IngestionJobID != uuid.Nil {
+		if err := h.Lifecycle.MarkIngestionSucceeded(context.Background(), payload.IngestionJobID, result); err != nil {
+			h.Logger.Warn("mark ingestion succeeded failed", zap.String("ingestion_job_id", payload.IngestionJobID.String()), zap.Error(err))
+		}
+	}
+	h.emit(ctx, job, runevent.EventIndexVersionReady, map[string]any{"ingestion_job_id": payload.IngestionJobID.String(), "index_version_id": payload.IndexVersionID.String()})
 	return nil
 }
 
@@ -313,11 +412,60 @@ type fillFormPythonPayload struct {
 }
 
 type ingestKnowledgePythonPayload struct {
-	ConfigPath      string            `json:"config_path"`
-	InputDir        string            `json:"input_dir"`
-	Namespace       string            `json:"namespace"`
-	KnowledgeBaseID string            `json:"knowledge_base_id"`
-	OutDir          string            `json:"out_dir"`
-	Resume          bool              `json:"resume"`
-	Env             map[string]string `json:"env"`
+	IngestionJobID          uuid.UUID         `json:"ingestion_job_id"`
+	WorkspaceID             uuid.UUID         `json:"workspace_id"`
+	KnowledgeBaseID         string            `json:"knowledge_base_id"`
+	IndexVersionID          uuid.UUID         `json:"index_version_id"`
+	ConfigPath              string            `json:"config_path"`
+	InputDir                string            `json:"input_dir"`
+	Namespace               string            `json:"namespace"`
+	KnowledgeBaseExternalID string            `json:"knowledge_base_id_external"`
+	OutDir                  string            `json:"out_dir"`
+	Resume                  bool              `json:"resume"`
+	QdrantCollection        string            `json:"qdrant_collection"`
+	QdrantNamespace         string            `json:"qdrant_namespace"`
+	Env                     map[string]string `json:"env"`
+}
+
+func (h *IngestKnowledgePythonHandler) markIngestionFailed(ctx context.Context, ingestionJobID uuid.UUID, err error) {
+	if h != nil && h.Lifecycle != nil && ingestionJobID != uuid.Nil {
+		if markErr := h.Lifecycle.MarkIngestionFailed(ctx, ingestionJobID, err); markErr != nil {
+			h.Logger.Warn("mark ingestion failed failed", zap.String("ingestion_job_id", ingestionJobID.String()), zap.Error(markErr))
+		}
+	}
+}
+
+func (h *IngestKnowledgePythonHandler) markIngestionCanceled(ctx context.Context, ingestionJobID uuid.UUID) {
+	if h != nil && h.Lifecycle != nil && ingestionJobID != uuid.Nil {
+		if markErr := h.Lifecycle.MarkIngestionCanceled(ctx, ingestionJobID); markErr != nil {
+			h.Logger.Warn("mark ingestion canceled failed", zap.String("ingestion_job_id", ingestionJobID.String()), zap.Error(markErr))
+		}
+	}
+}
+
+func (h *IngestKnowledgePythonHandler) archiveIngestionArtifacts(ctx context.Context, job *Job, payload ingestKnowledgePythonPayload, result *python.IngestionResult) error {
+	if h == nil || h.Archiver == nil || result == nil || strings.TrimSpace(result.ManifestPath) == "" {
+		return nil
+	}
+	if _, err := os.Stat(result.ManifestPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	manifest, err := python.LoadRunManifest(result.ManifestPath)
+	if err != nil {
+		return err
+	}
+	actor := auth.Principal{UserID: job.CreatedBy, Roles: []string{auth.RoleOperator}}
+	ingestionID := payload.IngestionJobID
+	if ingestionID == uuid.Nil {
+		ingestionID = job.ResourceID
+	}
+	registered, err := h.Archiver.ArchiveStep15Artifacts(ctx, job.WorkspaceID, ingestionID, manifest, actor)
+	if err != nil {
+		return err
+	}
+	h.emit(ctx, job, runevent.EventArtifactsRegistered, map[string]any{"count": len(registered), "ingestion_job_id": ingestionID.String()})
+	return nil
 }

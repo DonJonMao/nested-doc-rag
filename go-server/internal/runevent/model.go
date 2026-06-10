@@ -24,6 +24,11 @@ const (
 	EventArtifactValidationSucceeded = "artifact_validation_succeeded"
 	EventArtifactValidationFailed    = "artifact_validation_failed"
 	EventArtifactsRegistered         = "artifacts_registered"
+	EventIngestionStarted            = "ingestion_started"
+	EventIngestionMaterialized       = "ingestion_materialized"
+	EventIngestionFinished           = "ingestion_finished"
+	EventIngestionFailed             = "ingestion_failed"
+	EventIndexVersionReady           = "index_version_ready"
 )
 
 type RunEvent struct {

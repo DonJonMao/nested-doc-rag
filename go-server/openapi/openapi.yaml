@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Gongkan Platform Go Backend
-  version: 0.5.0
-  description: Industrial platform API for nested-doc-rag Block 0 through Block 5. Block 5 adds gongkan form upload and fill run business APIs backed by jobs, worker, PythonRunner, run_manifest, and artifacts.
+  version: 0.6.0
+  description: Industrial platform API for nested-doc-rag Block 0 through Block 6. Block 6 adds knowledge base, knowledge document, index version, and ingestion run APIs backed by jobs, worker, PythonRunner, and artifacts.
 paths:
   /healthz:
     get:
@@ -651,6 +651,277 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
+  /api/v1/knowledge-bases:
+    post:
+      summary: Create a knowledge base.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateKnowledgeBaseRequest"
+      responses:
+        "200":
+          description: Knowledge base created.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KnowledgeBase"
+    get:
+      summary: List knowledge bases in a workspace.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: workspace_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Knowledge bases.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeBaseListResponse"
+  /api/v1/knowledge-bases/{kb_id}:
+    get:
+      summary: Get knowledge base metadata.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeBaseID"
+      responses:
+        "200":
+          description: Knowledge base.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KnowledgeBase"
+  /api/v1/knowledge-bases/{kb_id}/index-versions:
+    get:
+      summary: List knowledge index versions.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeBaseID"
+      responses:
+        "200":
+          description: Index versions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexVersionListResponse"
+  /api/v1/knowledge-bases/{kb_id}/current-index-version:
+    post:
+      summary: Set current ready index version.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeBaseID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetCurrentIndexVersionRequest"
+      responses:
+        "200":
+          description: Current index version updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+  /api/v1/knowledge-bases/{kb_id}/documents:
+    post:
+      summary: Upload a knowledge document.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeBaseID"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/UploadKnowledgeDocumentRequest"
+      responses:
+        "200":
+          description: Knowledge document uploaded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadKnowledgeDocumentResponse"
+    get:
+      summary: List knowledge documents.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeBaseID"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/KnowledgeDocumentStatus"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Knowledge documents.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeDocumentListResponse"
+  /api/v1/documents/{doc_id}:
+    delete:
+      summary: Soft delete a knowledge document.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeDocumentID"
+      responses:
+        "200":
+          description: Knowledge document marked deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+  /api/v1/knowledge-bases/{kb_id}/ingestion-runs:
+    post:
+      summary: Create an ingestion run.
+      description: Creates a knowledge_index_versions row, an ingestion_jobs row, and enqueues an ingest_knowledge worker job. If python.ingest_command_enabled=false the API returns FEATURE_DISABLED.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeBaseID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIngestionRunRequest"
+      responses:
+        "200":
+          description: Ingestion run created and queued.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/IngestionJob"
+        "409":
+          description: Ingest command disabled or job cannot be created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+    get:
+      summary: List ingestion runs for a knowledge base.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeBaseID"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/IngestionJobStatus"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Ingestion runs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestionJobListResponse"
+  /api/v1/ingestion-runs/{ingestion_job_id}:
+    get:
+      summary: Get ingestion run.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IngestionJobID"
+      responses:
+        "200":
+          description: Ingestion run.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/IngestionJob"
+  /api/v1/ingestion-runs/{ingestion_job_id}/cancel:
+    post:
+      summary: Cancel an ingestion run.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IngestionJobID"
+      responses:
+        "200":
+          description: Ingestion cancellation requested.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelIngestionJobResponse"
+  /api/v1/ingestion-runs/{ingestion_job_id}/events:
+    get:
+      summary: Redirect to run event SSE for an ingestion run.
+      description: Returns a temporary redirect to /api/v1/runs/{ingestion_job_id}/events?workspace_id=...
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IngestionJobID"
+      responses:
+        "307":
+          description: Redirects to the shared run events SSE endpoint.
   /api/v1/jobs:
     get:
       summary: List workspace jobs.
@@ -815,6 +1086,27 @@ components:
         format: uuid
     JobID:
       name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    KnowledgeBaseID:
+      name: kb_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    KnowledgeDocumentID:
+      name: doc_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IngestionJobID:
+      name: ingestion_job_id
       in: path
       required: true
       schema:
@@ -1301,6 +1593,284 @@ components:
                   $ref: "#/components/schemas/FillRun"
                 canceled:
                   type: boolean
+    CreateKnowledgeBaseRequest:
+      type: object
+      required: [workspace_id, name]
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        qdrant_collection:
+          type: string
+    KnowledgeBase:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        qdrant_collection:
+          type: string
+        current_index_version_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    KnowledgeBaseListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                knowledge_bases:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/KnowledgeBase"
+    SetCurrentIndexVersionRequest:
+      type: object
+      required: [index_version_id]
+      properties:
+        index_version_id:
+          type: string
+          format: uuid
+    DocumentRole:
+      type: string
+      enum: [knowledge_base, intro_doc, proof_attachment, misc]
+    KnowledgeDocumentStatus:
+      type: string
+      enum: [uploaded, indexing, indexed, failed, deleted]
+    UploadKnowledgeDocumentRequest:
+      type: object
+      required: [document_role, namespace, file]
+      properties:
+        document_role:
+          $ref: "#/components/schemas/DocumentRole"
+        namespace:
+          type: string
+        file:
+          type: string
+          format: binary
+    KnowledgeDocument:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        knowledge_base_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        file_id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        document_role:
+          $ref: "#/components/schemas/DocumentRole"
+        namespace:
+          type: string
+        status:
+          $ref: "#/components/schemas/KnowledgeDocumentStatus"
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    UploadKnowledgeDocumentResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/KnowledgeDocument"
+    KnowledgeDocumentListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                documents:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/KnowledgeDocument"
+    IndexVersionStatus:
+      type: string
+      enum: [building, ready, failed, archived]
+    KnowledgeIndexVersion:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        knowledge_base_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+        qdrant_collection:
+          type: string
+        qdrant_namespace:
+          type: string
+        artifact_dir:
+          type: string
+        manifest_path:
+          type: string
+        status:
+          $ref: "#/components/schemas/IndexVersionStatus"
+        document_count:
+          type: integer
+        chunk_count:
+          type: integer
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        ready_at:
+          type: string
+          format: date-time
+          nullable: true
+        failed_at:
+          type: string
+          format: date-time
+          nullable: true
+        error_message:
+          type: string
+    IndexVersionListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                index_versions:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/KnowledgeIndexVersion"
+    IngestionJobStatus:
+      type: string
+      enum: [created, queued, running, succeeded, failed, canceled, cancel_requested, disabled]
+    CreateIngestionRunRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+        rebuild:
+          type: boolean
+          default: false
+        qdrant_collection:
+          type: string
+        qdrant_namespace:
+          type: string
+        resume:
+          type: boolean
+          default: true
+    IngestionJob:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        knowledge_base_id:
+          type: string
+          format: uuid
+        index_version_id:
+          type: string
+          format: uuid
+          nullable: true
+        job_id:
+          type: string
+          format: uuid
+          nullable: true
+        status:
+          $ref: "#/components/schemas/IngestionJobStatus"
+        progress:
+          type: integer
+        document_count:
+          type: integer
+        error_message:
+          type: string
+        python_command:
+          type: string
+        out_dir:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    IngestionJobListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                ingestion_jobs:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/IngestionJob"
+    CancelIngestionJobResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                ingestion_job:
+                  $ref: "#/components/schemas/IngestionJob"
+                canceled:
+                  type: boolean
     ArtifactListResponse:
       allOf:
         - $ref: "#/components/schemas/ApiResponse"
@@ -1392,7 +1962,7 @@ components:
           type: integer
         payload:
           type: object
-          description: Lightweight worker payload. For fill_form this may include config_path, target_namespace, global_namespace, room_context, rows, retrieval_mode, prompt_version, judge flags, template_path, writeback, resume, out_dir, and env. For ingest_knowledge this may include input_dir, namespace, knowledge_base_id, out_dir, resume, and env. Large files are referenced by path or existing storage metadata, not embedded.
+          description: Lightweight worker payload. For fill_form this may include form_file_id, config_path, target_namespace, rows, template_path, writeback, resume, out_dir, and env. For ingest_knowledge this includes ingestion_job_id, knowledge_base_id, index_version_id, input_dir, namespace, qdrant identifiers, out_dir, resume, and env. Large files are referenced by path or existing storage metadata, not embedded.
           additionalProperties: true
         error_message:
           type: string
@@ -1473,6 +2043,11 @@ components:
             - artifact_validation_succeeded
             - artifact_validation_failed
             - artifacts_registered
+            - ingestion_started
+            - ingestion_materialized
+            - ingestion_finished
+            - ingestion_failed
+            - index_version_ready
         sequence:
           type: integer
           format: int64
