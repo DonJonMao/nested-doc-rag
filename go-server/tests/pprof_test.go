@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/config"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/httpx"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/observability"
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -31,4 +33,14 @@ func TestPprofEnabledBuildsLocalServer(t *testing.T) {
 	rec := httptest.NewRecorder()
 	server.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestPprofNotMountedOnMainRouter(t *testing.T) {
+	router := chi.NewRouter()
+	httpx.RegisterRoutes(router, httpx.RouteDeps{})
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
 }

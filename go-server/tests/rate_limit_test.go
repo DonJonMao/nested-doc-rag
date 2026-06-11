@@ -13,11 +13,16 @@ import (
 func TestRateLimitBelowLimitOK(t *testing.T) {
 	handler := rateLimitedHandler(2)
 
-	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "192.0.2.10:1234"
+	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
 
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "192.0.2.10:1234"
+	handler.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
@@ -48,6 +53,25 @@ func TestRateLimitDifferentIPIndependent(t *testing.T) {
 	handler.ServeHTTP(rec, req2)
 
 	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestRateLimitDisabledPassThrough(t *testing.T) {
+	cfg := config.Default().Security
+	cfg.RateLimitEnabled = false
+	cfg.RateLimitBurst = 1
+	handler := middleware.RateLimit(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for i := 0; i < 5; i++ {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = "192.0.2.40:1234"
+		req.Header.Set("Authorization", "Bearer should-not-leak")
+		handler.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.NotContains(t, rec.Body.String(), "should-not-leak")
+	}
 }
 
 func rateLimitedHandler(burst int) http.Handler {

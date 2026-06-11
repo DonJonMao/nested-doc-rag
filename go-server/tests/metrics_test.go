@@ -103,6 +103,24 @@ func TestNormalizePathRemovesHighCardinalityIDs(t *testing.T) {
 	require.Equal(t, "/api/v1/review-items/{uuid}/events/{id}", normalized)
 }
 
+func TestMetricsDoNotUseHighCardinalityLabelNames(t *testing.T) {
+	metrics := observability.NewMetrics(true)
+	metrics.ObserveJobCreated("fill_form")
+	metrics.ObserveSSEEvent("fill_finished")
+	metrics.ObserveReviewAction("approve")
+	metrics.ObservePythonRun("step15_agent", "succeeded", 1000_000_000)
+
+	gathered, err := metrics.Registry.Gather()
+	require.NoError(t, err)
+	for _, family := range gathered {
+		for _, metric := range family.Metric {
+			for _, label := range metric.Label {
+				require.NotContains(t, []string{"run_id", "user_id", "workspace_id", "file_id", "job_id"}, label.GetName())
+			}
+		}
+	}
+}
+
 func metricNames(t *testing.T, metrics *observability.Metrics) map[string]struct{} {
 	t.Helper()
 	gathered, err := metrics.Registry.Gather()

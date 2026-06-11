@@ -25,6 +25,7 @@ var sensitiveKeyParts = []string{
 }
 
 var keyValueSecretPattern = regexp.MustCompile(`(?i)(password|token|api[_-]?key|secret)=([^&\s]+)`)
+var bearerTokenPattern = regexp.MustCompile(`(?i)bearer\s+([A-Za-z0-9._~+/=-]+)`)
 
 func RedactSensitiveMap(input map[string]any) map[string]any {
 	if input == nil {
@@ -59,7 +60,8 @@ func RedactString(value string) string {
 			value = strings.ReplaceAll(value, "%5BREDACTED%5D", Redacted)
 		}
 	}
-	return keyValueSecretPattern.ReplaceAllString(value, "$1="+Redacted)
+	value = keyValueSecretPattern.ReplaceAllString(value, "$1="+Redacted)
+	return bearerTokenPattern.ReplaceAllString(value, "Bearer "+Redacted)
 }
 
 func IsSensitiveKey(key string) bool {

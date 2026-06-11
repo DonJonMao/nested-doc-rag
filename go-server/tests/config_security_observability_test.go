@@ -27,6 +27,18 @@ func TestSecurityObservabilityDefaults(t *testing.T) {
 	require.Equal(t, 30*time.Second, cfg.Operations.GracefulShutdownTimeout.Duration)
 }
 
+func TestSecurityObservabilityConfigExampleLoaded(t *testing.T) {
+	cfg, err := config.Load("../configs/config.example.yaml")
+
+	require.NoError(t, err)
+	require.True(t, cfg.Observability.MetricsEnabled)
+	require.False(t, cfg.Observability.PprofEnabled)
+	require.True(t, cfg.Security.RateLimitEnabled)
+	require.True(t, cfg.Security.BodyLimitEnabled)
+	require.Greater(t, cfg.Security.MaxBodySize.Bytes, int64(0))
+	require.Greater(t, cfg.Operations.GracefulShutdownTimeout.Duration, time.Duration(0))
+}
+
 func TestSecurityObservabilityEnvOverride(t *testing.T) {
 	t.Setenv("GONGKAN_OBSERVABILITY_METRICS_ENABLED", "false")
 	t.Setenv("GONGKAN_OBSERVABILITY_PPROF_ENABLED", "true")
@@ -57,6 +69,37 @@ func TestSecurityObservabilityEnvOverride(t *testing.T) {
 	require.Equal(t, int64(2*1024*1024), cfg.Security.MaxBodySize.Bytes)
 	require.True(t, cfg.Security.HSTSEnabled)
 	require.Equal(t, 45*time.Second, cfg.Operations.GracefulShutdownTimeout.Duration)
+}
+
+func TestValidateInvalidRateLimitRejected(t *testing.T) {
+	cfg := config.Default()
+	cfg.Security.RateLimitEnabled = true
+	cfg.Security.RateLimitRPS = 0
+
+	err := config.Validate(cfg)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "security.rate_limit_rps")
+}
+
+func TestValidateInvalidBodyLimitRejected(t *testing.T) {
+	cfg := config.Default()
+	cfg.Security.MaxBodySize = config.NewByteSize(0)
+
+	err := config.Validate(cfg)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "security.max_body_size")
+}
+
+func TestValidateInvalidTracingExporterRejected(t *testing.T) {
+	cfg := config.Default()
+	cfg.Observability.TracingExporter = "bad"
+
+	err := config.Validate(cfg)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "observability.tracing_exporter")
 }
 
 func TestValidateInvalidSecurityObservability(t *testing.T) {

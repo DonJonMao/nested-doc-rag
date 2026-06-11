@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -30,6 +31,18 @@ func TestSecurityHeadersPresent(t *testing.T) {
 	require.Empty(t, rec.Header().Get("Strict-Transport-Security"))
 }
 
+func TestSecurityHeadersHSTSDisabledByDefault(t *testing.T) {
+	cfg := config.Default().Security
+	handler := middleware.SecurityHeaders(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	require.Empty(t, rec.Header().Get("Strict-Transport-Security"))
+}
+
 func TestSecurityHeadersHSTSEnabled(t *testing.T) {
 	cfg := config.Default().Security
 	cfg.HSTSEnabled = true
@@ -42,4 +55,19 @@ func TestSecurityHeadersHSTSEnabled(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
 	require.Equal(t, "max-age=86400; includeSubDomains", rec.Header().Get("Strict-Transport-Security"))
+}
+
+func TestSecurityHeadersDoNotBreakJSONResponse(t *testing.T) {
+	cfg := config.Default().Security
+	handler := middleware.SecurityHeaders(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.JSONEq(t, `{"status":"ok"}`, rec.Body.String())
+	require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
 }
