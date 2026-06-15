@@ -18,6 +18,9 @@ dev = [
   "pytest>=8",
   "ruff>=0.15",
 ]
+agentscope = [
+  "agentscope>=2.0,<3",
+]
 
 [project.scripts]
 nested-doc-rag = "nested_doc_rag.cli:main"

@@ -138,6 +138,12 @@ class AgentConfig:
 
 
 @dataclass(frozen=True)
+class AgentScopeConfig:
+    enabled: bool = False
+    mode: str = "off"
+
+
+@dataclass(frozen=True)
 class AppConfig:
     paths: PathsConfig
     services: ServicesConfig = field(default_factory=ServicesConfig)
@@ -146,6 +152,7 @@ class AppConfig:
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     excel: ExcelConfig = field(default_factory=ExcelConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
+    agentscope: AgentScopeConfig = field(default_factory=AgentScopeConfig)
 
     def to_dict(self) -> dict[str, Any]:
         return _serialize(self)
@@ -181,6 +188,7 @@ def code_defaults(project_root: Path | None = None) -> dict[str, Any]:
         "evaluation": _serialize(EvaluationConfig()),
         "excel": _serialize(ExcelConfig()),
         "agent": _serialize(AgentConfig()),
+        "agentscope": _serialize(AgentScopeConfig()),
     }
 
 
@@ -297,7 +305,30 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         human_review_on_conflict=_as_bool(agent_data.get("human_review_on_conflict", True)),
         llm_json_repair=_as_bool(agent_data.get("llm_json_repair", True)),
     )
-    return AppConfig(paths=paths, services=services, qdrant=qdrant, retrieval=retrieval, evaluation=evaluation, excel=excel, agent=agent)
+    agentscope_data = _section(data, "agentscope", AgentScopeConfig())
+    agentscope_mode = _normalize_agentscope_mode(agentscope_data.get("mode", "off"))
+    agentscope = AgentScopeConfig(
+        enabled=_as_bool(agentscope_data.get("enabled", False)),
+        mode=agentscope_mode,
+    )
+    if agentscope.mode not in {"off", "equivalent_mas", "trace_only"}:
+        raise ValueError("agentscope.mode must be off, equivalent_mas, or trace_only")
+    return AppConfig(
+        paths=paths,
+        services=services,
+        qdrant=qdrant,
+        retrieval=retrieval,
+        evaluation=evaluation,
+        excel=excel,
+        agent=agent,
+        agentscope=agentscope,
+    )
+
+
+def _normalize_agentscope_mode(value: Any) -> str:
+    if value is False:
+        return "off"
+    return str(value or "off")
 
 
 def load_yaml_file(path: Path) -> dict[str, Any]:

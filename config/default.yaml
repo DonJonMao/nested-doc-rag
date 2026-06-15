@@ -82,3 +82,7 @@ agent:
   confidence_threshold: 0.72
   require_evidence_for_answer: true
   human_review_threshold: 0.55
+
+agentscope:
+  enabled: false
+  mode: "off"

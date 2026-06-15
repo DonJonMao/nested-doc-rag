@@ -157,3 +157,10 @@ Writeback artifacts are present only when writeback is enabled and completed:
 - `filled_form.xlsx`
 - `writeback_audit.jsonl`
 - `evidence_map.json`
+
+Optional MAS/AgentScope trace artifacts may be present when `agentscope.mode` is `equivalent_mas` or `trace_only`:
+
+- `mas_trace.jsonl`
+- `agentscope_events.jsonl`
+
+These are diagnostic artifacts only. Go/backend integrations must not require them and must continue to depend only on the stable artifacts listed above.

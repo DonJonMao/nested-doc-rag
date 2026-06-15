@@ -5,7 +5,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from nested_doc_rag.config import load_app_config
+import pytest
+
+from nested_doc_rag.config import app_config_from_dict, load_app_config
 
 
 def test_config_priority_cli_env_yaml_code_defaults(tmp_path: Path, monkeypatch) -> None:
@@ -70,6 +72,40 @@ def test_env_alias_and_path_resolution(tmp_path: Path, monkeypatch) -> None:
     assert config.retrieval.target_namespace == "xixian_6"
     assert config.paths.artifacts_dir == (tmp_path / "artifacts").resolve()
     assert config.paths.qdrant_path == (tmp_path / "artifacts/15_vector_store/qdrant").resolve()
+
+
+def test_agentscope_config_defaults_and_yaml_off_normalization(tmp_path: Path) -> None:
+    config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml")
+    assert config.agentscope.enabled is False
+    assert config.agentscope.mode == "off"
+
+    config = app_config_from_dict(
+        {
+            "paths": {"project_root": str(tmp_path)},
+            "agentscope": {"enabled": False, "mode": False},
+        },
+        project_root_base=tmp_path,
+    )
+    assert config.agentscope.mode == "off"
+
+    config = app_config_from_dict(
+        {
+            "paths": {"project_root": str(tmp_path)},
+            "agentscope": {"enabled": True, "mode": "equivalent_mas"},
+        },
+        project_root_base=tmp_path,
+    )
+    assert config.agentscope.enabled is True
+    assert config.agentscope.mode == "equivalent_mas"
+
+    with pytest.raises(ValueError, match="agentscope.mode"):
+        app_config_from_dict(
+            {
+                "paths": {"project_root": str(tmp_path)},
+                "agentscope": {"enabled": True, "mode": "new_behavior"},
+            },
+            project_root_base=tmp_path,
+        )
 
 
 def test_show_config_command_outputs_merged_config() -> None:

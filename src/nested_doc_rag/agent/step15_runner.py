@@ -27,6 +27,8 @@ from nested_doc_rag.llm import JsonRepairError
 from nested_doc_rag.retrieval import QdrantRetriever
 from nested_doc_rag.schemas.eval import FieldPrediction
 
+from .mas.controller import Step15MASController
+
 AnswerCaller = Callable[..., dict[str, Any]]
 JudgeCaller = Callable[..., dict[str, Any]]
 RetrievalFn = Callable[[str], Step15RetrievalResult]
@@ -225,6 +227,14 @@ class Step15AgentRunner:
         self.agent_overlays: list[AgentOverlay] = []
         self.writeback_status = "skipped: writeback disabled"
         self.writeback_summary: dict[str, Any] | None = None
+        self.mas_mode = config.agentscope.mode if config.agentscope.enabled or config.agentscope.mode != "off" else "off"
+        if self.mas_mode not in {"off", "equivalent_mas", "trace_only"}:
+            raise ValueError(f"unsupported agentscope.mode: {self.mas_mode}")
+        self.mas_controller = (
+            Step15MASController(self, mode=self.mas_mode, agentscope_enabled=config.agentscope.enabled)
+            if self.mas_mode in {"equivalent_mas", "trace_only"}
+            else None
+        )
         self._owns_retriever = retriever is None and retrieval_fn is None
         self.retriever = retriever
         self.reranker = reranker
@@ -341,6 +351,14 @@ class Step15AgentRunner:
         return ordered_predictions
 
     def process_item(self, item: dict[str, Any]) -> Step15FieldResult:
+        if self.mas_mode == "equivalent_mas" and self.mas_controller is not None:
+            return self._process_item_equivalent_mas(item)
+        result = self._process_item_original(item)
+        if self.mas_mode == "trace_only" and self.mas_controller is not None:
+            self.mas_controller.record_trace_only_result(item, result)
+        return result
+
+    def _process_item_original(self, item: dict[str, Any]) -> Step15FieldResult:
         field_id = field_id_for_item(item)
         self.trace.record(field_id, "field_started", {"field": minimal_item_view(item), "room_context": display_text(self.room_context)})
 
@@ -454,6 +472,154 @@ class Step15AgentRunner:
             eval_result=eval_result,
             retrieval_latency_ms=retrieval_latency_ms,
             generation_latency_ms=generation_latency_ms,
+            critic_flags=critic_flags,
+        )
+
+    def _process_item_equivalent_mas(self, item: dict[str, Any]) -> Step15FieldResult:
+        if self.mas_controller is None:
+            return self._process_item_original(item)
+        field_id = field_id_for_item(item)
+        self.trace.record(field_id, "field_started", {"field": minimal_item_view(item), "room_context": display_text(self.room_context)})
+
+        query_plan = self.mas_controller.query_planner.run(item)
+        self.mas_controller.trace.record(
+            field_id,
+            self.mas_controller.query_planner.name,
+            "query_planned",
+            {"base_query": query_plan.base_query, "query_text": query_plan.query_text},
+        )
+        query_text = query_plan.query_text
+        self.trace.record(
+            field_id,
+            "query_planned",
+            {
+                "masked_query_preview": display_text(query_text, 240),
+                "masked_query": query_text,
+                "room_context": display_text(self.room_context),
+            },
+        )
+
+        retrieval = self.mas_controller.evidence_retrieval.run(query_text)
+        top_hits = retrieval.top_hits
+        vector_hits = retrieval.vector_hits
+        self.mas_controller.trace.record(
+            field_id,
+            self.mas_controller.evidence_retrieval.name,
+            "evidence_retrieved",
+            {
+                "top_hit_count": len(top_hits),
+                "vector_hit_count": len(vector_hits),
+                "retrieval_latency_ms": retrieval.retrieval_latency_ms,
+            },
+        )
+        self.trace.record(
+            field_id,
+            "layered_retrieval_finished",
+            {
+                "retrieval_mode": self.retrieval_mode,
+                "total_hits": len(top_hits),
+                "vector_hit_count": len(vector_hits),
+                "layer_counts": count_layers(top_hits),
+                "retrieval_latency_ms": retrieval.retrieval_latency_ms,
+                "top_chunk_ids": chunk_ids(top_hits),
+            },
+        )
+
+        arbitration = self.mas_controller.answer_arbitration.run(item, query_text, top_hits)
+        generated = arbitration.generated
+        prediction = arbitration.prediction
+        self.mas_controller.trace.record(
+            field_id,
+            self.mas_controller.answer_arbitration.name,
+            "answer_arbitrated",
+            {"answer_status": generated.get("answer_status"), "generation_latency_ms": arbitration.generation_latency_ms},
+        )
+        self.trace.record(
+            field_id,
+            "answer_arbitrated",
+            {
+                "chat_model": self.chat_model,
+                "prompt_version": self.prompt_version,
+                "answer_status": generated.get("answer_status"),
+                "source_chunk_ids": generated.get("source_chunk_ids") or [],
+                "reference_source_documents_count": len(generated.get("reference_source_documents") or []),
+                "generation_latency_ms": arbitration.generation_latency_ms,
+            },
+        )
+
+        overlay_control = self.mas_controller.overlay_control.run(item, generated, prediction, top_hits)
+        critic_flags = overlay_control.critic_flags
+        overlay = overlay_control.overlay
+        review_item = overlay_control.review_item
+        self.mas_controller.trace.record(
+            field_id,
+            self.mas_controller.overlay_control.name,
+            "overlay_controlled",
+            {
+                "critic_flags": critic_flags,
+                "review_required": overlay.review_required,
+                "writeback_allowed": overlay.writeback_allowed,
+            },
+        )
+        self.trace.record(
+            field_id,
+            "agent_overlay_built",
+            {
+                "raw_status": prediction.answer_status,
+                "suggested_status": overlay.suggested_status,
+                "review_required": overlay.review_required,
+                "writeback_allowed": overlay.writeback_allowed,
+                "risk_level": overlay.risk_level,
+                "reasons": overlay.reasons,
+                "critic_flags": critic_flags,
+                "suggested_reference_source_documents_count": len(overlay.suggested_reference_source_documents),
+            },
+        )
+        self.trace.record(
+            field_id,
+            "prediction_normalized",
+            {"raw_prediction": prediction.to_dict(), "source_ids_valid": prediction.validation.get("source_ids_valid")},
+        )
+        self.trace.record(field_id, "critic_checked", {"critic_flags": critic_flags})
+
+        self.trace.record(
+            field_id,
+            "review_routed",
+            {
+                "needs_review": review_item is not None,
+                "suggested_action": (review_item or {}).get("suggested_action"),
+                "critic_flags": critic_flags,
+                "overlay": overlay.to_dict(),
+            },
+        )
+
+        eval_result = None
+        if self.judge_enabled:
+            heldout_answer = str(item.get("existing_value") or item.get("heldout_answer") or "")
+            judge = self.get_or_call_judge(
+                item=item,
+                generated=generated,
+                heldout_answer=heldout_answer,
+            )
+            eval_result = make_eval_result(item, generated, judge, top_hits, vector_hits, query_text, self.room_context)
+            self.trace.record(
+                field_id,
+                "judge_completed",
+                {"label": judge.get("label"), "score": judge.get("score"), "reason": judge.get("reason")},
+            )
+
+        return Step15FieldResult(
+            item=item,
+            masked_query=query_text,
+            prediction=prediction,
+            generated=generated,
+            top_hits=top_hits,
+            vector_hits=vector_hits,
+            overlay=overlay,
+            review_item=review_item,
+            eval_result=eval_result,
+            retrieval_latency_ms=retrieval.retrieval_latency_ms,
+            generation_latency_ms=arbitration.generation_latency_ms,
             critic_flags=critic_flags,
         )
 
@@ -719,6 +885,8 @@ class Step15AgentRunner:
         write_json(self.out_dir / "trace_summary.json", trace_summary)
         self.trace.write_markdown(self.out_dir / "trace.md", trace_summary)
         self.maybe_writeback(predictions, overlays)
+        if self.mas_controller is not None:
+            self.mas_controller.write_optional_artifacts(self.out_dir)
         output_files = sorted({path.name for path in self.out_dir.iterdir() if path.is_file()} | {"run_summary.md", "summary.json", "run_manifest.json"})
         summary = build_summary_json(
             predictions=predictions,
@@ -737,6 +905,10 @@ class Step15AgentRunner:
             judge_enabled=self.judge_enabled,
             writeback_enabled=self.writeback_enabled,
         )
+        if (self.out_dir / "mas_trace.jsonl").exists():
+            manifest["artifacts"]["mas_trace"] = "mas_trace.jsonl"
+        if (self.out_dir / "agentscope_events.jsonl").exists():
+            manifest["artifacts"]["agentscope_events"] = "agentscope_events.jsonl"
         write_json(self.out_dir / "run_manifest.json", manifest)
         (self.out_dir / "run_summary.md").write_text(
             build_run_summary_md(
