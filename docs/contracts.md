@@ -158,7 +158,10 @@ Writeback artifacts are present only when writeback is enabled and completed:
 - `writeback_audit.jsonl`
 - `evidence_map.json`
 
-Optional MAS/AgentScope trace artifacts may be present when `agentscope.mode` is `equivalent_mas` or `trace_only`:
+AgentScope MAS is the default Step15 runtime. The MAS roles are deterministic wrappers around the original Step15 query,
+retrieval, answer arbitration, critic, and overlay control functions. They do not change the stable artifacts above.
+
+Diagnostic MAS/AgentScope trace artifacts may be present when `agentscope.mode` is `equivalent_mas` or `trace_only`:
 
 - `mas_trace.jsonl`
 - `agentscope_events.jsonl`

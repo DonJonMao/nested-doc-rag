@@ -21,16 +21,53 @@ class Step15MASController:
         self.answer_arbitration = AnswerArbitrationRole(runner)
         self.overlay_control = OverlayControlRole(runner)
 
+    def run_query_planner(self, item: dict[str, Any]) -> Any:
+        return self.runtime.run_role(
+            self.query_planner.name,
+            _role_payload(item, stage="query_planner"),
+            lambda: self.query_planner.run(item),
+        )
+
+    def run_evidence_retrieval(self, item: dict[str, Any], query_text: str) -> Any:
+        return self.runtime.run_role(
+            self.evidence_retrieval.name,
+            {**_role_payload(item, stage="evidence_retrieval"), "query_length": len(query_text)},
+            lambda: self.evidence_retrieval.run(query_text),
+        )
+
+    def run_answer_arbitration(self, item: dict[str, Any], query_text: str, top_hits: list[dict[str, Any]]) -> Any:
+        return self.runtime.run_role(
+            self.answer_arbitration.name,
+            {
+                **_role_payload(item, stage="answer_arbitration"),
+                "query_length": len(query_text),
+                "top_hit_count": len(top_hits),
+            },
+            lambda: self.answer_arbitration.run(item, query_text, top_hits),
+        )
+
+    def run_overlay_control(self, item: dict[str, Any], generated: dict[str, Any], prediction: Any, top_hits: list[dict[str, Any]]) -> Any:
+        return self.runtime.run_role(
+            self.overlay_control.name,
+            {
+                **_role_payload(item, stage="overlay_control"),
+                "answer_status": generated.get("answer_status"),
+                "source_chunk_id_count": len(generated.get("source_chunk_ids") or []),
+                "top_hit_count": len(top_hits),
+            },
+            lambda: self.overlay_control.run(item, generated, prediction, top_hits),
+        )
+
     def process_item(self, item: dict[str, Any]) -> Any:
         from nested_doc_rag.agent.step15_runner import Step15FieldResult, field_id_for_item
 
         field_id = field_id_for_item(item)
         self.trace.record(field_id, "controller", "field_started", {"mode": self.mode, "agentscope_available": self.runtime.available})
 
-        query_plan = self.runtime.wrap_role_result(self.query_planner.name, self.query_planner.run(item))
+        query_plan = self.run_query_planner(item)
         self.trace.record(field_id, self.query_planner.name, "query_planned", {"base_query": query_plan.base_query, "query_text": query_plan.query_text})
 
-        retrieval = self.runtime.wrap_role_result(self.evidence_retrieval.name, self.evidence_retrieval.run(query_plan.query_text))
+        retrieval = self.run_evidence_retrieval(item, query_plan.query_text)
         self.trace.record(
             field_id,
             self.evidence_retrieval.name,
@@ -42,10 +79,7 @@ class Step15MASController:
             },
         )
 
-        arbitration = self.runtime.wrap_role_result(
-            self.answer_arbitration.name,
-            self.answer_arbitration.run(item, query_plan.query_text, retrieval.top_hits),
-        )
+        arbitration = self.run_answer_arbitration(item, query_plan.query_text, retrieval.top_hits)
         self.trace.record(
             field_id,
             self.answer_arbitration.name,
@@ -56,10 +90,7 @@ class Step15MASController:
             },
         )
 
-        overlay = self.runtime.wrap_role_result(
-            self.overlay_control.name,
-            self.overlay_control.run(item, arbitration.generated, arbitration.prediction, retrieval.top_hits),
-        )
+        overlay = self.run_overlay_control(item, arbitration.generated, arbitration.prediction, retrieval.top_hits)
         self.trace.record(
             field_id,
             self.overlay_control.name,
@@ -97,9 +128,11 @@ class Step15MASController:
                     "event_type": "runtime_selected",
                     "mode": self.mode,
                     "agentscope_available": self.runtime.available,
+                    "agentscope_version": self.runtime.agentscope_version,
                     "fallback_reason": self.runtime.reason,
                 }
-            ],
+            ]
+            + self.runtime.events,
         )
 
     def record_trace_only_result(self, item: dict[str, Any], result: Any) -> None:
@@ -117,3 +150,12 @@ class Step15MASController:
                 "writeback_allowed": result.overlay.writeback_allowed,
             },
         )
+
+
+def _role_payload(item: dict[str, Any], *, stage: str) -> dict[str, Any]:
+    return {
+        "stage": stage,
+        "field_id": item.get("form_item_id"),
+        "row_index": item.get("row_index"),
+        "target_cell": item.get("target_cell"),
+    }

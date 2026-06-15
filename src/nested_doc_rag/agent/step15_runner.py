@@ -481,7 +481,7 @@ class Step15AgentRunner:
         field_id = field_id_for_item(item)
         self.trace.record(field_id, "field_started", {"field": minimal_item_view(item), "room_context": display_text(self.room_context)})
 
-        query_plan = self.mas_controller.query_planner.run(item)
+        query_plan = self.mas_controller.run_query_planner(item)
         self.mas_controller.trace.record(
             field_id,
             self.mas_controller.query_planner.name,
@@ -499,7 +499,7 @@ class Step15AgentRunner:
             },
         )
 
-        retrieval = self.mas_controller.evidence_retrieval.run(query_text)
+        retrieval = self.mas_controller.run_evidence_retrieval(item, query_text)
         top_hits = retrieval.top_hits
         vector_hits = retrieval.vector_hits
         self.mas_controller.trace.record(
@@ -525,7 +525,7 @@ class Step15AgentRunner:
             },
         )
 
-        arbitration = self.mas_controller.answer_arbitration.run(item, query_text, top_hits)
+        arbitration = self.mas_controller.run_answer_arbitration(item, query_text, top_hits)
         generated = arbitration.generated
         prediction = arbitration.prediction
         self.mas_controller.trace.record(
@@ -547,7 +547,7 @@ class Step15AgentRunner:
             },
         )
 
-        overlay_control = self.mas_controller.overlay_control.run(item, generated, prediction, top_hits)
+        overlay_control = self.mas_controller.run_overlay_control(item, generated, prediction, top_hits)
         critic_flags = overlay_control.critic_flags
         overlay = overlay_control.overlay
         review_item = overlay_control.review_item

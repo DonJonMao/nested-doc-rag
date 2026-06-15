@@ -36,8 +36,33 @@ def test_equivalent_mas_core_artifacts_match_off_mode(tmp_path: Path) -> None:
     assert (mas_dir / "mas_trace.jsonl").exists()
     assert (mas_dir / "agentscope_events.jsonl").exists()
     events = read_jsonl(mas_dir / "agentscope_events.jsonl")
-    assert events[0]["agentscope_available"] is False
+    assert events[0]["agentscope_available"] is True
+    assert str(events[0]["agentscope_version"]).startswith("2.")
+    assert [event["role"] for event in events if event.get("event_type") == "role_invoked"] == [
+        "query_planner",
+        "evidence_retrieval",
+        "answer_arbitration",
+        "overlay_control",
+        "query_planner",
+        "evidence_retrieval",
+        "answer_arbitration",
+        "overlay_control",
+    ]
     assert validate_step15_artifacts(mas_dir)["valid"] is True
+
+
+def test_default_config_runs_agentscope_equivalent_mas(tmp_path: Path) -> None:
+    off_dir = tmp_path / "off"
+    default_dir = tmp_path / "default"
+
+    make_runner(off_dir, mode="off").run([make_item(4)])
+    make_default_runner(default_dir).run([make_item(4)])
+
+    assert_core_artifacts_equal(off_dir, default_dir)
+    events = read_jsonl(default_dir / "agentscope_events.jsonl")
+    assert events[0]["mode"] == "equivalent_mas"
+    assert events[0]["agentscope_available"] is True
+    assert any(event.get("role") == "query_planner" for event in events)
 
 
 def test_trace_only_core_artifacts_match_off_mode_except_optional_trace(tmp_path: Path) -> None:
@@ -133,6 +158,22 @@ def make_runner(
         answer_caller=answer_caller,
         writeback_enabled=False,
         resume=resume,
+        chat_retry_backoff_seconds=0,
+    )
+
+
+def make_default_runner(out_dir: Path) -> Step15AgentRunner:
+    config = load_app_config(project_root=out_dir, default_config=out_dir / "missing.yaml")
+    return Step15AgentRunner(
+        config=config,
+        target_namespace="xixian_4",
+        global_namespace="global",
+        room_context="西咸4号楼 301机房",
+        out_dir=out_dir,
+        retrieval_mode="layered",
+        retrieval_fn=fake_retrieval,
+        answer_caller=answer_caller,
+        writeback_enabled=False,
         chat_retry_backoff_seconds=0,
     )
 

@@ -76,8 +76,8 @@ def test_env_alias_and_path_resolution(tmp_path: Path, monkeypatch) -> None:
 
 def test_agentscope_config_defaults_and_yaml_off_normalization(tmp_path: Path) -> None:
     config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml")
-    assert config.agentscope.enabled is False
-    assert config.agentscope.mode == "off"
+    assert config.agentscope.enabled is True
+    assert config.agentscope.mode == "equivalent_mas"
 
     config = app_config_from_dict(
         {

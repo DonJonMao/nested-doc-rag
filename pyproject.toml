@@ -9,7 +9,9 @@ description = "Nested document RAG pipeline for datacenter gongkan forms."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "agentscope>=2.0,<3",
   "openpyxl>=3.1",
+  "pydantic>=2,<3",
   "qdrant-client>=1.9",
 ]
 
@@ -17,9 +19,6 @@ dependencies = [
 dev = [
   "pytest>=8",
   "ruff>=0.15",
-]
-agentscope = [
-  "agentscope>=2.0,<3",
 ]
 
 [project.scripts]

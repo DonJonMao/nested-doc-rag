@@ -84,5 +84,5 @@ agent:
   human_review_threshold: 0.55
 
 agentscope:
-  enabled: false
-  mode: "off"
+  enabled: true
+  mode: equivalent_mas

@@ -139,8 +139,8 @@ class AgentConfig:
 
 @dataclass(frozen=True)
 class AgentScopeConfig:
-    enabled: bool = False
-    mode: str = "off"
+    enabled: bool = True
+    mode: str = "equivalent_mas"
 
 
 @dataclass(frozen=True)
