@@ -8,6 +8,7 @@ from nested_doc_rag.agent.step15_runner import (
     build_agent_overlay_for_step15_prediction,
     convert_step15_generated_to_prediction,
     critic_check_step15_answer,
+    is_retryable_chat_error,
     make_step15_review_item,
 )
 from nested_doc_rag.cli import build_parser
@@ -269,6 +270,11 @@ def test_chat_timeout_retry_success(tmp_path: Path) -> None:
     assert "chat_retry_succeeded" in trace_text
 
 
+def test_chat_connection_reset_errors_are_retryable() -> None:
+    assert is_retryable_chat_error(RuntimeError("curl failed with exit code 52: curl: (52) Empty reply from server"))
+    assert is_retryable_chat_error(RuntimeError("curl failed: curl: (56) Recv failure: Connection reset by peer"))
+
+
 def test_chat_timeout_retry_failure_writes_failed_prediction(tmp_path: Path) -> None:
     calls = 0
 
@@ -330,6 +336,33 @@ def test_cli_run_step15_agent_args(tmp_path: Path) -> None:
     assert args.prompt_version == "step15_compat"
     assert args.use_judge_cache is True
     assert args.judge_cache == tmp_path / "judge_cache.jsonl"
+    assert args.mas_mode == "off"
+    assert args.agentscope_enabled is False
+    assert args.max_supplemental_rounds == 1
+    assert args.semantic_risk_critic_enabled is False
+
+
+def test_cli_run_step15_agent_mas_args(tmp_path: Path) -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "run-step15-agent",
+            "--out-dir",
+            str(tmp_path),
+            "--mas-mode",
+            "enhanced_mas",
+            "--agentscope-enabled",
+            "--max-supplemental-rounds",
+            "1",
+            "--semantic-risk-critic-enabled",
+        ]
+    )
+
+    assert args.mas_mode == "enhanced_mas"
+    assert args.agentscope_enabled is True
+    assert args.max_supplemental_rounds == 1
+    assert args.semantic_risk_critic_enabled is True
 
 
 def test_prompt_version_default_step15_compat() -> None:

@@ -158,12 +158,21 @@ Writeback artifacts are present only when writeback is enabled and completed:
 - `writeback_audit.jsonl`
 - `evidence_map.json`
 
-AgentScope MAS is the default Step15 runtime. The MAS roles are deterministic wrappers around the original Step15 query,
-retrieval, answer arbitration, critic, and overlay control functions. They do not change the stable artifacts above.
+MAS/AgentScope is optional for Step15. The default production path is `mas.mode=off` and `agentscope.enabled=false`, which
+runs the original Step15AgentRunner flow and stable artifact contract unchanged. `equivalent_mas` is a behavior-preserving
+role wrapper around the same query, retrieval, answer arbitration, critic, and overlay control functions.
 
-Diagnostic MAS/AgentScope trace artifacts may be present when `agentscope.mode` is `equivalent_mas` or `trace_only`:
+`enhanced_mas` may add one deterministic, evidence-gated supplemental retrieval round for baseline `partial_clue` or
+`not_found` fields. Supplemental hits are appended after baseline hits and must pass the same source validation and overlay
+gates; agents do not write Excel, mutate Qdrant, or change raw artifact schemas.
+
+Diagnostic MAS/AgentScope artifacts may be present when `mas.mode` is `equivalent_mas`, `enhanced_mas`, or `trace_only`:
 
 - `mas_trace.jsonl`
 - `agentscope_events.jsonl`
+- `query_plans.jsonl`
+- `evidence_scout_reports.jsonl`
+- `supplemental_retrievals.jsonl`
+- `semantic_risk_reports.jsonl`
 
 These are diagnostic artifacts only. Go/backend integrations must not require them and must continue to depend only on the stable artifacts listed above.
