@@ -139,21 +139,8 @@ class AgentConfig:
 
 @dataclass(frozen=True)
 class AgentScopeConfig:
-    enabled: bool = False
-    mode: str = "off"
-    optional_dependency: bool = True
-
-
-@dataclass(frozen=True)
-class MASConfig:
-    enabled: bool = False
-    mode: str = "off"
-    max_supplemental_rounds: int = 1
-    supplemental_enabled_statuses: list[str] = field(default_factory=lambda: ["partial_clue", "not_found"])
-    preserve_baseline_hits: bool = True
-    allow_supplemental_on_answered: bool = False
-    require_source_validation: bool = True
-    semantic_risk_critic_enabled: bool = False
+    enabled: bool = True
+    mode: str = "equivalent_mas"
 
 
 @dataclass(frozen=True)
@@ -166,7 +153,6 @@ class AppConfig:
     excel: ExcelConfig = field(default_factory=ExcelConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     agentscope: AgentScopeConfig = field(default_factory=AgentScopeConfig)
-    mas: MASConfig = field(default_factory=MASConfig)
 
     def to_dict(self) -> dict[str, Any]:
         return _serialize(self)
@@ -203,7 +189,6 @@ def code_defaults(project_root: Path | None = None) -> dict[str, Any]:
         "excel": _serialize(ExcelConfig()),
         "agent": _serialize(AgentConfig()),
         "agentscope": _serialize(AgentScopeConfig()),
-        "mas": _serialize(MASConfig()),
     }
 
 
@@ -325,25 +310,9 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
     agentscope = AgentScopeConfig(
         enabled=_as_bool(agentscope_data.get("enabled", False)),
         mode=agentscope_mode,
-        optional_dependency=_as_bool(agentscope_data.get("optional_dependency", True)),
     )
-    valid_mas_modes = {"off", "equivalent_mas", "enhanced_mas", "trace_only"}
-    if agentscope.mode not in valid_mas_modes:
-        raise ValueError("agentscope.mode must be off, equivalent_mas, enhanced_mas, or trace_only")
-    mas_data = _section(data, "mas", MASConfig())
-    mas_mode = _normalize_agentscope_mode(mas_data.get("mode", "off"))
-    mas = MASConfig(
-        enabled=_as_bool(mas_data.get("enabled", False)),
-        mode=mas_mode,
-        max_supplemental_rounds=max(0, _as_int(mas_data.get("max_supplemental_rounds", 1))),
-        supplemental_enabled_statuses=[str(item) for item in _as_list(mas_data.get("supplemental_enabled_statuses"))],
-        preserve_baseline_hits=_as_bool(mas_data.get("preserve_baseline_hits", True)),
-        allow_supplemental_on_answered=_as_bool(mas_data.get("allow_supplemental_on_answered", False)),
-        require_source_validation=_as_bool(mas_data.get("require_source_validation", True)),
-        semantic_risk_critic_enabled=_as_bool(mas_data.get("semantic_risk_critic_enabled", False)),
-    )
-    if mas.mode not in valid_mas_modes:
-        raise ValueError("mas.mode must be off, equivalent_mas, enhanced_mas, or trace_only")
+    if agentscope.mode not in {"off", "equivalent_mas", "trace_only"}:
+        raise ValueError("agentscope.mode must be off, equivalent_mas, or trace_only")
     return AppConfig(
         paths=paths,
         services=services,
@@ -353,7 +322,6 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         excel=excel,
         agent=agent,
         agentscope=agentscope,
-        mas=mas,
     )
 
 

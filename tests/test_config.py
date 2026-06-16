@@ -76,13 +76,8 @@ def test_env_alias_and_path_resolution(tmp_path: Path, monkeypatch) -> None:
 
 def test_agentscope_config_defaults_and_yaml_off_normalization(tmp_path: Path) -> None:
     config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml")
-    assert config.agentscope.enabled is False
-    assert config.agentscope.mode == "off"
-    assert config.agentscope.optional_dependency is True
-    assert config.mas.enabled is False
-    assert config.mas.mode == "off"
-    assert config.mas.max_supplemental_rounds == 1
-    assert config.mas.supplemental_enabled_statuses == ["partial_clue", "not_found"]
+    assert config.agentscope.enabled is True
+    assert config.agentscope.mode == "equivalent_mas"
 
     config = app_config_from_dict(
         {
@@ -108,15 +103,6 @@ def test_agentscope_config_defaults_and_yaml_off_normalization(tmp_path: Path) -
             {
                 "paths": {"project_root": str(tmp_path)},
                 "agentscope": {"enabled": True, "mode": "new_behavior"},
-            },
-            project_root_base=tmp_path,
-        )
-
-    with pytest.raises(ValueError, match="mas.mode"):
-        app_config_from_dict(
-            {
-                "paths": {"project_root": str(tmp_path)},
-                "mas": {"enabled": True, "mode": "new_behavior"},
             },
             project_root_base=tmp_path,
         )

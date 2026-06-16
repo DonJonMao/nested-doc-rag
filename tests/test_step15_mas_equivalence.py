@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from nested_doc_rag.agent.mas.agentscope_bridge import build_agentscope_runtime
-from nested_doc_rag.agent.step15_runner import Step15AgentRunner
 from nested_doc_rag.artifacts import validate_step15_artifacts
-from nested_doc_rag.config import AgentScopeConfig, MASConfig, load_app_config
+from nested_doc_rag.agent.step15_runner import Step15AgentRunner
+from nested_doc_rag.config import AgentScopeConfig, load_app_config
 from nested_doc_rag.evaluation.step15_engine import Step15RetrievalResult
 from nested_doc_rag.io import read_json, read_jsonl, write_jsonl
 from nested_doc_rag.schemas.eval import FieldPrediction
@@ -38,9 +36,9 @@ def test_equivalent_mas_core_artifacts_match_off_mode(tmp_path: Path) -> None:
     assert (mas_dir / "mas_trace.jsonl").exists()
     assert (mas_dir / "agentscope_events.jsonl").exists()
     events = read_jsonl(mas_dir / "agentscope_events.jsonl")
-    assert events[0]["mode"] == "equivalent_mas"
-    assert events[0]["agentscope_available"] is False
-    assert [event["role"] for event in events if event.get("event_type") == "role_bypassed"] == [
+    assert events[0]["agentscope_available"] is True
+    assert str(events[0]["agentscope_version"]).startswith("2.")
+    assert [event["role"] for event in events if event.get("event_type") == "role_invoked"] == [
         "query_planner",
         "evidence_retrieval",
         "answer_arbitration",
@@ -53,7 +51,7 @@ def test_equivalent_mas_core_artifacts_match_off_mode(tmp_path: Path) -> None:
     assert validate_step15_artifacts(mas_dir)["valid"] is True
 
 
-def test_default_config_stays_off_without_mas_artifacts(tmp_path: Path) -> None:
+def test_default_config_runs_agentscope_equivalent_mas(tmp_path: Path) -> None:
     off_dir = tmp_path / "off"
     default_dir = tmp_path / "default"
 
@@ -61,8 +59,10 @@ def test_default_config_stays_off_without_mas_artifacts(tmp_path: Path) -> None:
     make_default_runner(default_dir).run([make_item(4)])
 
     assert_core_artifacts_equal(off_dir, default_dir)
-    assert not (default_dir / "mas_trace.jsonl").exists()
-    assert not (default_dir / "agentscope_events.jsonl").exists()
+    events = read_jsonl(default_dir / "agentscope_events.jsonl")
+    assert events[0]["mode"] == "equivalent_mas"
+    assert events[0]["agentscope_available"] is True
+    assert any(event.get("role") == "query_planner" for event in events)
 
 
 def test_trace_only_core_artifacts_match_off_mode_except_optional_trace(tmp_path: Path) -> None:
@@ -115,143 +115,6 @@ def test_equivalent_mas_resume_skips_completed_checkpoint(tmp_path: Path) -> Non
     assert validate_step15_artifacts(tmp_path)["valid"] is True
 
 
-def test_enhanced_mas_supplemental_retrieval_can_rescue_not_found(tmp_path: Path) -> None:
-    calls: list[str] = []
-    runner = make_runner(
-        tmp_path,
-        mode="enhanced_mas",
-        retrieval_fn=supplemental_retrieval(calls, baseline_hits=[]),
-        answer_caller=supplemental_answer_caller,
-    )
-
-    predictions = runner.run([make_item(20, question_text="补充证据字段")])
-
-    assert predictions[0].answer_status == "answered"
-    assert predictions[0].source_chunk_ids == ["chunk_supplemental"]
-    assert predictions[0].validation["source_ids_valid"] is True
-    assert len(calls) == 2
-    assert read_jsonl(tmp_path / "query_plans.jsonl")[0]["primary_query"]
-    scout = read_jsonl(tmp_path / "evidence_scout_reports.jsonl")[0]
-    assert scout["evidence_sufficient"] is False
-    supplemental = read_jsonl(tmp_path / "supplemental_retrievals.jsonl")[0]
-    assert supplemental["enabled"] is True
-    assert supplemental["baseline_hit_count"] == 0
-    assert supplemental["final_hit_count"] == 1
-    overlay = read_jsonl(tmp_path / "agent_overlays.jsonl")[0]
-    assert overlay["writeback_allowed"] is True
-    assert validate_step15_artifacts(tmp_path)["valid"] is True
-
-
-def test_enhanced_mas_does_not_supplement_baseline_answered_by_default(tmp_path: Path) -> None:
-    calls: list[str] = []
-    off_dir = tmp_path / "off"
-    enhanced_dir = tmp_path / "enhanced"
-
-    make_runner(off_dir, mode="off", retrieval_fn=recording_retrieval(calls), answer_caller=answer_caller).run([make_item(4)])
-    calls.clear()
-    make_runner(enhanced_dir, mode="enhanced_mas", retrieval_fn=recording_retrieval(calls), answer_caller=answer_caller).run([make_item(4)])
-
-    assert_core_artifacts_equal(off_dir, enhanced_dir)
-    assert len(calls) == 1
-    supplemental = read_jsonl(enhanced_dir / "supplemental_retrievals.jsonl")[0]
-    assert supplemental["enabled"] is False
-    assert supplemental["reason"] == "baseline_answered"
-
-
-def test_enhanced_mas_supplemental_hits_append_after_baseline(tmp_path: Path) -> None:
-    seen_hit_orders: list[list[str]] = []
-
-    def caller(**kwargs: Any) -> dict[str, Any]:
-        seen_hit_orders.append([str(hit.get("chunk_id")) for hit in kwargs["hits"]])
-        if any(hit.get("chunk_id") == "chunk_supplemental" for hit in kwargs["hits"]):
-            return {
-                "answer_value": "补充命中答案",
-                "answer_status": "answered",
-                "confidence": 0.82,
-                "source_chunk_ids": ["chunk_supplemental"],
-                "evidence_attachment_ids": [],
-                "reference_source_documents": [],
-            }
-        return {
-            "answer_value": "未找到",
-            "answer_status": "not_found",
-            "confidence": 0.2,
-            "source_chunk_ids": [],
-            "evidence_attachment_ids": [],
-            "reference_source_documents": [],
-        }
-
-    calls: list[str] = []
-    runner = make_runner(
-        tmp_path,
-        mode="enhanced_mas",
-        retrieval_fn=supplemental_retrieval(calls, baseline_hits=[irrelevant_hit()]),
-        answer_caller=caller,
-    )
-
-    runner.run([make_item(21, question_text="补充证据字段")])
-
-    assert len(calls) == 2
-    assert seen_hit_orders[-1] == ["chunk_irrelevant", "chunk_supplemental"]
-    supplemental = read_jsonl(tmp_path / "supplemental_retrievals.jsonl")[0]
-    assert supplemental["baseline_hit_count"] == 1
-    assert supplemental["final_hit_count"] == 2
-
-
-def test_enhanced_mas_invalid_supplemental_source_id_is_blocked(tmp_path: Path) -> None:
-    calls: list[str] = []
-    runner = make_runner(
-        tmp_path,
-        mode="enhanced_mas",
-        retrieval_fn=supplemental_retrieval(calls, baseline_hits=[]),
-        answer_caller=invalid_source_answer_caller,
-    )
-
-    predictions = runner.run([make_item(22, question_text="补充证据字段")])
-
-    assert predictions[0].answer_status == "answered"
-    assert predictions[0].validation["source_ids_valid"] is False
-    overlay = read_jsonl(tmp_path / "agent_overlays.jsonl")[0]
-    assert "invalid_source_reference" in overlay["critic_flags"]
-    assert overlay["writeback_allowed"] is False
-    assert overlay["review_required"] is True
-
-
-def test_enhanced_mas_resume_skips_completed_checkpoint(tmp_path: Path) -> None:
-    completed = FieldPrediction(
-        field_id="item_4",
-        row_index=4,
-        target_cell="D4",
-        answer_value="已完成",
-        answer_status="answered",
-        confidence=0.9,
-        method_name="step15_agent",
-    )
-    write_jsonl(tmp_path / "predictions.checkpoint.jsonl", [completed.to_dict()])
-    calls: list[str] = []
-
-    runner = make_runner(
-        tmp_path,
-        mode="enhanced_mas",
-        retrieval_fn=supplemental_retrieval(calls, baseline_hits=[]),
-        answer_caller=supplemental_answer_caller,
-        resume=True,
-    )
-    predictions = runner.run([make_item(4), make_item(5, question_text="补充证据字段")])
-
-    assert [prediction.row_index for prediction in predictions] == [4, 5]
-    assert len(calls) == 2
-    assert validate_step15_artifacts(tmp_path)["valid"] is True
-
-
-def test_agentscope_disabled_runtime_falls_back_to_local_roles() -> None:
-    runtime = build_agentscope_runtime(enabled=False)
-
-    assert runtime.available is False
-    assert runtime.run_role("query_planner", {}, lambda: {"ok": True}) == {"ok": True}
-    assert runtime.events[0]["event_type"] == "role_bypassed"
-
-
 def assert_core_artifacts_equal(left: Path, right: Path) -> None:
     for file_name in ["predictions_raw.jsonl", "predictions.jsonl", "agent_overlays.jsonl", "review_items.jsonl"]:
         assert read_jsonl(left / file_name) == read_jsonl(right / file_name)
@@ -280,15 +143,10 @@ def make_runner(
     *,
     mode: str,
     retrieval_fn: Callable[[str], Step15RetrievalResult] | None = None,
-    answer_caller: Callable[..., dict[str, Any]] | None = None,
     resume: bool = False,
 ) -> Step15AgentRunner:
     config = load_app_config(project_root=out_dir, default_config=out_dir / "missing.yaml")
-    config = replace(
-        config,
-        agentscope=AgentScopeConfig(enabled=False, mode="off"),
-        mas=MASConfig(enabled=mode != "off", mode=mode),
-    )
+    config = replace(config, agentscope=AgentScopeConfig(enabled=mode != "off", mode=mode))
     return Step15AgentRunner(
         config=config,
         target_namespace="xixian_4",
@@ -297,7 +155,7 @@ def make_runner(
         out_dir=out_dir,
         retrieval_mode="layered",
         retrieval_fn=retrieval_fn or fake_retrieval,
-        answer_caller=answer_caller or globals()["answer_caller"],
+        answer_caller=answer_caller,
         writeback_enabled=False,
         resume=resume,
         chat_retry_backoff_seconds=0,
@@ -391,91 +249,4 @@ def answer_caller(**kwargs: Any) -> dict[str, Any]:
         "evidence_attachment_ids": ["att_1"],
         "reference_source_documents": [],
         "agent_resolution": {"used": True, "action": "select_source", "reason": "主表证据直接命中"},
-    }
-
-
-def supplemental_answer_caller(**kwargs: Any) -> dict[str, Any]:
-    hits = kwargs["hits"]
-    if not hits:
-        return {
-            "answer_value": "未找到",
-            "answer_status": "not_found",
-            "confidence": 0.2,
-            "source_chunk_ids": [],
-            "evidence_attachment_ids": [],
-            "reference_source_documents": [],
-        }
-    source_id = hits[-1]["chunk_id"]
-    return {
-        "answer_value": "补充命中答案",
-        "answer_status": "answered",
-        "confidence": 0.84,
-        "source_chunk_ids": [source_id],
-        "evidence_attachment_ids": [],
-        "reference_source_documents": [],
-        "agent_resolution": {"used": True, "action": "select_source", "reason": "补充证据命中"},
-    }
-
-
-def invalid_source_answer_caller(**kwargs: Any) -> dict[str, Any]:
-    if not kwargs["hits"]:
-        return {
-            "answer_value": "未找到",
-            "answer_status": "not_found",
-            "confidence": 0.2,
-            "source_chunk_ids": [],
-            "evidence_attachment_ids": [],
-            "reference_source_documents": [],
-        }
-    return {
-        "answer_value": "补充命中答案",
-        "answer_status": "answered",
-        "confidence": 0.84,
-        "source_chunk_ids": ["not_in_hits"],
-        "evidence_attachment_ids": [],
-        "reference_source_documents": [],
-    }
-
-
-def supplemental_retrieval(calls: list[str], *, baseline_hits: list[dict[str, Any]]) -> Callable[[str], Step15RetrievalResult]:
-    def retrieve(query: str) -> Step15RetrievalResult:
-        calls.append(query)
-        if "任务：" in query:
-            hits = list(baseline_hits)
-        else:
-            hits = [supplemental_hit()]
-        return Step15RetrievalResult(reranked_hits=hits, vector_hits=hits, retrieval_mode="layered")
-
-    return retrieve
-
-
-def supplemental_hit() -> dict[str, Any]:
-    return {
-        "chunk_id": "chunk_supplemental",
-        "namespace": "xixian_4",
-        "source_type": "embedded_word_table",
-        "corpus_layer": "fact",
-        "retrieval_layer": "target_structured_detail",
-        "layer_priority": 2,
-        "rerank_score": 0.88,
-        "file_name": "detail.docx",
-        "anchor": "table 1",
-        "raw_text": "补充证据字段：补充命中答案。",
-        "text_for_embedding": "补充证据字段 补充命中答案",
-    }
-
-
-def irrelevant_hit() -> dict[str, Any]:
-    return {
-        "chunk_id": "chunk_irrelevant",
-        "namespace": "xixian_4",
-        "source_type": "embedded_raw_segment",
-        "corpus_layer": "raw_text",
-        "retrieval_layer": "target_raw_detail",
-        "layer_priority": 3,
-        "rerank_score": 0.3,
-        "file_name": "raw.docx",
-        "anchor": "P9",
-        "raw_text": "这里只是无关背景。",
-        "text_for_embedding": "无关背景",
     }

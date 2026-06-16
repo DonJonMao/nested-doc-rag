@@ -28,7 +28,6 @@ from nested_doc_rag.retrieval import QdrantRetriever
 from nested_doc_rag.schemas.eval import FieldPrediction
 
 from .mas.controller import Step15MASController
-from .mas.supplemental import SupplementalRetrievalGate
 
 AnswerCaller = Callable[..., dict[str, Any]]
 JudgeCaller = Callable[..., dict[str, Any]]
@@ -125,14 +124,6 @@ class Step15FieldResult:
     retrieval_latency_ms: float
     generation_latency_ms: float
     critic_flags: list[str]
-
-
-def configured_mas_mode(config: AppConfig) -> str:
-    if config.mas.enabled or config.mas.mode != "off":
-        return config.mas.mode
-    if config.agentscope.enabled and config.agentscope.mode != "off":
-        return config.agentscope.mode
-    return "off"
 
 
 class Step15AgentRunner:
@@ -236,15 +227,14 @@ class Step15AgentRunner:
         self.agent_overlays: list[AgentOverlay] = []
         self.writeback_status = "skipped: writeback disabled"
         self.writeback_summary: dict[str, Any] | None = None
-        self.mas_mode = configured_mas_mode(config)
-        if self.mas_mode not in {"off", "equivalent_mas", "enhanced_mas", "trace_only"}:
-            raise ValueError(f"unsupported mas mode: {self.mas_mode}")
+        self.mas_mode = config.agentscope.mode if config.agentscope.enabled or config.agentscope.mode != "off" else "off"
+        if self.mas_mode not in {"off", "equivalent_mas", "trace_only"}:
+            raise ValueError(f"unsupported agentscope.mode: {self.mas_mode}")
         self.mas_controller = (
             Step15MASController(self, mode=self.mas_mode, agentscope_enabled=config.agentscope.enabled)
-            if self.mas_mode in {"equivalent_mas", "enhanced_mas", "trace_only"}
+            if self.mas_mode in {"equivalent_mas", "trace_only"}
             else None
         )
-        self.supplemental_gate = SupplementalRetrievalGate(config.mas)
         self._owns_retriever = retriever is None and retrieval_fn is None
         self.retriever = retriever
         self.reranker = reranker
@@ -363,8 +353,6 @@ class Step15AgentRunner:
     def process_item(self, item: dict[str, Any]) -> Step15FieldResult:
         if self.mas_mode == "equivalent_mas" and self.mas_controller is not None:
             return self._process_item_equivalent_mas(item)
-        if self.mas_mode == "enhanced_mas" and self.mas_controller is not None:
-            return self._process_item_enhanced_mas(item)
         result = self._process_item_original(item)
         if self.mas_mode == "trace_only" and self.mas_controller is not None:
             self.mas_controller.record_trace_only_result(item, result)
@@ -446,208 +434,6 @@ class Step15AgentRunner:
         self.trace.record(field_id, "critic_checked", {"critic_flags": critic_flags})
 
         review_item = make_step15_review_item(item, prediction, overlay, top_hits)
-        self.trace.record(
-            field_id,
-            "review_routed",
-            {
-                "needs_review": review_item is not None,
-                "suggested_action": (review_item or {}).get("suggested_action"),
-                "critic_flags": critic_flags,
-                "overlay": overlay.to_dict(),
-            },
-        )
-
-        eval_result = None
-        if self.judge_enabled:
-            heldout_answer = str(item.get("existing_value") or item.get("heldout_answer") or "")
-            judge = self.get_or_call_judge(
-                item=item,
-                generated=generated,
-                heldout_answer=heldout_answer,
-            )
-            eval_result = make_eval_result(item, generated, judge, top_hits, vector_hits, query_text, self.room_context)
-            self.trace.record(
-                field_id,
-                "judge_completed",
-                {"label": judge.get("label"), "score": judge.get("score"), "reason": judge.get("reason")},
-            )
-
-        return Step15FieldResult(
-            item=item,
-            masked_query=query_text,
-            prediction=prediction,
-            generated=generated,
-            top_hits=top_hits,
-            vector_hits=vector_hits,
-            overlay=overlay,
-            review_item=review_item,
-            eval_result=eval_result,
-            retrieval_latency_ms=retrieval_latency_ms,
-            generation_latency_ms=generation_latency_ms,
-            critic_flags=critic_flags,
-        )
-
-    def _process_item_enhanced_mas(self, item: dict[str, Any]) -> Step15FieldResult:
-        if self.mas_controller is None:
-            return self._process_item_original(item)
-        field_id = field_id_for_item(item)
-        self.trace.record(field_id, "field_started", {"field": minimal_item_view(item), "room_context": display_text(self.room_context)})
-
-        query_plan = self.mas_controller.run_query_planner(item)
-        query_text = query_plan.primary_query or query_plan.query_text
-        self.mas_controller.trace.record(
-            field_id,
-            self.mas_controller.query_planner.name,
-            "query_planned",
-            {
-                "base_query": query_plan.base_query,
-                "query_text": query_text,
-                "fallback_query_count": len(query_plan.fallback_queries),
-                "evidence_slots": query_plan.evidence_slots,
-            },
-        )
-        self.trace.record(
-            field_id,
-            "query_planned",
-            {
-                "masked_query_preview": display_text(query_text, 240),
-                "masked_query": query_text,
-                "room_context": display_text(self.room_context),
-            },
-        )
-
-        retrieval = self.mas_controller.run_evidence_retrieval(item, query_text)
-        baseline_top_hits = retrieval.top_hits
-        baseline_vector_hits = retrieval.vector_hits
-        top_hits = list(baseline_top_hits)
-        vector_hits = list(baseline_vector_hits)
-        retrieval_latency_ms = retrieval.retrieval_latency_ms
-        self.mas_controller.trace.record(
-            field_id,
-            self.mas_controller.evidence_retrieval.name,
-            "baseline_evidence_retrieved",
-            {
-                "top_hit_count": len(baseline_top_hits),
-                "vector_hit_count": len(baseline_vector_hits),
-                "retrieval_latency_ms": retrieval_latency_ms,
-            },
-        )
-        self.trace.record(
-            field_id,
-            "layered_retrieval_finished",
-            {
-                "retrieval_mode": self.retrieval_mode,
-                "total_hits": len(top_hits),
-                "vector_hit_count": len(vector_hits),
-                "layer_counts": count_layers(top_hits),
-                "retrieval_latency_ms": retrieval_latency_ms,
-                "top_chunk_ids": chunk_ids(top_hits),
-            },
-        )
-
-        arbitration = self.mas_controller.run_answer_arbitration(item, query_text, top_hits)
-        generated = arbitration.generated
-        prediction = arbitration.prediction
-        generation_latency_ms = arbitration.generation_latency_ms
-        baseline_critic_flags = critic_check_step15_answer(item, generated, top_hits)
-        scout_report = self.mas_controller.run_evidence_scout(item, query_plan, baseline_top_hits)
-        supplemental_plan = self.supplemental_gate.plan(
-            item=item,
-            query_plan=query_plan,
-            scout_report=scout_report,
-            baseline_status=prediction.answer_status,
-            baseline_critic_flags=baseline_critic_flags,
-        )
-
-        if supplemental_plan.enabled:
-            supplemental_started = perf_counter_ms()
-            supplemental_top_hits: list[dict[str, Any]] = []
-            supplemental_vector_hits: list[dict[str, Any]] = []
-            for supplemental_query in supplemental_plan.queries[: supplemental_plan.rounds]:
-                supplemental_result = self.retrieve(supplemental_query)
-                supplemental_top_hits.extend(supplemental_result.reranked_hits)
-                supplemental_vector_hits.extend(supplemental_result.vector_hits)
-            top_hits = append_unique_hits(baseline_top_hits, supplemental_top_hits)
-            vector_hits = append_unique_hits(baseline_vector_hits, supplemental_vector_hits)
-            retrieval_latency_ms = round(retrieval_latency_ms + (perf_counter_ms() - supplemental_started), 3)
-            self.mas_controller.record_supplemental_plan(supplemental_plan, baseline_hit_count=len(baseline_top_hits), final_hit_count=len(top_hits))
-            self.mas_controller.trace.record(
-                field_id,
-                "supplemental_retrieval_gate",
-                "supplemental_retrieval_finished",
-                {
-                    "reason": supplemental_plan.reason,
-                    "query_count": min(len(supplemental_plan.queries), supplemental_plan.rounds),
-                    "baseline_hit_count": len(baseline_top_hits),
-                    "final_hit_count": len(top_hits),
-                },
-            )
-            if len(top_hits) > len(baseline_top_hits):
-                arbitration = self.mas_controller.run_answer_arbitration(item, query_text, top_hits)
-                generated = arbitration.generated
-                prediction = arbitration.prediction
-                generation_latency_ms = round(generation_latency_ms + arbitration.generation_latency_ms, 3)
-        else:
-            self.mas_controller.record_supplemental_plan(supplemental_plan, baseline_hit_count=len(baseline_top_hits), final_hit_count=len(top_hits))
-            self.mas_controller.trace.record(
-                field_id,
-                "supplemental_retrieval_gate",
-                "supplemental_retrieval_skipped",
-                {"reason": supplemental_plan.reason, "baseline_status": prediction.answer_status},
-            )
-
-        self.trace.record(
-            field_id,
-            "answer_arbitrated",
-            {
-                "chat_model": self.chat_model,
-                "prompt_version": self.prompt_version,
-                "answer_status": generated.get("answer_status"),
-                "source_chunk_ids": generated.get("source_chunk_ids") or [],
-                "reference_source_documents_count": len(generated.get("reference_source_documents") or []),
-                "generation_latency_ms": generation_latency_ms,
-            },
-        )
-
-        overlay_control = self.mas_controller.run_overlay_control(item, generated, prediction, top_hits)
-        critic_flags = overlay_control.critic_flags
-        overlay = overlay_control.overlay
-        if self.config.mas.semantic_risk_critic_enabled:
-            risk_report = self.mas_controller.run_risk_critic(item, generated, top_hits)
-            if risk_report.suggest_review or risk_report.risk_reasons:
-                overlay = overlay_with_semantic_risk(overlay, risk_report.semantic_risk_level, risk_report.risk_reasons)
-        review_item = make_step15_review_item(item, prediction, overlay, top_hits)
-        self.mas_controller.trace.record(
-            field_id,
-            self.mas_controller.overlay_control.name,
-            "overlay_controlled",
-            {
-                "critic_flags": critic_flags,
-                "review_required": overlay.review_required,
-                "writeback_allowed": overlay.writeback_allowed,
-            },
-        )
-        self.trace.record(
-            field_id,
-            "agent_overlay_built",
-            {
-                "raw_status": prediction.answer_status,
-                "suggested_status": overlay.suggested_status,
-                "review_required": overlay.review_required,
-                "writeback_allowed": overlay.writeback_allowed,
-                "risk_level": overlay.risk_level,
-                "reasons": overlay.reasons,
-                "critic_flags": critic_flags,
-                "suggested_reference_source_documents_count": len(overlay.suggested_reference_source_documents),
-            },
-        )
-        self.trace.record(
-            field_id,
-            "prediction_normalized",
-            {"raw_prediction": prediction.to_dict(), "source_ids_valid": prediction.validation.get("source_ids_valid")},
-        )
-        self.trace.record(field_id, "critic_checked", {"critic_flags": critic_flags})
-
         self.trace.record(
             field_id,
             "review_routed",
@@ -1123,14 +909,6 @@ class Step15AgentRunner:
             manifest["artifacts"]["mas_trace"] = "mas_trace.jsonl"
         if (self.out_dir / "agentscope_events.jsonl").exists():
             manifest["artifacts"]["agentscope_events"] = "agentscope_events.jsonl"
-        for artifact_key, artifact_file in {
-            "query_plans": "query_plans.jsonl",
-            "evidence_scout_reports": "evidence_scout_reports.jsonl",
-            "supplemental_retrievals": "supplemental_retrievals.jsonl",
-            "semantic_risk_reports": "semantic_risk_reports.jsonl",
-        }.items():
-            if (self.out_dir / artifact_file).exists():
-                manifest["artifacts"][artifact_key] = artifact_file
         write_json(self.out_dir / "run_manifest.json", manifest)
         (self.out_dir / "run_summary.md").write_text(
             build_run_summary_md(
@@ -1582,37 +1360,6 @@ def hit_index(top_hits: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {str(hit.get("chunk_id")): hit for hit in top_hits if hit.get("chunk_id")}
 
 
-def append_unique_hits(baseline_hits: list[dict[str, Any]], supplemental_hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    output = list(baseline_hits)
-    seen = {str(hit.get("chunk_id")) for hit in output if hit.get("chunk_id")}
-    for hit in supplemental_hits:
-        chunk_id = str(hit.get("chunk_id") or "")
-        if chunk_id and chunk_id in seen:
-            continue
-        if chunk_id:
-            seen.add(chunk_id)
-        output.append(hit)
-    return output
-
-
-def overlay_with_semantic_risk(overlay: AgentOverlay, risk_level: str, risk_reasons: list[str]) -> AgentOverlay:
-    reasons = dedupe([*overlay.reasons, *[str(reason) for reason in risk_reasons if reason]])
-    critic_flags = overlay.critic_flags
-    next_risk_level = overlay.risk_level
-    if risk_level == "high" or overlay.risk_level == "high":
-        next_risk_level = "high"
-    elif risk_level == "medium" or overlay.risk_level == "medium":
-        next_risk_level = "medium"
-    return replace(
-        overlay,
-        review_required=True,
-        writeback_allowed=False,
-        risk_level=next_risk_level,
-        reasons=reasons,
-        critic_flags=critic_flags,
-    )
-
-
 def answered_from_global_intro(source_chunk_ids: list[str], hits: dict[str, dict[str, Any]]) -> bool:
     source_hits = [hits[chunk_id] for chunk_id in source_chunk_ids if chunk_id in hits]
     if not source_hits:
@@ -1671,21 +1418,7 @@ def field_intent_source_mismatch(question_text: str, source_hits: list[dict[str,
 
 def is_retryable_chat_error(exc: Exception) -> bool:
     text = str(exc).lower()
-    return any(
-        marker in text
-        for marker in [
-            "timeout",
-            "timed out",
-            "curl: (28)",
-            "curl: (52)",
-            "curl: (56)",
-            "empty reply from server",
-            "recv failure",
-            "connection reset",
-            "operation timed out",
-            "read timed out",
-        ]
-    )
+    return any(marker in text for marker in ["timeout", "timed out", "curl: (28)", "operation timed out", "read timed out"])
 
 
 def is_json_parse_error(exc: Exception) -> bool:

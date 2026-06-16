@@ -84,18 +84,5 @@ agent:
   human_review_threshold: 0.55
 
 agentscope:
-  enabled: false
-  mode: off
-  optional_dependency: true
-
-mas:
-  enabled: false
-  mode: off
-  max_supplemental_rounds: 1
-  supplemental_enabled_statuses:
-    - partial_clue
-    - not_found
-  preserve_baseline_hits: true
-  allow_supplemental_on_answered: false
-  require_source_validation: true
-  semantic_risk_critic_enabled: false
+  enabled: true
+  mode: equivalent_mas

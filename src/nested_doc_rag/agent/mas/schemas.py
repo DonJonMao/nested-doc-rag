@@ -8,51 +8,9 @@ from nested_doc_rag.schemas.eval import FieldPrediction
 
 
 @dataclass(frozen=True)
-class QueryPlan:
+class QueryPlanOutput:
     base_query: str
     query_text: str
-    primary_query: str
-    fallback_queries: list[str]
-    evidence_slots: list[str]
-    answer_constraints: list[str]
-    preferred_layers: list[str]
-    source_constraints: list[str]
-
-
-QueryPlanOutput = QueryPlan
-
-
-@dataclass(frozen=True)
-class EvidenceRequirement:
-    slot: str
-    required: bool = True
-
-
-@dataclass(frozen=True)
-class EvidenceScoutReport:
-    field_id: str
-    evidence_sufficient: bool
-    missing_slots: list[str]
-    conflict_suspected: bool
-    supplemental_queries: list[str]
-    rationale: str
-
-
-@dataclass(frozen=True)
-class SupplementalRetrievalPlan:
-    field_id: str
-    enabled: bool
-    reason: str
-    queries: list[str]
-    rounds: int
-
-
-@dataclass(frozen=True)
-class SemanticRiskReport:
-    field_id: str
-    semantic_risk_level: str
-    risk_reasons: list[str]
-    suggest_review: bool
 
 
 @dataclass(frozen=True)

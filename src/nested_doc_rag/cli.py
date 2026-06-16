@@ -5,8 +5,8 @@ import json
 import os
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 
+from nested_doc_rag.artifacts import ArtifactValidationError, validate_step15_artifacts
 from nested_doc_rag.agent.backends import (
     DeterministicAnswerGenerator,
     LayeredQdrantEvidenceRetriever,
@@ -15,7 +15,6 @@ from nested_doc_rag.agent.backends import (
     QdrantEvidenceRetriever,
 )
 from nested_doc_rag.agent.step15_runner import Step15AgentRunner, parse_rows_arg, validate_step15_agent_config
-from nested_doc_rag.artifacts import ArtifactValidationError, validate_step15_artifacts
 from nested_doc_rag.embedding import RerankClient
 from nested_doc_rag.gongkan_eval import select_eval_items
 from nested_doc_rag.retrieval import QdrantRetriever
@@ -137,22 +136,6 @@ def build_parser() -> argparse.ArgumentParser:
     judge_cache_group = step15_agent_parser.add_mutually_exclusive_group()
     judge_cache_group.add_argument("--use-judge-cache", dest="use_judge_cache", action="store_true", default=False, help="Reuse cached judge results.")
     judge_cache_group.add_argument("--no-judge-cache", dest="use_judge_cache", action="store_false", help="Disable judge cache.")
-    step15_agent_parser.add_argument(
-        "--mas-mode",
-        choices=["off", "equivalent_mas", "enhanced_mas", "trace_only"],
-        default="off",
-        help="Optional Step15 MAS mode. Default off preserves the original production path.",
-    )
-    agentscope_group = step15_agent_parser.add_mutually_exclusive_group()
-    agentscope_group.add_argument("--agentscope-enabled", dest="agentscope_enabled", action="store_true", default=False)
-    agentscope_group.add_argument("--no-agentscope-enabled", dest="agentscope_enabled", action="store_false")
-    step15_agent_parser.add_argument("--max-supplemental-rounds", type=int, default=1, help="Maximum enhanced_mas supplemental retrieval rounds.")
-    step15_agent_parser.add_argument(
-        "--semantic-risk-critic-enabled",
-        action="store_true",
-        default=False,
-        help="Enable optional semantic risk suggestions in enhanced_mas.",
-    )
     return parser
 
 
@@ -271,7 +254,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
         )
     elif args.command == "run-step15-agent":
-        config = load_app_config(args.config, cli_overrides=step15_mas_cli_overrides(args))
+        config = load_app_config(args.config)
         step12_dir = config.paths.artifacts_dir / "12_gongkan_form_analysis"
         form_items_path = args.form_items or (step12_dir / "form_items.jsonl")
         try:
@@ -344,23 +327,6 @@ def main(argv: Sequence[str] | None = None) -> None:
                 ensure_ascii=False,
             )
         )
-
-
-def step15_mas_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
-    mode = str(getattr(args, "mas_mode", "off") or "off")
-    return {
-        "agentscope": {
-            "enabled": bool(getattr(args, "agentscope_enabled", False)),
-            "mode": mode if mode in {"equivalent_mas", "enhanced_mas", "trace_only"} else "off",
-            "optional_dependency": True,
-        },
-        "mas": {
-            "enabled": mode != "off",
-            "mode": mode,
-            "max_supplemental_rounds": max(0, int(getattr(args, "max_supplemental_rounds", 1) or 0)),
-            "semantic_risk_critic_enabled": bool(getattr(args, "semantic_risk_critic_enabled", False)),
-        },
-    }
 
 
 def build_agent_retriever(
