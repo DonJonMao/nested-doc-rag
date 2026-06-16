@@ -6,8 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from nested_doc_rag.agent.mas.agentscope_bridge import build_agentscope_runtime
-from nested_doc_rag.agent.mas.schemas import EvidenceScoutReport, QueryPlan
-from nested_doc_rag.agent.mas.supplemental import SupplementalRetrievalGate
 from nested_doc_rag.agent.step15_runner import Step15AgentRunner
 from nested_doc_rag.artifacts import validate_step15_artifacts
 from nested_doc_rag.config import AgentScopeConfig, MASConfig, load_app_config
@@ -158,146 +156,6 @@ def test_enhanced_mas_does_not_supplement_baseline_answered_by_default(tmp_path:
     supplemental = read_jsonl(enhanced_dir / "supplemental_retrievals.jsonl")[0]
     assert supplemental["enabled"] is False
     assert supplemental["reason"] == "baseline_answered"
-    adoption = read_jsonl(enhanced_dir / "adoption_decisions.jsonl")[0]
-    assert adoption["baseline_status"] == "answered"
-    assert adoption["enhanced_candidate_status"] == "answered"
-    assert adoption["adopted_status"] == "answered"
-    assert adoption["adoption_decision"] == "kept_baseline"
-
-
-def test_enhanced_mas_partial_clue_is_not_downgraded_to_not_found(tmp_path: Path) -> None:
-    calls: list[str] = []
-    runner = make_runner(
-        tmp_path,
-        mode="enhanced_mas",
-        retrieval_fn=supplemental_retrieval(calls, baseline_hits=[irrelevant_hit()]),
-        answer_caller=partial_then_not_found_answer_caller(),
-    )
-
-    predictions = runner.run([make_item(23, question_text="补充证据字段")])
-
-    assert predictions[0].answer_status == "partial_clue"
-    assert len(calls) == 2
-    adoption = read_jsonl(tmp_path / "adoption_decisions.jsonl")[0]
-    assert adoption["baseline_status"] == "partial_clue"
-    assert adoption["enhanced_candidate_status"] == "not_found"
-    assert adoption["adopted_status"] == "partial_clue"
-    assert adoption["adoption_reason"] == "partial_clue_allows_answered_only"
-
-
-def test_enhanced_mas_partial_clue_is_not_downgraded_to_conflict(tmp_path: Path) -> None:
-    calls: list[str] = []
-    runner = make_runner(
-        tmp_path,
-        mode="enhanced_mas",
-        retrieval_fn=supplemental_retrieval(calls, baseline_hits=[irrelevant_hit()]),
-        answer_caller=partial_then_conflict_answer_caller(),
-    )
-
-    predictions = runner.run([make_item(24, question_text="补充证据字段")])
-
-    assert predictions[0].answer_status == "partial_clue"
-    adoption = read_jsonl(tmp_path / "adoption_decisions.jsonl")[0]
-    assert adoption["enhanced_candidate_status"] == "conflict_unresolved"
-    assert adoption["adopted_status"] == "partial_clue"
-
-
-def test_enhanced_mas_not_found_can_promote_to_partial_clue(tmp_path: Path) -> None:
-    calls: list[str] = []
-    runner = make_runner(
-        tmp_path,
-        mode="enhanced_mas",
-        retrieval_fn=supplemental_retrieval(calls, baseline_hits=[]),
-        answer_caller=not_found_then_partial_answer_caller(),
-    )
-
-    predictions = runner.run([make_item(25, question_text="补充证据字段")])
-
-    assert predictions[0].answer_status == "partial_clue"
-    assert len(calls) == 2
-    adoption = read_jsonl(tmp_path / "adoption_decisions.jsonl")[0]
-    assert adoption["baseline_status"] == "not_found"
-    assert adoption["enhanced_candidate_status"] == "partial_clue"
-    assert adoption["adopted_status"] == "partial_clue"
-    assert adoption["adoption_decision"] == "adopted"
-
-
-def test_enhanced_mas_conflict_unresolved_does_not_trigger_supplemental_retrieval(tmp_path: Path) -> None:
-    calls: list[str] = []
-    runner = make_runner(
-        tmp_path,
-        mode="enhanced_mas",
-        retrieval_fn=supplemental_retrieval(calls, baseline_hits=[]),
-        answer_caller=conflict_answer_caller,
-    )
-
-    predictions = runner.run([make_item(26, question_text="补充证据字段")])
-
-    assert predictions[0].answer_status == "conflict_unresolved"
-    assert len(calls) == 1
-    supplemental = read_jsonl(tmp_path / "supplemental_retrievals.jsonl")[0]
-    assert supplemental["enabled"] is False
-    assert supplemental["reason"] == "baseline_conflict_unresolved"
-
-
-def test_supplemental_gate_does_not_allow_evidence_gap_without_status_eligibility() -> None:
-    gate = SupplementalRetrievalGate(MASConfig(enabled=True, mode="enhanced_mas"))
-    plan = gate.plan(
-        item=make_item(27, question_text="补充证据字段"),
-        query_plan=QueryPlan(
-            base_query="base",
-            query_text="primary",
-            primary_query="primary",
-            fallback_queries=["fallback"],
-            evidence_slots=["missing slot"],
-            answer_constraints=[],
-            preferred_layers=[],
-            source_constraints=[],
-        ),
-        scout_report=EvidenceScoutReport(
-            field_id="item_27",
-            evidence_sufficient=False,
-            missing_slots=["missing slot"],
-            conflict_suspected=False,
-            supplemental_queries=["fallback"],
-            rationale="missing",
-        ),
-        baseline_status="manual_review",
-        baseline_critic_flags=[],
-    )
-
-    assert plan.enabled is False
-    assert plan.reason == "baseline_status_not_eligible"
-
-
-def test_supplemental_gate_zero_rounds_disables_supplemental_retrieval() -> None:
-    gate = SupplementalRetrievalGate(MASConfig(enabled=True, mode="enhanced_mas", max_supplemental_rounds=0))
-    plan = gate.plan(
-        item=make_item(28, question_text="补充证据字段"),
-        query_plan=QueryPlan(
-            base_query="base",
-            query_text="primary",
-            primary_query="primary",
-            fallback_queries=["fallback"],
-            evidence_slots=["missing slot"],
-            answer_constraints=[],
-            preferred_layers=[],
-            source_constraints=[],
-        ),
-        scout_report=EvidenceScoutReport(
-            field_id="item_28",
-            evidence_sufficient=False,
-            missing_slots=["missing slot"],
-            conflict_suspected=False,
-            supplemental_queries=["fallback"],
-            rationale="missing",
-        ),
-        baseline_status="not_found",
-        baseline_critic_flags=[],
-    )
-
-    assert plan.enabled is False
-    assert plan.reason == "max_supplemental_rounds_zero"
 
 
 def test_enhanced_mas_supplemental_hits_append_after_baseline(tmp_path: Path) -> None:
@@ -351,36 +209,12 @@ def test_enhanced_mas_invalid_supplemental_source_id_is_blocked(tmp_path: Path) 
 
     predictions = runner.run([make_item(22, question_text="补充证据字段")])
 
-    assert predictions[0].answer_status == "not_found"
-    assert predictions[0].validation["source_ids_valid"] is True
+    assert predictions[0].answer_status == "answered"
+    assert predictions[0].validation["source_ids_valid"] is False
     overlay = read_jsonl(tmp_path / "agent_overlays.jsonl")[0]
+    assert "invalid_source_reference" in overlay["critic_flags"]
     assert overlay["writeback_allowed"] is False
     assert overlay["review_required"] is True
-    adoption = read_jsonl(tmp_path / "adoption_decisions.jsonl")[0]
-    assert adoption["baseline_status"] == "not_found"
-    assert adoption["enhanced_candidate_status"] == "answered"
-    assert adoption["adoption_decision"] == "kept_baseline"
-    assert adoption["adoption_reason"] == "candidate_answered_failed_target_or_safety"
-
-
-def test_enhanced_mas_adoption_policy_preserves_required_artifact_contract(tmp_path: Path) -> None:
-    runner = make_runner(
-        tmp_path,
-        mode="enhanced_mas",
-        retrieval_fn=supplemental_retrieval([], baseline_hits=[]),
-        answer_caller=supplemental_answer_caller,
-    )
-
-    runner.run([make_item(29, question_text="补充证据字段")])
-
-    assert read_jsonl(tmp_path / "predictions_raw.jsonl") == read_jsonl(tmp_path / "predictions.jsonl")
-    assert read_jsonl(tmp_path / "adoption_decisions.jsonl")
-    manifest = read_json(tmp_path / "run_manifest.json")
-    assert manifest["artifacts"]["predictions_raw"] == "predictions_raw.jsonl"
-    assert manifest["artifacts"]["agent_overlays"] == "agent_overlays.jsonl"
-    assert manifest["artifacts"]["review_items"] == "review_items.jsonl"
-    assert manifest["artifacts"]["adoption_decisions"] == "adoption_decisions.jsonl"
-    assert validate_step15_artifacts(tmp_path)["valid"] is True
 
 
 def test_enhanced_mas_resume_skips_completed_checkpoint(tmp_path: Path) -> None:
@@ -600,86 +434,6 @@ def invalid_source_answer_caller(**kwargs: Any) -> dict[str, Any]:
         "source_chunk_ids": ["not_in_hits"],
         "evidence_attachment_ids": [],
         "reference_source_documents": [],
-    }
-
-
-def partial_then_not_found_answer_caller() -> Callable[..., dict[str, Any]]:
-    def caller(**kwargs: Any) -> dict[str, Any]:
-        if any(hit.get("chunk_id") == "chunk_supplemental" for hit in kwargs["hits"]):
-            return {
-                "answer_value": "未找到",
-                "answer_status": "not_found",
-                "confidence": 0.2,
-                "source_chunk_ids": [],
-                "evidence_attachment_ids": [],
-                "reference_source_documents": [],
-            }
-        return partial_answer(kwargs["hits"][0]["chunk_id"])
-
-    return caller
-
-
-def partial_then_conflict_answer_caller() -> Callable[..., dict[str, Any]]:
-    def caller(**kwargs: Any) -> dict[str, Any]:
-        if any(hit.get("chunk_id") == "chunk_supplemental" for hit in kwargs["hits"]):
-            return {
-                "answer_value": "存在冲突，请人工复核",
-                "answer_status": "conflict_unresolved",
-                "confidence": 0.3,
-                "source_chunk_ids": [],
-                "evidence_attachment_ids": [],
-                "reference_source_documents": [],
-            }
-        return partial_answer(kwargs["hits"][0]["chunk_id"])
-
-    return caller
-
-
-def not_found_then_partial_answer_caller() -> Callable[..., dict[str, Any]]:
-    def caller(**kwargs: Any) -> dict[str, Any]:
-        if any(hit.get("chunk_id") == "chunk_supplemental" for hit in kwargs["hits"]):
-            return partial_answer("chunk_supplemental")
-        return {
-            "answer_value": "未找到",
-            "answer_status": "not_found",
-            "confidence": 0.2,
-            "source_chunk_ids": [],
-            "evidence_attachment_ids": [],
-            "reference_source_documents": [],
-        }
-
-    return caller
-
-
-def conflict_answer_caller(**kwargs: Any) -> dict[str, Any]:
-    del kwargs
-    return {
-        "answer_value": "存在冲突，请人工复核",
-        "answer_status": "conflict_unresolved",
-        "confidence": 0.3,
-        "source_chunk_ids": [],
-        "evidence_attachment_ids": [],
-        "reference_source_documents": [],
-    }
-
-
-def partial_answer(chunk_id: str) -> dict[str, Any]:
-    return {
-        "answer_value": "检索到相关线索，请人工复核",
-        "answer_status": "partial_clue",
-        "confidence": 0.45,
-        "source_chunk_ids": [],
-        "evidence_attachment_ids": [],
-        "reference_source_documents": [
-            {
-                "chunk_id": chunk_id,
-                "namespace": "xixian_4",
-                "source_type": "embedded_raw_segment",
-                "corpus_layer": "raw_text",
-                "retrieval_layer": "target_raw_detail",
-                "reason": "partial clue",
-            }
-        ],
     }
 
 

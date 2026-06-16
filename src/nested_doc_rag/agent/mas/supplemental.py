@@ -47,15 +47,13 @@ class SupplementalRetrievalGate:
             return self._disabled(field_id, "enhanced_mas_disabled")
         if self.config.max_supplemental_rounds < 1:
             return self._disabled(field_id, "max_supplemental_rounds_zero")
-        if baseline_status == "conflict_unresolved":
-            return self._disabled(field_id, "baseline_conflict_unresolved")
         if baseline_status == "answered" and not self.config.allow_supplemental_on_answered:
             return self._disabled(field_id, "baseline_answered")
 
         baseline_critic_flags = baseline_critic_flags or []
         status_allows = baseline_status in set(self.config.supplemental_enabled_statuses)
         evidence_gap = not scout_report.evidence_sufficient or bool(scout_report.missing_slots)
-        if not status_allows:
+        if not status_allows and not evidence_gap:
             return self._disabled(field_id, "baseline_status_not_eligible")
         if baseline_status == "answered" and not baseline_critic_flags and not self.config.allow_supplemental_on_answered:
             return self._disabled(field_id, "answered_without_critical_flags")

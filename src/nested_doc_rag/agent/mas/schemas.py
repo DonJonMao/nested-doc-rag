@@ -56,16 +56,6 @@ class SemanticRiskReport:
 
 
 @dataclass(frozen=True)
-class AdoptionDecision:
-    field_id: str
-    baseline_status: str
-    enhanced_candidate_status: str
-    adopted_status: str
-    adoption_decision: str
-    adoption_reason: str
-
-
-@dataclass(frozen=True)
 class EvidenceRetrievalOutput:
     retrieval_result: Step15RetrievalResult
     top_hits: list[dict[str, Any]]
