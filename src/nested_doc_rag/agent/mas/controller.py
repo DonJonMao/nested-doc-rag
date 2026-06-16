@@ -8,7 +8,7 @@ from nested_doc_rag.io import write_jsonl
 
 from .agentscope_bridge import AgentScopeRuntime, build_agentscope_runtime
 from .roles import AnswerArbiterAgent, EvidenceRetrievalAgent, EvidenceScoutAgent, OverlayControlRole, QueryPlannerAgent, RiskCriticAgent
-from .schemas import EvidenceScoutReport, QueryPlan, SemanticRiskReport, SupplementalRetrievalPlan
+from .schemas import AdoptionDecision, EvidenceScoutReport, QueryPlan, SemanticRiskReport, SupplementalRetrievalPlan
 from .trace import MASTraceRecorder
 
 
@@ -28,6 +28,7 @@ class MASStep15Controller:
         self.evidence_scout_reports: list[dict[str, Any]] = []
         self.supplemental_retrievals: list[dict[str, Any]] = []
         self.semantic_risk_reports: list[dict[str, Any]] = []
+        self.adoption_decisions: list[dict[str, Any]] = []
 
     def run_query_planner(self, item: dict[str, Any]) -> QueryPlan:
         query_plan = self.runtime.run_role(
@@ -99,6 +100,9 @@ class MASStep15Controller:
         record["baseline_hit_count"] = baseline_hit_count
         record["final_hit_count"] = final_hit_count
         self.supplemental_retrievals.append(record)
+
+    def record_adoption_decision(self, decision: AdoptionDecision) -> None:
+        self.adoption_decisions.append(_to_record(decision))
 
     def process_item(self, item: dict[str, Any]) -> Any:
         from nested_doc_rag.agent.step15_runner import Step15FieldResult, field_id_for_item
@@ -180,6 +184,7 @@ class MASStep15Controller:
         _write_optional_jsonl(out_dir / "evidence_scout_reports.jsonl", self.evidence_scout_reports)
         _write_optional_jsonl(out_dir / "supplemental_retrievals.jsonl", self.supplemental_retrievals)
         _write_optional_jsonl(out_dir / "semantic_risk_reports.jsonl", self.semantic_risk_reports)
+        _write_optional_jsonl(out_dir / "adoption_decisions.jsonl", self.adoption_decisions)
 
     def record_trace_only_result(self, item: dict[str, Any], result: Any) -> None:
         from nested_doc_rag.agent.step15_runner import field_id_for_item

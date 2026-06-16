@@ -28,6 +28,7 @@ from nested_doc_rag.retrieval import QdrantRetriever
 from nested_doc_rag.schemas.eval import FieldPrediction
 
 from .mas.controller import Step15MASController
+from .mas.schemas import AdoptionDecision
 from .mas.supplemental import SupplementalRetrievalGate
 
 AnswerCaller = Callable[..., dict[str, Any]]
@@ -545,19 +546,26 @@ class Step15AgentRunner:
             },
         )
 
-        arbitration = self.mas_controller.run_answer_arbitration(item, query_text, top_hits)
-        generated = arbitration.generated
-        prediction = arbitration.prediction
-        generation_latency_ms = arbitration.generation_latency_ms
-        baseline_critic_flags = critic_check_step15_answer(item, generated, top_hits)
+        baseline_arbitration = self.mas_controller.run_answer_arbitration(item, query_text, top_hits)
+        baseline_generated = baseline_arbitration.generated
+        baseline_prediction = baseline_arbitration.prediction
+        generation_latency_ms = baseline_arbitration.generation_latency_ms
+        baseline_critic_flags = critic_check_step15_answer(item, baseline_generated, baseline_top_hits)
         scout_report = self.mas_controller.run_evidence_scout(item, query_plan, baseline_top_hits)
         supplemental_plan = self.supplemental_gate.plan(
             item=item,
             query_plan=query_plan,
             scout_report=scout_report,
-            baseline_status=prediction.answer_status,
+            baseline_status=baseline_prediction.answer_status,
             baseline_critic_flags=baseline_critic_flags,
         )
+
+        candidate_generated = baseline_generated
+        candidate_prediction = baseline_prediction
+        candidate_top_hits = baseline_top_hits
+        candidate_vector_hits = baseline_vector_hits
+        candidate_critic_flags = baseline_critic_flags
+        candidate_available = False
 
         if supplemental_plan.enabled:
             supplemental_started = perf_counter_ms()
@@ -567,10 +575,14 @@ class Step15AgentRunner:
                 supplemental_result = self.retrieve(supplemental_query)
                 supplemental_top_hits.extend(supplemental_result.reranked_hits)
                 supplemental_vector_hits.extend(supplemental_result.vector_hits)
-            top_hits = append_unique_hits(baseline_top_hits, supplemental_top_hits)
-            vector_hits = append_unique_hits(baseline_vector_hits, supplemental_vector_hits)
+            candidate_top_hits = append_unique_hits(baseline_top_hits, supplemental_top_hits)
+            candidate_vector_hits = append_unique_hits(baseline_vector_hits, supplemental_vector_hits)
             retrieval_latency_ms = round(retrieval_latency_ms + (perf_counter_ms() - supplemental_started), 3)
-            self.mas_controller.record_supplemental_plan(supplemental_plan, baseline_hit_count=len(baseline_top_hits), final_hit_count=len(top_hits))
+            self.mas_controller.record_supplemental_plan(
+                supplemental_plan,
+                baseline_hit_count=len(baseline_top_hits),
+                final_hit_count=len(candidate_top_hits),
+            )
             self.mas_controller.trace.record(
                 field_id,
                 "supplemental_retrieval_gate",
@@ -579,22 +591,59 @@ class Step15AgentRunner:
                     "reason": supplemental_plan.reason,
                     "query_count": min(len(supplemental_plan.queries), supplemental_plan.rounds),
                     "baseline_hit_count": len(baseline_top_hits),
-                    "final_hit_count": len(top_hits),
+                    "final_hit_count": len(candidate_top_hits),
                 },
             )
-            if len(top_hits) > len(baseline_top_hits):
-                arbitration = self.mas_controller.run_answer_arbitration(item, query_text, top_hits)
-                generated = arbitration.generated
-                prediction = arbitration.prediction
-                generation_latency_ms = round(generation_latency_ms + arbitration.generation_latency_ms, 3)
+            if len(candidate_top_hits) > len(baseline_top_hits):
+                candidate_arbitration = self.mas_controller.run_answer_arbitration(item, query_text, candidate_top_hits)
+                candidate_generated = candidate_arbitration.generated
+                candidate_prediction = candidate_arbitration.prediction
+                candidate_critic_flags = critic_check_step15_answer(item, candidate_generated, candidate_top_hits)
+                candidate_available = True
+                generation_latency_ms = round(generation_latency_ms + candidate_arbitration.generation_latency_ms, 3)
         else:
             self.mas_controller.record_supplemental_plan(supplemental_plan, baseline_hit_count=len(baseline_top_hits), final_hit_count=len(top_hits))
             self.mas_controller.trace.record(
                 field_id,
                 "supplemental_retrieval_gate",
                 "supplemental_retrieval_skipped",
-                {"reason": supplemental_plan.reason, "baseline_status": prediction.answer_status},
+                {"reason": supplemental_plan.reason, "baseline_status": baseline_prediction.answer_status},
             )
+
+        adoption = decide_enhanced_candidate_adoption(
+            field_id=field_id,
+            baseline_prediction=baseline_prediction,
+            baseline_critic_flags=baseline_critic_flags,
+            candidate_prediction=candidate_prediction,
+            candidate_critic_flags=candidate_critic_flags,
+            candidate_top_hits=candidate_top_hits,
+            target_namespace=self.target_namespace,
+            candidate_available=candidate_available,
+        )
+        self.mas_controller.record_adoption_decision(adoption)
+        self.mas_controller.trace.record(
+            field_id,
+            "adoption_policy",
+            "candidate_evaluated",
+            {
+                "baseline_status": adoption.baseline_status,
+                "enhanced_candidate_status": adoption.enhanced_candidate_status,
+                "adopted_status": adoption.adopted_status,
+                "adoption_decision": adoption.adoption_decision,
+                "adoption_reason": adoption.adoption_reason,
+            },
+        )
+
+        if adoption.adoption_decision == "adopted":
+            generated = candidate_generated
+            prediction = candidate_prediction
+            top_hits = candidate_top_hits
+            vector_hits = candidate_vector_hits
+        else:
+            generated = baseline_generated
+            prediction = baseline_prediction
+            top_hits = baseline_top_hits
+            vector_hits = baseline_vector_hits
 
         self.trace.record(
             field_id,
@@ -1128,6 +1177,7 @@ class Step15AgentRunner:
             "evidence_scout_reports": "evidence_scout_reports.jsonl",
             "supplemental_retrievals": "supplemental_retrievals.jsonl",
             "semantic_risk_reports": "semantic_risk_reports.jsonl",
+            "adoption_decisions": "adoption_decisions.jsonl",
         }.items():
             if (self.out_dir / artifact_file).exists():
                 manifest["artifacts"][artifact_key] = artifact_file
@@ -1593,6 +1643,172 @@ def append_unique_hits(baseline_hits: list[dict[str, Any]], supplemental_hits: l
             seen.add(chunk_id)
         output.append(hit)
     return output
+
+
+def decide_enhanced_candidate_adoption(
+    *,
+    field_id: str,
+    baseline_prediction: FieldPrediction,
+    baseline_critic_flags: list[str],
+    candidate_prediction: FieldPrediction,
+    candidate_critic_flags: list[str],
+    candidate_top_hits: list[dict[str, Any]],
+    target_namespace: str,
+    candidate_available: bool,
+) -> AdoptionDecision:
+    baseline_status = baseline_prediction.answer_status
+    candidate_status = candidate_prediction.answer_status
+    baseline_critical_flags = critical_flags_from(baseline_critic_flags)
+    candidate_critical_flags = critical_flags_from(candidate_critic_flags)
+    baseline_source_ids_valid = bool(baseline_prediction.validation.get("source_ids_valid"))
+    candidate_source_ids_valid = bool(candidate_prediction.validation.get("source_ids_valid"))
+
+    if not candidate_available:
+        return make_adoption_decision(
+            field_id,
+            baseline_status=baseline_status,
+            candidate_status=candidate_status,
+            adopted_status=baseline_status,
+            adopted=False,
+            reason="no_enhanced_candidate",
+        )
+
+    if baseline_status == "answered" and baseline_source_ids_valid and not baseline_critical_flags:
+        return make_adoption_decision(
+            field_id,
+            baseline_status=baseline_status,
+            candidate_status=candidate_status,
+            adopted_status=baseline_status,
+            adopted=False,
+            reason="baseline_answered_safe",
+        )
+
+    if baseline_status == "conflict_unresolved":
+        return make_adoption_decision(
+            field_id,
+            baseline_status=baseline_status,
+            candidate_status=candidate_status,
+            adopted_status=baseline_status,
+            adopted=False,
+            reason="baseline_conflict_review",
+        )
+
+    if baseline_status == "partial_clue":
+        if candidate_status != "answered":
+            return make_adoption_decision(
+                field_id,
+                baseline_status=baseline_status,
+                candidate_status=candidate_status,
+                adopted_status=baseline_status,
+                adopted=False,
+                reason="partial_clue_allows_answered_only",
+            )
+        if candidate_source_ids_valid and not candidate_critical_flags:
+            return make_adoption_decision(
+                field_id,
+                baseline_status=baseline_status,
+                candidate_status=candidate_status,
+                adopted_status=candidate_status,
+                adopted=True,
+                reason="partial_clue_to_answered",
+            )
+        return make_adoption_decision(
+            field_id,
+            baseline_status=baseline_status,
+            candidate_status=candidate_status,
+            adopted_status=baseline_status,
+            adopted=False,
+            reason="candidate_answered_failed_safety",
+        )
+
+    if baseline_status == "not_found":
+        if candidate_status == "partial_clue":
+            return make_adoption_decision(
+                field_id,
+                baseline_status=baseline_status,
+                candidate_status=candidate_status,
+                adopted_status=candidate_status,
+                adopted=True,
+                reason="not_found_to_partial_clue",
+            )
+        if candidate_status == "answered":
+            if (
+                candidate_source_ids_valid
+                and not candidate_critical_flags
+                and answered_sources_are_target_evidence(candidate_prediction, candidate_top_hits, target_namespace)
+            ):
+                return make_adoption_decision(
+                    field_id,
+                    baseline_status=baseline_status,
+                    candidate_status=candidate_status,
+                    adopted_status=candidate_status,
+                    adopted=True,
+                    reason="not_found_to_answered_target_evidence",
+                )
+            return make_adoption_decision(
+                field_id,
+                baseline_status=baseline_status,
+                candidate_status=candidate_status,
+                adopted_status=baseline_status,
+                adopted=False,
+                reason="candidate_answered_failed_target_or_safety",
+            )
+        return make_adoption_decision(
+            field_id,
+            baseline_status=baseline_status,
+            candidate_status=candidate_status,
+            adopted_status=baseline_status,
+            adopted=False,
+            reason="not_found_candidate_not_upgrade",
+        )
+
+    return make_adoption_decision(
+        field_id,
+        baseline_status=baseline_status,
+        candidate_status=candidate_status,
+        adopted_status=baseline_status,
+        adopted=False,
+        reason="baseline_status_not_adoptable",
+    )
+
+
+def make_adoption_decision(
+    field_id: str,
+    *,
+    baseline_status: str,
+    candidate_status: str,
+    adopted_status: str,
+    adopted: bool,
+    reason: str,
+) -> AdoptionDecision:
+    return AdoptionDecision(
+        field_id=field_id,
+        baseline_status=baseline_status,
+        enhanced_candidate_status=candidate_status,
+        adopted_status=adopted_status,
+        adoption_decision="adopted" if adopted else "kept_baseline",
+        adoption_reason=reason,
+    )
+
+
+def critical_flags_from(critic_flags: list[str]) -> list[str]:
+    return [flag for flag in critic_flags if flag in CRITICAL_OVERLAY_FLAGS]
+
+
+def answered_sources_are_target_evidence(prediction: FieldPrediction, top_hits: list[dict[str, Any]], target_namespace: str) -> bool:
+    if prediction.answer_status != "answered" or not prediction.source_chunk_ids:
+        return False
+    hits = hit_index(top_hits)
+    for chunk_id in prediction.source_chunk_ids:
+        hit = hits.get(str(chunk_id))
+        if not hit:
+            return False
+        if hit.get("namespace") != target_namespace:
+            return False
+        retrieval_layer = str(hit.get("retrieval_layer") or "")
+        if not retrieval_layer.startswith("target_"):
+            return False
+    return True
 
 
 def overlay_with_semantic_risk(overlay: AgentOverlay, risk_level: str, risk_reasons: list[str]) -> AgentOverlay:
