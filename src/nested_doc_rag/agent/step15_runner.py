@@ -22,7 +22,7 @@ from nested_doc_rag.evaluation.step15_engine import (
 )
 from nested_doc_rag.excel.writeback import patch_workbook
 from nested_doc_rag.gongkan_eval import build_judge_messages, build_masked_query, call_deepseek_json
-from nested_doc_rag.grounding import EvidenceStrengthEvaluator, EvidenceStrengthResult, strength_rank
+from nested_doc_rag.grounding import EvidenceStrengthEvaluator, EvidenceStrengthResult, apply_evidence_strength_to_overlay
 from nested_doc_rag.io import display_text, read_jsonl, write_json, write_jsonl
 from nested_doc_rag.llm import JsonRepairError
 from nested_doc_rag.retrieval import BM25Index, QdrantRetriever
@@ -287,6 +287,10 @@ class Step15AgentRunner:
             "room_context": display_text(self.room_context),
             "rows": rows_label_for_items(items),
             "retrieval_mode": self.retrieval_mode,
+            "retrieval_fusion_mode": "hybrid" if self.hybrid_enabled else "dense",
+            "hybrid_enabled": self.hybrid_enabled,
+            "lexical_index_status": self.lexical_index_status,
+            "lexical_index_path": str(self.lexical_index_path) if self.lexical_index_path else "",
             "fields_total": len(items),
             "fields_completed": skipped_completed_count,
             "fields_failed": 0,
@@ -399,7 +403,14 @@ class Step15AgentRunner:
         vector_hits = retrieval_result.vector_hits
         if self.config.hybrid_retrieval.write_hybrid_trace and retrieval_result.trace_records:
             for record in retrieval_result.trace_records:
-                self.hybrid_trace_records.append({"field_id": field_id, **record})
+                self.hybrid_trace_records.append(
+                    {
+                        "field_id": field_id,
+                        "lexical_index_status": self.lexical_index_status,
+                        "lexical_index_path": str(self.lexical_index_path) if self.lexical_index_path else "",
+                        **record,
+                    }
+                )
         self.trace.record(
             field_id,
             "layered_retrieval_finished",
@@ -412,6 +423,9 @@ class Step15AgentRunner:
                 "retrieval_latency_ms": retrieval_latency_ms,
                 "top_chunk_ids": chunk_ids(top_hits),
                 "hybrid_fallback_count": (retrieval_result.metadata or {}).get("hybrid_fallback_count", 0),
+                "bm25_hit_count": (retrieval_result.metadata or {}).get("bm25_hit_count", 0),
+                "lexical_index_status": self.lexical_index_status,
+                "lexical_index_path": str(self.lexical_index_path) if self.lexical_index_path else "",
             },
         )
 
@@ -780,7 +794,7 @@ class Step15AgentRunner:
 
     def load_or_build_lexical_index(self) -> BM25Index | None:
         if self.config.hybrid_retrieval.lexical_backend != "bm25":
-            self.lexical_index_status = "unsupported_backend"
+            self.lexical_index_status = "failed"
             return None
         index_path = self.lexical_index_path or (self.qdrant_path.parent / "lexical_index.json")
         self.lexical_index_path = index_path
@@ -792,12 +806,20 @@ class Step15AgentRunner:
             if manifest_path.exists():
                 index = BM25Index.from_jsonl(manifest_path)
                 index.save(index_path)
-                self.lexical_index_status = "built_from_manifest"
+                self.lexical_index_status = "built"
                 return index
             self.lexical_index_status = "missing"
             return None
         except Exception as exc:  # noqa: BLE001 - hybrid must fall back to dense-only
-            self.lexical_index_status = f"failed: {exc}"
+            self.lexical_index_status = "failed"
+            self.trace.record(
+                None,
+                "lexical_index_failed",
+                {
+                    "lexical_index_path": str(index_path),
+                    "error": display_text(str(exc), 240),
+                },
+            )
             return None
 
     def call_answer(self, **kwargs: Any) -> dict[str, Any]:
@@ -1207,69 +1229,6 @@ def build_agent_overlay_for_step15_prediction(
     )
 
 
-def apply_evidence_strength_to_overlay(
-    prediction: FieldPrediction,
-    overlay: AgentOverlay,
-    evidence: EvidenceStrengthResult,
-    *,
-    min_strength_for_answered: str,
-    min_strength_for_writeback: str,
-    downgrade_unsupported_answer_to_partial: bool,
-) -> AgentOverlay:
-    if prediction.answer_status != "answered":
-        return overlay
-    required_answer_rank = strength_rank(min_strength_for_answered)
-    required_writeback_rank = strength_rank(min_strength_for_writeback)
-    current_rank = strength_rank(evidence.evidence_strength)
-    reasons = list(overlay.reasons)
-    critic_flags = list(overlay.critic_flags)
-    suggested_status = overlay.suggested_status
-    suggested_answer_value = overlay.suggested_answer_value
-    review_required = overlay.review_required
-    writeback_allowed = overlay.writeback_allowed
-    risk_level = overlay.risk_level
-
-    if current_rank < required_answer_rank:
-        review_required = True
-        writeback_allowed = False
-        risk_level = max_risk_level(risk_level, "medium")
-        reasons.append("unsupported_by_strong_evidence")
-        critic_flags.append("unsupported_by_strong_evidence")
-        if downgrade_unsupported_answer_to_partial:
-            suggested_status = "partial_clue"
-            suggested_answer_value = "检索到相关线索，但证据强度不足以安全直接填写；请人工复核。"
-    if current_rank < required_writeback_rank:
-        writeback_allowed = False
-        review_required = True
-        risk_level = max_risk_level(risk_level, "medium")
-    if evidence.evidence_strength == "E0":
-        writeback_allowed = False
-        review_required = True
-        risk_level = max_risk_level(risk_level, "medium")
-        reasons.append("no_valid_evidence_support")
-        critic_flags.append("no_valid_evidence_support")
-    return AgentOverlay(
-        field_id=overlay.field_id,
-        row_index=overlay.row_index,
-        target_cell=overlay.target_cell,
-        critic_flags=dedupe(critic_flags),
-        review_required=review_required,
-        writeback_allowed=writeback_allowed,
-        suggested_status=suggested_status,
-        suggested_answer_value=suggested_answer_value,
-        suggested_reference_source_documents=overlay.suggested_reference_source_documents,
-        suggested_reference_chunk_ids=overlay.suggested_reference_chunk_ids,
-        suggested_reference_snippets=overlay.suggested_reference_snippets,
-        risk_level=risk_level,
-        reasons=dedupe(reasons),
-    )
-
-
-def max_risk_level(left: str, right: str) -> str:
-    ranks = {"low": 0, "medium": 1, "high": 2}
-    return left if ranks.get(left, 0) >= ranks.get(right, 0) else right
-
-
 def critic_check_step15_answer(
     item: dict[str, Any],
     generated: dict[str, Any],
@@ -1644,6 +1603,11 @@ def build_trace_summary(
         for event in events
         if event.step == "layered_retrieval_finished"
     )
+    bm25_hit_count = sum(
+        int(event.payload.get("bm25_hit_count") or 0)
+        for event in events
+        if event.step == "layered_retrieval_finished"
+    )
     return {
         "total_fields": len(predictions),
         "answered_count": status_counts.get("answered", 0),
@@ -1660,6 +1624,7 @@ def build_trace_summary(
         "resumed_count": sum(1 for event in events if event.step == "resume_started"),
         "skipped_completed_count": sum(int(event.payload.get("skipped_completed_count") or 0) for event in events if event.step == "resume_started"),
         "evidence_strength_distribution": dict(evidence_strengths),
+        "bm25_hit_count": bm25_hit_count,
         "hybrid_fallback_count": hybrid_fallback_count,
     }
 

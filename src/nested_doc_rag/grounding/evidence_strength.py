@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from nested_doc_rag.io import display_text
@@ -134,6 +134,71 @@ class EvidenceStrengthEvaluator:
             matched_answer_tokens=matched_tokens,
             missing_answer_tokens=missing_tokens,
         )
+
+
+def apply_evidence_strength_to_overlay(
+    prediction: Any,
+    overlay: Any,
+    evidence: EvidenceStrengthResult,
+    *,
+    min_strength_for_answered: str,
+    min_strength_for_writeback: str,
+    downgrade_unsupported_answer_to_partial: bool,
+) -> Any:
+    if getattr(prediction, "answer_status", None) != "answered":
+        return overlay
+    required_answer_rank = strength_rank(min_strength_for_answered)
+    required_writeback_rank = strength_rank(min_strength_for_writeback)
+    current_rank = strength_rank(evidence.evidence_strength)
+    reasons = list(getattr(overlay, "reasons", []) or [])
+    critic_flags = list(getattr(overlay, "critic_flags", []) or [])
+    suggested_status = getattr(overlay, "suggested_status", None)
+    suggested_answer_value = getattr(overlay, "suggested_answer_value", None)
+    review_required = bool(getattr(overlay, "review_required", False))
+    writeback_allowed = bool(getattr(overlay, "writeback_allowed", False))
+    risk_level = str(getattr(overlay, "risk_level", "low") or "low")
+    global_intro_only = "global_intro_only" in evidence.reasons
+
+    if current_rank < required_answer_rank:
+        review_required = True
+        writeback_allowed = False
+        risk_level = max_risk_level(risk_level, "medium")
+        reasons.append("unsupported_by_strong_evidence")
+        critic_flags.append("unsupported_by_strong_evidence")
+        if downgrade_unsupported_answer_to_partial:
+            suggested_status = "partial_clue"
+            suggested_answer_value = "检索到相关线索，但证据强度不足以安全直接填写；请人工复核。"
+    if current_rank < required_writeback_rank:
+        writeback_allowed = False
+        review_required = True
+        risk_level = max_risk_level(risk_level, "medium")
+    if global_intro_only:
+        review_required = True
+        writeback_allowed = False
+        risk_level = max_risk_level(risk_level, "medium")
+        reasons.append("global_intro_only")
+    if evidence.evidence_strength == "E0":
+        writeback_allowed = False
+        review_required = True
+        risk_level = "high"
+        reasons.append("no_valid_evidence_support")
+        critic_flags.append("no_valid_evidence_support")
+
+    return replace(
+        overlay,
+        critic_flags=dedupe(critic_flags),
+        review_required=review_required,
+        writeback_allowed=writeback_allowed,
+        suggested_status=suggested_status,
+        suggested_answer_value=suggested_answer_value,
+        risk_level=risk_level,
+        reasons=dedupe(reasons),
+    )
+
+
+def max_risk_level(left: str, right: str) -> str:
+    ranks = {"low": 0, "medium": 1, "high": 2}
+    return left if ranks.get(left, 0) >= ranks.get(right, 0) else right
 
 
 def strength_rank(strength: str) -> int:

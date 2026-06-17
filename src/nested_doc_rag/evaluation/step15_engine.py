@@ -84,7 +84,7 @@ def run_step15_retrieval(
                         "fused_hit_ids": [str(hit.get("chunk_id")) for hit in reranked_hits if hit.get("chunk_id")],
                     }
                 ],
-                metadata={"hybrid_enabled": True, "hybrid_fallback_used": True},
+                metadata={"hybrid_enabled": True, "hybrid_fallback_count": 1, "bm25_hit_count": 0},
             )
         reranked_hits, vector_hits, trace_records = hybrid_layered_rerank_hits(
             query_text,
@@ -109,6 +109,7 @@ def run_step15_retrieval(
             metadata={
                 "hybrid_enabled": True,
                 "hybrid_fallback_count": sum(1 for record in trace_records if record.get("fallback_used")),
+                "bm25_hit_count": sum(int(record.get("bm25_hit_count") or len(record.get("bm25_hit_ids") or [])) for record in trace_records),
             },
         )
     if retrieval_mode == "layered":

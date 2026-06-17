@@ -11,10 +11,11 @@ from nested_doc_rag.agent.step15_runner import (
     make_step15_review_item,
 )
 from nested_doc_rag.artifacts import validate_step15_artifacts
-from nested_doc_rag.cli import build_parser
+from nested_doc_rag.cli import build_parser, resolve_hybrid_enabled, resolve_step15_retrieval_plan
 from nested_doc_rag.config import load_app_config
 from nested_doc_rag.evaluation.step15_engine import Step15RetrievalResult
 from nested_doc_rag.io import read_jsonl, write_jsonl
+from nested_doc_rag.retrieval.lexical import BM25Index
 from nested_doc_rag.schemas.eval import FieldPrediction
 
 
@@ -204,6 +205,9 @@ def test_dense_default_artifact_contract_unchanged(tmp_path: Path) -> None:
     manifest = read_jsonl(tmp_path / "predictions_raw.jsonl")[0]
     assert "evidence_strength" not in manifest
     assert not (tmp_path / "hybrid_retrieval_trace.jsonl").exists()
+    summary = load_json_file(tmp_path / "summary.json")
+    assert summary["trace_summary"]["bm25_hit_count"] == 0
+    assert summary["retrieval_fusion_mode"] == "dense"
 
 
 def test_hybrid_mode_artifact_contract_with_optional_trace(tmp_path: Path) -> None:
@@ -224,6 +228,85 @@ def test_hybrid_mode_artifact_contract_with_optional_trace(tmp_path: Path) -> No
     assert run_manifest["artifacts"]["hybrid_retrieval_trace"] == "hybrid_retrieval_trace.jsonl"
     trace_rows = read_jsonl(tmp_path / "hybrid_retrieval_trace.jsonl")
     assert trace_rows[0]["fused_hit_ids"] == ["chunk_main"]
+
+
+def test_hybrid_mode_uses_bm25_and_rrf_without_fallback(tmp_path: Path) -> None:
+    lexical_path = tmp_path / "lexical_index.json"
+    BM25Index.from_records([lexical_record("chunk_bm25", "市电进线情况：2路市电，来自同一变电站。")]).save(lexical_path)
+    config = load_app_config(
+        project_root=tmp_path,
+        default_config=tmp_path / "missing.yaml",
+        cli_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+    runner = Step15AgentRunner(
+        config=config,
+        target_namespace="xixian_4",
+        global_namespace="global",
+        room_context="西咸4号楼 301机房",
+        out_dir=tmp_path,
+        retrieval_mode="layered",
+        layered_plan=[step15_layer_spec()],
+        hybrid_enabled=True,
+        grounding_enabled=False,
+        lexical_index_path=lexical_path,
+        retriever=FakeStep15DenseRetriever(),
+        reranker=FakeStep15Reranker(),
+        answer_caller=answered_answer_caller,
+        chat_retry_backoff_seconds=0,
+        writeback_fn=fake_writeback([]),
+    )
+
+    runner.run([make_item(4)])
+
+    trace_rows = read_jsonl(tmp_path / "hybrid_retrieval_trace.jsonl")
+    assert trace_rows[0]["lexical_index_status"] == "loaded"
+    assert trace_rows[0]["bm25_hit_count"] >= 1
+    assert trace_rows[0]["bm25_hit_ids"] == ["chunk_bm25"]
+    assert trace_rows[0]["fused_hit_ids"]
+    assert trace_rows[0]["fallback_used"] is False
+    assert read_jsonl(tmp_path / "trace.jsonl")
+    summary = load_json_file(tmp_path / "summary.json")
+    assert summary["lexical_index_status"] == "loaded"
+    assert summary["trace_summary"]["bm25_hit_count"] >= 1
+    assert summary["trace_summary"]["hybrid_fallback_count"] == 0
+
+
+def test_hybrid_missing_bm25_fallback_is_visible_in_trace_and_summary(tmp_path: Path) -> None:
+    lexical_path = tmp_path / "missing_index" / "lexical_index.json"
+    config = load_app_config(
+        project_root=tmp_path,
+        default_config=tmp_path / "missing.yaml",
+        cli_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+    runner = Step15AgentRunner(
+        config=config,
+        target_namespace="xixian_4",
+        global_namespace="global",
+        room_context="西咸4号楼 301机房",
+        out_dir=tmp_path,
+        retrieval_mode="layered",
+        layered_plan=[step15_layer_spec()],
+        hybrid_enabled=True,
+        grounding_enabled=False,
+        lexical_index_path=lexical_path,
+        retriever=FakeStep15DenseRetriever(),
+        reranker=FakeStep15Reranker(),
+        answer_caller=answered_answer_caller,
+        chat_retry_backoff_seconds=0,
+        writeback_fn=fake_writeback([]),
+    )
+
+    runner.run([make_item(4)])
+
+    trace_rows = read_jsonl(tmp_path / "hybrid_retrieval_trace.jsonl")
+    assert trace_rows[0]["lexical_index_status"] == "missing"
+    assert trace_rows[0]["bm25_hit_count"] == 0
+    assert trace_rows[0]["fallback_used"] is True
+    assert trace_rows[0]["fallback_reason"] == "lexical_index_unavailable"
+    summary = load_json_file(tmp_path / "summary.json")
+    assert summary["lexical_index_status"] == "missing"
+    assert summary["trace_summary"]["hybrid_fallback_count"] == 1
+    assert summary["trace_summary"]["bm25_hit_count"] == 0
 
 
 def test_grounding_blocks_unsupported_answer_without_mutating_raw(tmp_path: Path) -> None:
@@ -253,6 +336,27 @@ def test_grounding_blocks_unsupported_answer_without_mutating_raw(tmp_path: Path
     assert "unsupported_by_strong_evidence" in overlays[0]["reasons"]
     assert (tmp_path / "grounding_trace.jsonl").exists()
     assert read_jsonl(tmp_path / "review_items.jsonl")
+
+
+def test_grounding_blocks_answered_without_source(tmp_path: Path) -> None:
+    runner = make_runner(
+        tmp_path,
+        answer_caller=answered_without_source_caller,
+        grounding_enabled=True,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    runner.run([make_item(4)])
+
+    raw = read_jsonl(tmp_path / "predictions_raw.jsonl")[0]
+    overlay = read_jsonl(tmp_path / "agent_overlays.jsonl")[0]
+    assert raw["answer_status"] == "answered"
+    assert raw["source_chunk_ids"] == []
+    assert "evidence_strength" not in raw
+    assert overlay["writeback_allowed"] is False
+    assert overlay["review_required"] is True
+    assert overlay["risk_level"] == "high"
+    assert "no_valid_evidence_support" in overlay["reasons"]
 
 
 def test_grounding_never_turns_blocked_overlay_allowed(tmp_path: Path) -> None:
@@ -421,6 +525,16 @@ def test_cli_run_step15_agent_args(tmp_path: Path) -> None:
     assert args.prompt_version == "step15_compat"
     assert args.use_judge_cache is True
     assert args.judge_cache == tmp_path / "judge_cache.jsonl"
+
+
+def test_cli_hybrid_mode_resolves_to_layered_plan(tmp_path: Path) -> None:
+    config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml")
+
+    assert resolve_step15_retrieval_plan("hybrid", None, config) == "layered"
+    assert resolve_hybrid_enabled("hybrid", None, config) is True
+    assert resolve_step15_retrieval_plan("dense", None, config) == "layered"
+    assert resolve_hybrid_enabled("dense", None, config) is False
+    assert resolve_step15_retrieval_plan("hybrid", "flat", config) == "flat"
 
 
 def test_prompt_version_default_step15_compat() -> None:
@@ -698,6 +812,18 @@ def not_found_answer_caller(**kwargs: Any) -> dict[str, Any]:
     }
 
 
+def answered_without_source_caller(**kwargs: Any) -> dict[str, Any]:
+    del kwargs
+    return {
+        "answer_value": "2路市电，来自同一变电站",
+        "answer_status": "answered",
+        "confidence": 0.86,
+        "source_chunk_ids": [],
+        "evidence_attachment_ids": [],
+        "reference_source_documents": [],
+    }
+
+
 def liquid_mismatch_answer_caller(**kwargs: Any) -> dict[str, Any]:
     return {
         "answer_value": "支持",
@@ -779,3 +905,73 @@ def load_json_file(path: Path) -> dict[str, Any]:
     import json
 
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+class FakeStep15Embedder:
+    def embed_query(self, query: str) -> list[float]:
+        del query
+        return [0.1, 0.2]
+
+
+class FakeStep15DenseRetriever:
+    collection_name = "fake_collection"
+
+    def __init__(self) -> None:
+        self.embedder = FakeStep15Embedder()
+
+    def search_by_vector(
+        self,
+        vector: list[float],
+        *,
+        namespaces: list[str],
+        layers: list[str],
+        source_types: list[str] | None = None,
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        del vector, source_types, top_k
+        if namespaces == ["xixian_4"] and layers == ["fact"]:
+            return [dense_record("chunk_main", "市电进线情况：2路市电，来自同一变电站。")]
+        return []
+
+
+class FakeStep15Reranker:
+    def rerank(self, query: str, documents: list[str], top_n: int = 5) -> list[dict[str, Any]]:
+        del query
+        return [{"index": index, "relevance_score": 1.0 - index * 0.01} for index in range(min(top_n, len(documents)))]
+
+
+def step15_layer_spec() -> dict[str, Any]:
+    return {
+        "layer_name": "target_main_fact",
+        "description": "main",
+        "namespaces": "target",
+        "corpus_layers": ["fact"],
+        "source_types": ["main_excel_capability"],
+        "vector_top_k": 3,
+        "rerank_top_n": 3,
+    }
+
+
+def dense_record(chunk_id: str, raw_text: str) -> dict[str, Any]:
+    return {
+        "chunk_id": chunk_id,
+        "namespace": "xixian_4",
+        "source_type": "main_excel_capability",
+        "corpus_layer": "fact",
+        "retrieval_layer": "target_main_fact",
+        "raw_text": raw_text,
+        "text_for_embedding": raw_text,
+        "vector_rank": 1,
+        "vector_score": 0.9,
+    }
+
+
+def lexical_record(chunk_id: str, raw_text: str) -> dict[str, Any]:
+    return {
+        "chunk_id": chunk_id,
+        "namespace": "xixian_4",
+        "source_type": "main_excel_capability",
+        "corpus_layer": "fact",
+        "raw_text": raw_text,
+        "text_for_embedding": raw_text,
+    }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from nested_doc_rag.grounding import EvidenceStrengthEvaluator, strength_rank
+from nested_doc_rag.agent.step15_runner import AgentOverlay
+from nested_doc_rag.grounding import EvidenceStrengthEvaluator, EvidenceStrengthResult, apply_evidence_strength_to_overlay, strength_rank
 from nested_doc_rag.schemas.eval import FieldPrediction
 
 
@@ -61,6 +62,51 @@ def test_partial_clue_is_not_promoted_to_answered() -> None:
     assert "partial_clue_status_preserved" in result.reasons
 
 
+def test_apply_evidence_strength_only_makes_overlay_more_conservative() -> None:
+    pred = prediction("500kVA", ["chunk_missing"])
+    overlay = overlay_row(writeback_allowed=True, review_required=False, risk_level="low")
+    e0 = EvidenceStrengthResult("E0", ["no_valid_evidence_support"], [], ["chunk_missing"], [], [], ["500kva"])
+
+    blocked = apply_evidence_strength_to_overlay(
+        pred,
+        overlay,
+        e0,
+        min_strength_for_answered="E3",
+        min_strength_for_writeback="E3",
+        downgrade_unsupported_answer_to_partial=False,
+    )
+
+    assert blocked.writeback_allowed is False
+    assert blocked.review_required is True
+    assert blocked.risk_level == "high"
+    assert "no_valid_evidence_support" in blocked.reasons
+
+    already_blocked = overlay_row(writeback_allowed=False, review_required=True, risk_level="medium")
+    strong = EvidenceStrengthResult("E4", [], ["chunk_main"], [], ["chunk_main"], ["500kva"], [])
+    unchanged = apply_evidence_strength_to_overlay(
+        pred,
+        already_blocked,
+        strong,
+        min_strength_for_answered="E3",
+        min_strength_for_writeback="E3",
+        downgrade_unsupported_answer_to_partial=False,
+    )
+    assert unchanged.writeback_allowed is False
+
+    global_intro = EvidenceStrengthResult("E2", ["global_intro_only"], ["chunk_global"], [], ["chunk_global"], ["500kva"], [])
+    global_blocked = apply_evidence_strength_to_overlay(
+        pred,
+        overlay,
+        global_intro,
+        min_strength_for_answered="E3",
+        min_strength_for_writeback="E3",
+        downgrade_unsupported_answer_to_partial=False,
+    )
+    assert global_blocked.writeback_allowed is False
+    assert global_blocked.review_required is True
+    assert "global_intro_only" in global_blocked.reasons
+
+
 def evaluator() -> EvidenceStrengthEvaluator:
     return EvidenceStrengthEvaluator(target_namespace="xixian_4")
 
@@ -94,3 +140,21 @@ def hits(raw_text: str = "UPS容量：500kVA。") -> list[dict]:
             "text_for_embedding": raw_text,
         }
     ]
+
+
+def overlay_row(*, writeback_allowed: bool, review_required: bool, risk_level: str) -> AgentOverlay:
+    return AgentOverlay(
+        field_id="field_1",
+        row_index=1,
+        target_cell="D1",
+        critic_flags=[],
+        review_required=review_required,
+        writeback_allowed=writeback_allowed,
+        suggested_status=None,
+        suggested_answer_value=None,
+        suggested_reference_source_documents=[],
+        suggested_reference_chunk_ids=[],
+        suggested_reference_snippets=[],
+        risk_level=risk_level,
+        reasons=[],
+    )

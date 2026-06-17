@@ -158,6 +158,9 @@ def hybrid_layered_rerank_hits(
                 "dense_hit_ids": hit_ids(layer_dense_hits),
                 "bm25_hit_ids": hit_ids(layer_bm25_hits),
                 "fused_hit_ids": hit_ids(fused_hits),
+                "dense_hit_count": len(layer_dense_hits),
+                "bm25_hit_count": len(layer_bm25_hits),
+                "fused_hit_count": len(fused_hits),
                 "rrf_k": rrf_k,
                 "rrf_scores": [
                     {
