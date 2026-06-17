@@ -8,11 +8,11 @@ paths:
   temp_dir: tmp
 
 services:
-  embedding_endpoint: http://localhost:8001/v1/embeddings
+  embedding_endpoint: http://111.19.156.74:8001/v1/embeddings
   embedding_model: qwen3-embedding-8b
-  rerank_endpoint: http://localhost:8002/rerank
+  rerank_endpoint: http://111.19.156.74:8002/rerank
   rerank_model: ""
-  chat_endpoint: http://localhost:8006/v1/chat/completions
+  chat_endpoint: http://111.19.156.30:8006/v1/chat/completions
   chat_model: deepseek-v4-flash
   chat_api_key_env: DEEPSEEK_API_KEY
   timeout_seconds: 120

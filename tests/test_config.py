@@ -129,6 +129,8 @@ def test_show_config_command_outputs_merged_config() -> None:
     )
     value = json.loads(completed.stdout)
     assert value["paths"]["project_root"] == str(repo_root)
-    assert value["services"]["embedding_endpoint"].startswith("http://localhost:")
+    assert value["services"]["embedding_endpoint"] == "http://111.19.156.74:8001/v1/embeddings"
+    assert value["services"]["rerank_endpoint"] == "http://111.19.156.74:8002/rerank"
+    assert value["services"]["chat_endpoint"] == "http://111.19.156.30:8006/v1/chat/completions"
     assert value["retrieval"]["retrieval_mode"] == "layered"
     assert value["qdrant"]["collection_name"] == "datacenter_chunks_v1"
