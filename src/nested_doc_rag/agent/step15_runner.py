@@ -25,7 +25,7 @@ from nested_doc_rag.gongkan_eval import build_judge_messages, build_masked_query
 from nested_doc_rag.grounding import EvidenceStrengthEvaluator, EvidenceStrengthResult, apply_evidence_strength_to_overlay
 from nested_doc_rag.io import display_text, read_jsonl, write_json, write_jsonl
 from nested_doc_rag.llm import JsonRepairError
-from nested_doc_rag.retrieval import BM25Index, QdrantRetriever
+from nested_doc_rag.retrieval import QdrantRetriever
 from nested_doc_rag.schemas.eval import FieldPrediction
 
 from .mas.controller import Step15MASController
@@ -162,9 +162,6 @@ class Step15AgentRunner:
         chat_api_key: str | None = None,
         allowed_layers: list[str] | None = None,
         layered_plan: list[dict[str, Any]] | None = None,
-        hybrid_enabled: bool | None = None,
-        rrf_k: int | None = None,
-        lexical_index_path: Path | None = None,
         grounding_enabled: bool | None = None,
         retriever: QdrantRetriever | None = None,
         reranker: RerankClient | None = None,
@@ -207,9 +204,6 @@ class Step15AgentRunner:
         self.chat_api_key = chat_api_key if chat_api_key is not None else os.environ.get(self.deepseek_api_key_env, "")
         self.allowed_layers = allowed_layers or config.retrieval.query_layers
         self.layered_plan = layered_plan or config.retrieval.layered_plan
-        self.hybrid_enabled = bool(config.hybrid_retrieval.enabled or config.retrieval.mode == "hybrid") if hybrid_enabled is None else bool(hybrid_enabled)
-        self.rrf_k = int(rrf_k or config.hybrid_retrieval.rrf_k)
-        self.lexical_index_path = lexical_index_path or config.hybrid_retrieval.lexical_index_path
         self.grounding_enabled = (
             bool(config.grounding.evidence_strength_enabled) if grounding_enabled is None else bool(grounding_enabled)
         )
@@ -217,8 +211,6 @@ class Step15AgentRunner:
         self.judge_caller = judge_caller
         self.writeback_fn = writeback_fn
         self.retrieval_fn = retrieval_fn
-        self.lexical_index: BM25Index | None = None
-        self.lexical_index_status = "not_requested"
         self.run_id = f"step15_agent_{uuid4().hex[:12]}"
         self.trace = TraceRecorderShim(
             run_id=self.run_id,
@@ -227,7 +219,6 @@ class Step15AgentRunner:
                 "target_namespace": self.target_namespace,
                 "global_namespace": self.global_namespace,
                 "retrieval_mode": self.retrieval_mode,
-                "hybrid_enabled": self.hybrid_enabled,
                 "collection_name": self.collection_name,
                 "chat_model": self.chat_model,
                 "prompt_version": self.prompt_version,
@@ -239,7 +230,6 @@ class Step15AgentRunner:
         self.review_items: list[dict[str, Any]] = []
         self.eval_results: list[dict[str, Any]] = []
         self.agent_overlays: list[AgentOverlay] = []
-        self.hybrid_trace_records: list[dict[str, Any]] = []
         self.grounding_trace_records: list[dict[str, Any]] = []
         self.writeback_status = "skipped: writeback disabled"
         self.writeback_summary: dict[str, Any] | None = None
@@ -268,9 +258,6 @@ class Step15AgentRunner:
                 model=self.rerank_model,
                 timeout_seconds=self.timeout_seconds,
             )
-        if self.hybrid_enabled and retrieval_fn is None:
-            self.lexical_index = self.load_or_build_lexical_index()
-
     def run(self, items: list[dict[str, Any]]) -> list[FieldPrediction]:
         self.out_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_predictions = self.load_checkpoint_predictions() if self.resume else {}
@@ -287,10 +274,7 @@ class Step15AgentRunner:
             "room_context": display_text(self.room_context),
             "rows": rows_label_for_items(items),
             "retrieval_mode": self.retrieval_mode,
-            "retrieval_fusion_mode": "hybrid" if self.hybrid_enabled else "dense",
-            "hybrid_enabled": self.hybrid_enabled,
-            "lexical_index_status": self.lexical_index_status,
-            "lexical_index_path": str(self.lexical_index_path) if self.lexical_index_path else "",
+            "retrieval_fusion_mode": "dense",
             "fields_total": len(items),
             "fields_completed": skipped_completed_count,
             "fields_failed": 0,
@@ -401,31 +385,16 @@ class Step15AgentRunner:
         retrieval_latency_ms = round(perf_counter_ms() - retrieval_started, 3)
         top_hits = retrieval_result.reranked_hits
         vector_hits = retrieval_result.vector_hits
-        if self.config.hybrid_retrieval.write_hybrid_trace and retrieval_result.trace_records:
-            for record in retrieval_result.trace_records:
-                self.hybrid_trace_records.append(
-                    {
-                        "field_id": field_id,
-                        "lexical_index_status": self.lexical_index_status,
-                        "lexical_index_path": str(self.lexical_index_path) if self.lexical_index_path else "",
-                        **record,
-                    }
-                )
         self.trace.record(
             field_id,
             "layered_retrieval_finished",
             {
                 "retrieval_mode": self.retrieval_mode,
-                "hybrid_enabled": self.hybrid_enabled,
                 "total_hits": len(top_hits),
                 "vector_hit_count": len(vector_hits),
                 "layer_counts": count_layers(top_hits),
                 "retrieval_latency_ms": retrieval_latency_ms,
                 "top_chunk_ids": chunk_ids(top_hits),
-                "hybrid_fallback_count": (retrieval_result.metadata or {}).get("hybrid_fallback_count", 0),
-                "bm25_hit_count": (retrieval_result.metadata or {}).get("bm25_hit_count", 0),
-                "lexical_index_status": self.lexical_index_status,
-                "lexical_index_path": str(self.lexical_index_path) if self.lexical_index_path else "",
             },
         )
 
@@ -470,7 +439,7 @@ class Step15AgentRunner:
                     {
                         "field_id": field_id,
                         "query_text": query_text,
-                        "retrieval_mode": "hybrid" if self.hybrid_enabled else "dense",
+                        "retrieval_mode": "dense",
                         "answer_status": prediction.answer_status,
                         "answer_value": prediction.answer_value,
                         "source_chunk_ids": prediction.source_chunk_ids,
@@ -783,44 +752,7 @@ class Step15AgentRunner:
             vector_top_k=self.vector_top_k,
             rerank_top_n=self.rerank_top_n,
             layered_plan=self.layered_plan,
-            hybrid_enabled=self.hybrid_enabled,
-            lexical_index=self.lexical_index,
-            rrf_k=self.rrf_k,
-            dense_top_k=self.config.hybrid_retrieval.dense_top_k,
-            bm25_top_k=self.config.hybrid_retrieval.bm25_top_k,
-            fusion_top_k=self.config.hybrid_retrieval.fusion_top_k,
-            fallback_to_dense=self.config.hybrid_retrieval.fallback_to_dense,
         )
-
-    def load_or_build_lexical_index(self) -> BM25Index | None:
-        if self.config.hybrid_retrieval.lexical_backend != "bm25":
-            self.lexical_index_status = "failed"
-            return None
-        index_path = self.lexical_index_path or (self.qdrant_path.parent / "lexical_index.json")
-        self.lexical_index_path = index_path
-        try:
-            if index_path.exists():
-                self.lexical_index_status = "loaded"
-                return BM25Index.load(index_path)
-            manifest_path = index_path.parent / "expanded_ingestion_manifest.jsonl"
-            if manifest_path.exists():
-                index = BM25Index.from_jsonl(manifest_path)
-                index.save(index_path)
-                self.lexical_index_status = "built"
-                return index
-            self.lexical_index_status = "missing"
-            return None
-        except Exception as exc:  # noqa: BLE001 - hybrid must fall back to dense-only
-            self.lexical_index_status = "failed"
-            self.trace.record(
-                None,
-                "lexical_index_failed",
-                {
-                    "lexical_index_path": str(index_path),
-                    "error": display_text(str(exc), 240),
-                },
-            )
-            return None
 
     def call_answer(self, **kwargs: Any) -> dict[str, Any]:
         return self.call_chat_with_retries(
@@ -996,8 +928,6 @@ class Step15AgentRunner:
         self.maybe_writeback(predictions, overlays)
         if self.mas_controller is not None:
             self.mas_controller.write_optional_artifacts(self.out_dir)
-        if self.config.hybrid_retrieval.write_hybrid_trace and self.hybrid_trace_records:
-            write_jsonl(self.out_dir / "hybrid_retrieval_trace.jsonl", self.hybrid_trace_records)
         if self.config.grounding.write_grounding_trace and self.grounding_trace_records:
             write_jsonl(self.out_dir / "grounding_trace.jsonl", self.grounding_trace_records)
         output_files = sorted({path.name for path in self.out_dir.iterdir() if path.is_file()} | {"run_summary.md", "summary.json", "run_manifest.json"})
@@ -1022,8 +952,6 @@ class Step15AgentRunner:
             manifest["artifacts"]["mas_trace"] = "mas_trace.jsonl"
         if (self.out_dir / "agentscope_events.jsonl").exists():
             manifest["artifacts"]["agentscope_events"] = "agentscope_events.jsonl"
-        if (self.out_dir / "hybrid_retrieval_trace.jsonl").exists():
-            manifest["artifacts"]["hybrid_retrieval_trace"] = "hybrid_retrieval_trace.jsonl"
         if (self.out_dir / "grounding_trace.jsonl").exists():
             manifest["artifacts"]["grounding_trace"] = "grounding_trace.jsonl"
         write_json(self.out_dir / "run_manifest.json", manifest)
@@ -1089,11 +1017,7 @@ class Step15AgentRunner:
             "global_namespace": self.global_namespace,
             "room_context": display_text(self.room_context),
             "retrieval_mode": self.retrieval_mode,
-            "retrieval_fusion_mode": "hybrid" if self.hybrid_enabled else "dense",
-            "hybrid_enabled": self.hybrid_enabled,
-            "lexical_index_status": self.lexical_index_status,
-            "lexical_index_path": str(self.lexical_index_path) if self.lexical_index_path else "",
-            "rrf_k": self.rrf_k,
+            "retrieval_fusion_mode": "dense",
             "grounding_enabled": self.grounding_enabled,
             "vector_top_k": self.vector_top_k,
             "rerank_top_n": self.rerank_top_n,
@@ -1598,16 +1522,6 @@ def build_trace_summary(
         for event in events
         if event.step == "grounding_evaluated" and event.payload.get("evidence_strength")
     )
-    hybrid_fallback_count = sum(
-        int(event.payload.get("hybrid_fallback_count") or 0)
-        for event in events
-        if event.step == "layered_retrieval_finished"
-    )
-    bm25_hit_count = sum(
-        int(event.payload.get("bm25_hit_count") or 0)
-        for event in events
-        if event.step == "layered_retrieval_finished"
-    )
     return {
         "total_fields": len(predictions),
         "answered_count": status_counts.get("answered", 0),
@@ -1624,8 +1538,6 @@ def build_trace_summary(
         "resumed_count": sum(1 for event in events if event.step == "resume_started"),
         "skipped_completed_count": sum(int(event.payload.get("skipped_completed_count") or 0) for event in events if event.step == "resume_started"),
         "evidence_strength_distribution": dict(evidence_strengths),
-        "bm25_hit_count": bm25_hit_count,
-        "hybrid_fallback_count": hybrid_fallback_count,
     }
 
 

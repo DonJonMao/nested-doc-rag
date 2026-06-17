@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, replace
 from typing import Any
 
 from nested_doc_rag.io import display_text
-from nested_doc_rag.retrieval.lexical import tokenize
 
 STRENGTH_ORDER = {"E0": 0, "E1": 1, "E2": 2, "E3": 3, "E4": 4}
 NUMBER_UNIT_RE = re.compile(r"\d+(?:\.\d+)?\s*(?:kva|kw|mw|w|g|gb|u|a|v|路|台|个|套)?", re.IGNORECASE)
@@ -13,6 +13,8 @@ YES_TERMS = {"是", "有", "支持", "满足", "具备", "已", "可以", "可"}
 NO_TERMS = {"否", "无", "不支持", "不满足", "未", "没有", "不可"}
 WEAK_ANSWER_VALUES = {"", "未找到", "无", "n/a", "na", "none", "null"}
 FIELD_KEY_TERMS = {"ups", "pdu", "kva", "kw", "机柜", "u位", "容量", "数量", "地址", "端口", "链路", "a/b", "a路", "b路"}
+ASCII_TOKEN_RE = re.compile(r"[a-z0-9]+(?:[/*.-][a-z0-9]+)*(?:[a-z]+)?", re.IGNORECASE)
+CHINESE_RE = re.compile(r"[\u4e00-\u9fff]+")
 
 
 @dataclass(frozen=True)
@@ -203,6 +205,21 @@ def max_risk_level(left: str, right: str) -> str:
 
 def strength_rank(strength: str) -> int:
     return STRENGTH_ORDER.get(str(strength or "").upper(), 0)
+
+
+def tokenize(text: Any) -> list[str]:
+    normalized = unicodedata.normalize("NFKC", display_text(text)).lower()
+    tokens: list[str] = []
+    tokens.extend(match.group(0) for match in ASCII_TOKEN_RE.finditer(normalized))
+    for match in CHINESE_RE.finditer(normalized):
+        segment = match.group(0)
+        if len(segment) == 1:
+            tokens.append(segment)
+            continue
+        tokens.extend(segment[index : index + 2] for index in range(len(segment) - 1))
+        if len(segment) > 2:
+            tokens.extend(segment[index : index + 3] for index in range(len(segment) - 2))
+    return dedupe(tokens)
 
 
 def core_answer_tokens(answer_value: str) -> list[str]:

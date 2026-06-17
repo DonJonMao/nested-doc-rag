@@ -71,16 +71,6 @@ retrieval:
       vector_top_k: 10
       rerank_top_n: 2
 
-hybrid_retrieval:
-  enabled: false
-  lexical_backend: bm25
-  rrf_k: 60
-  dense_top_k: null
-  bm25_top_k: null
-  fusion_top_k: null
-  fallback_to_dense: true
-  write_hybrid_trace: true
-
 grounding:
   evidence_strength_enabled: true
   min_strength_for_answered: E3

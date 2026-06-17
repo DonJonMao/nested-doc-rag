@@ -107,19 +107,6 @@ class RetrievalConfig:
 
 
 @dataclass(frozen=True)
-class HybridRetrievalConfig:
-    enabled: bool = False
-    lexical_backend: str = "bm25"
-    rrf_k: int = 60
-    dense_top_k: int | None = None
-    bm25_top_k: int | None = None
-    fusion_top_k: int | None = None
-    fallback_to_dense: bool = True
-    write_hybrid_trace: bool = True
-    lexical_index_path: Path | None = None
-
-
-@dataclass(frozen=True)
 class GroundingConfig:
     evidence_strength_enabled: bool = True
     min_strength_for_answered: str = "E3"
@@ -174,7 +161,6 @@ class AppConfig:
     services: ServicesConfig = field(default_factory=ServicesConfig)
     qdrant: QdrantConfig = field(default_factory=QdrantConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
-    hybrid_retrieval: HybridRetrievalConfig = field(default_factory=HybridRetrievalConfig)
     grounding: GroundingConfig = field(default_factory=GroundingConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     excel: ExcelConfig = field(default_factory=ExcelConfig)
@@ -212,7 +198,6 @@ def code_defaults(project_root: Path | None = None) -> dict[str, Any]:
         "services": _serialize(ServicesConfig()),
         "qdrant": _serialize(QdrantConfig()),
         "retrieval": _serialize(RetrievalConfig()),
-        "hybrid_retrieval": _serialize(HybridRetrievalConfig()),
         "grounding": _serialize(GroundingConfig()),
         "evaluation": _serialize(EvaluationConfig()),
         "excel": _serialize(ExcelConfig()),
@@ -306,19 +291,6 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         max_reference_chunks=_as_int(retrieval_data.get("max_reference_chunks", 5)),
         layered_plan=copy.deepcopy(_as_list(retrieval_data.get("layered_plan"))),
     )
-    hybrid_data = _section(data, "hybrid_retrieval", HybridRetrievalConfig())
-    lexical_index_path = hybrid_data.get("lexical_index_path")
-    hybrid_retrieval = HybridRetrievalConfig(
-        enabled=_as_bool(hybrid_data.get("enabled", False)),
-        lexical_backend=str(hybrid_data.get("lexical_backend", "bm25")),
-        rrf_k=_as_int(hybrid_data.get("rrf_k", 60)),
-        dense_top_k=_as_optional_int(hybrid_data.get("dense_top_k")),
-        bm25_top_k=_as_optional_int(hybrid_data.get("bm25_top_k")),
-        fusion_top_k=_as_optional_int(hybrid_data.get("fusion_top_k")),
-        fallback_to_dense=_as_bool(hybrid_data.get("fallback_to_dense", True)),
-        write_hybrid_trace=_as_bool(hybrid_data.get("write_hybrid_trace", True)),
-        lexical_index_path=_resolve_path(lexical_index_path, root) if lexical_index_path not in {None, ""} else None,
-    )
     grounding_data = _section(data, "grounding", GroundingConfig())
     grounding = GroundingConfig(
         evidence_strength_enabled=_as_bool(grounding_data.get("evidence_strength_enabled", True)),
@@ -371,7 +343,6 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         services=services,
         qdrant=qdrant,
         retrieval=retrieval,
-        hybrid_retrieval=hybrid_retrieval,
         grounding=grounding,
         evaluation=evaluation,
         excel=excel,
@@ -458,7 +429,6 @@ def _env_aliases() -> dict[str, tuple[str, str]]:
         "TARGET_NAMESPACE": ("retrieval", "target_namespace"),
         "RETRIEVAL_MODE": ("retrieval", "retrieval_mode"),
         "NDR_RETRIEVAL_MODE": ("retrieval", "mode"),
-        "NDR_HYBRID_RETRIEVAL_ENABLED": ("hybrid_retrieval", "enabled"),
         "NDR_RETRIEVAL_PLAN": ("retrieval", "retrieval_plan"),
         "NDR_AGENT_RETRIEVAL_BACKEND": ("agent", "retrieval_backend"),
         "NDR_AGENT_GENERATION_BACKEND": ("agent", "generation_backend"),
@@ -701,12 +671,6 @@ def _as_bool(value: Any) -> bool:
 
 
 def _as_int(value: Any) -> int:
-    return int(value)
-
-
-def _as_optional_int(value: Any) -> int | None:
-    if value is None or value == "":
-        return None
     return int(value)
 
 

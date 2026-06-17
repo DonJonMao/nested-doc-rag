@@ -14,13 +14,11 @@ from qdrant_client import QdrantClient, models
 
 try:
     from nested_doc_rag.embedding import DEFAULT_EMBEDDING_ENDPOINT, DEFAULT_EMBEDDING_MODEL, QUERY_INSTRUCTION, EmbeddingClient
-    from nested_doc_rag.retrieval.lexical import BM25Index
 except ModuleNotFoundError:
     import site
 
     site.addsitedir(str(Path(__file__).resolve().parents[1]))
     from nested_doc_rag.embedding import DEFAULT_EMBEDDING_ENDPOINT, DEFAULT_EMBEDDING_MODEL, QUERY_INSTRUCTION, EmbeddingClient
-    from nested_doc_rag.retrieval.lexical import BM25Index
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -388,8 +386,6 @@ def build_expanded_manifest(out_dir: Path = DEFAULT_OUT_DIR) -> dict[str, Any]:
         deduped.append(record)
 
     write_jsonl(out_dir / "expanded_ingestion_manifest.jsonl", deduped)
-    lexical_index_path = out_dir / "lexical_index.json"
-    BM25Index.from_records(deduped).save(lexical_index_path)
     summary = {
         "total_records": len(deduped),
         "duplicate_chunk_ids_skipped": duplicate_count,
@@ -404,7 +400,6 @@ def build_expanded_manifest(out_dir: Path = DEFAULT_OUT_DIR) -> dict[str, Any]:
         "counts_by_namespace": dict(Counter(record.get("namespace") for record in deduped)),
         "counts_by_embedding_policy": dict(Counter(record.get("embedding_policy") for record in deduped)),
         "default_query_layers": sorted(DEFAULT_QUERY_LAYERS),
-        "lexical_index_path": str(lexical_index_path),
     }
     write_json(out_dir / "manifest_summary.json", summary)
     write_visualization(out_dir / "visualization.md", deduped, summary)
