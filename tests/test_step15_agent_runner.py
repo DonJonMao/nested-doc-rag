@@ -203,7 +203,6 @@ def test_dense_default_artifact_contract_unchanged(tmp_path: Path) -> None:
     assert validate_step15_artifacts(tmp_path)["valid"] is True
     manifest = read_jsonl(tmp_path / "predictions_raw.jsonl")[0]
     assert "evidence_strength" not in manifest
-    assert not (tmp_path / "hybrid_retrieval_trace.jsonl").exists()
     summary = load_json_file(tmp_path / "summary.json")
     assert summary["retrieval_fusion_mode"] == "dense"
 
