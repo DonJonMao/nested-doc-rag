@@ -167,3 +167,11 @@ Diagnostic MAS/AgentScope trace artifacts may be present when `agentscope.mode` 
 - `agentscope_events.jsonl`
 
 These are diagnostic artifacts only. Go/backend integrations must not require them and must continue to depend only on the stable artifacts listed above.
+
+Hybrid retrieval and grounding may add optional diagnostic artifacts:
+
+- `hybrid_retrieval_trace.jsonl`
+- `grounding_trace.jsonl`
+
+These files are optional trace outputs. They do not change the schema or semantics of `predictions_raw.jsonl`,
+`agent_overlays.jsonl`, `review_items.jsonl`, or the writeback artifacts.

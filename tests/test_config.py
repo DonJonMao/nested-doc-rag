@@ -23,8 +23,14 @@ paths:
 services:
   embedding_endpoint: http://yaml-default/embeddings
 retrieval:
+  mode: hybrid
   vector_top_k: 11
   query_layers: [fact, evidence]
+hybrid_retrieval:
+  enabled: true
+  rrf_k: 42
+grounding:
+  min_strength_for_answered: E4
 """,
         encoding="utf-8",
     )
@@ -56,8 +62,12 @@ retrieval:
     assert config.paths.data_dir == (tmp_path / "local_data").resolve()
     assert config.services.embedding_endpoint == "http://cli/embeddings"
     assert config.retrieval.vector_top_k == 33
+    assert config.retrieval.mode == "hybrid"
     assert config.retrieval.rerank_top_n == 6
     assert config.retrieval.query_layers == ["fact", "evidence"]
+    assert config.hybrid_retrieval.enabled is True
+    assert config.hybrid_retrieval.rrf_k == 42
+    assert config.grounding.min_strength_for_answered == "E4"
 
 
 def test_env_alias_and_path_resolution(tmp_path: Path, monkeypatch) -> None:

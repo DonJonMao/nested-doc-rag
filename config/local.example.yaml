@@ -26,6 +26,7 @@ retrieval:
   target_namespace: xixian_4
   global_namespace: global
   query_layers: [fact, evidence, intro_doc, raw_text, meta]
+  mode: dense
   retrieval_mode: layered
   retrieval_plan: layered
   vector_top_k: 40
@@ -69,6 +70,25 @@ retrieval:
       source_types: [embedded_word_table, embedded_raw_segment]
       vector_top_k: 10
       rerank_top_n: 2
+
+hybrid_retrieval:
+  enabled: false
+  lexical_backend: bm25
+  rrf_k: 60
+  dense_top_k: null
+  bm25_top_k: null
+  fusion_top_k: null
+  fallback_to_dense: true
+  write_hybrid_trace: true
+
+grounding:
+  evidence_strength_enabled: true
+  min_strength_for_answered: E3
+  min_strength_for_writeback: E3
+  require_target_source_for_answered: true
+  global_intro_answer_allowed: false
+  downgrade_unsupported_answer_to_partial: false
+  write_grounding_trace: true
 
 evaluation:
   default_rows: [4, 5, 13, 16, 25, 26, 31, 36, 53, 117]

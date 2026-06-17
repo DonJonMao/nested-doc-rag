@@ -6,7 +6,6 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
-from nested_doc_rag.artifacts import ArtifactValidationError, validate_step15_artifacts
 from nested_doc_rag.agent.backends import (
     DeterministicAnswerGenerator,
     LayeredQdrantEvidenceRetriever,
@@ -15,6 +14,7 @@ from nested_doc_rag.agent.backends import (
     QdrantEvidenceRetriever,
 )
 from nested_doc_rag.agent.step15_runner import Step15AgentRunner, parse_rows_arg, validate_step15_agent_config
+from nested_doc_rag.artifacts import ArtifactValidationError, validate_step15_artifacts
 from nested_doc_rag.embedding import RerankClient
 from nested_doc_rag.gongkan_eval import select_eval_items
 from nested_doc_rag.retrieval import QdrantRetriever
@@ -101,7 +101,21 @@ def build_parser() -> argparse.ArgumentParser:
     step15_agent_parser.add_argument("--room-context", default=None, help="Known target room context for disambiguation.")
     step15_agent_parser.add_argument("--rows", default="all", help="Rows to run: all, 4-144, or 34,38,42.")
     step15_agent_parser.add_argument("--form-items", type=Path, default=None, help="Optional form_items.jsonl override.")
-    step15_agent_parser.add_argument("--retrieval-mode", choices=["flat", "layered"], default=None, help="Step 15 retrieval mode.")
+    step15_agent_parser.add_argument(
+        "--retrieval-mode",
+        choices=["dense", "hybrid", "flat", "layered"],
+        default=None,
+        help="Retrieval fusion mode (dense/hybrid). flat/layered are accepted as legacy Step 15 plan aliases.",
+    )
+    step15_agent_parser.add_argument("--retrieval-plan", choices=["flat", "layered"], default=None, help="Step 15 dense retrieval plan.")
+    hybrid_group = step15_agent_parser.add_mutually_exclusive_group()
+    hybrid_group.add_argument("--hybrid-enabled", dest="hybrid_enabled", action="store_true", default=None, help="Enable BM25 + dense RRF retrieval.")
+    hybrid_group.add_argument("--no-hybrid-enabled", dest="hybrid_enabled", action="store_false", help="Disable BM25 + dense RRF retrieval.")
+    step15_agent_parser.add_argument("--rrf-k", type=int, default=None, help="RRF k parameter. Default comes from config.")
+    step15_agent_parser.add_argument("--lexical-index-path", type=Path, default=None, help="BM25 lexical index JSON path.")
+    grounding_group = step15_agent_parser.add_mutually_exclusive_group()
+    grounding_group.add_argument("--grounding-enabled", dest="grounding_enabled", action="store_true", default=None, help="Enable evidence strength overlay gate.")
+    grounding_group.add_argument("--no-grounding-enabled", dest="grounding_enabled", action="store_false", help="Disable evidence strength overlay gate.")
     step15_agent_parser.add_argument(
         "--prompt-version",
         choices=["step15_compat", "agent_v2"],
@@ -281,13 +295,15 @@ def main(argv: Sequence[str] | None = None) -> None:
         except (RuntimeError, ValueError) as exc:
             parser.error(str(exc))
         api_key_env = args.deepseek_api_key_env or args.chat_api_key_env or config.services.chat_api_key_env
+        retrieval_plan = resolve_step15_retrieval_plan(args.retrieval_mode, args.retrieval_plan, config)
+        hybrid_enabled = resolve_hybrid_enabled(args.retrieval_mode, args.hybrid_enabled, config)
         runner = Step15AgentRunner(
             config=config,
             target_namespace=target_namespace,
             global_namespace=global_namespace,
             room_context=args.room_context,
             out_dir=args.out_dir,
-            retrieval_mode=args.retrieval_mode or "layered",
+            retrieval_mode=retrieval_plan,
             vector_top_k=args.vector_top_k or config.retrieval.vector_top_k,
             rerank_top_n=args.rerank_top_n or config.retrieval.rerank_top_n,
             judge_enabled=bool(args.judge),
@@ -313,6 +329,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             chat_api_key=args.deepseek_api_key if args.deepseek_api_key is not None else os.environ.get(api_key_env, ""),
             allowed_layers=config.retrieval.query_layers,
             layered_plan=config.retrieval.layered_plan,
+            hybrid_enabled=hybrid_enabled,
+            rrf_k=args.rrf_k,
+            lexical_index_path=args.lexical_index_path,
+            grounding_enabled=args.grounding_enabled,
         )
         predictions = runner.run(items)
         print(
@@ -323,6 +343,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "run_id": runner.run_id,
                     "judge": bool(args.judge),
                     "writeback": runner.writeback_status,
+                    "retrieval_mode": "hybrid" if runner.hybrid_enabled else "dense",
                 },
                 ensure_ascii=False,
             )
@@ -413,6 +434,25 @@ def build_agent_generator(args: argparse.Namespace, config, generation_backend: 
         api_key=os.environ.get(api_key_env, ""),
         timeout_seconds=config.services.timeout_seconds,
     )
+
+
+def resolve_step15_retrieval_plan(retrieval_mode: str | None, retrieval_plan: str | None, config) -> str:
+    if retrieval_plan in {"flat", "layered"}:
+        return retrieval_plan
+    if retrieval_mode in {"flat", "layered"}:
+        return retrieval_mode
+    configured = config.retrieval.retrieval_plan or config.retrieval.retrieval_mode or "layered"
+    return configured if configured in {"flat", "layered"} else "layered"
+
+
+def resolve_hybrid_enabled(retrieval_mode: str | None, hybrid_enabled: bool | None, config) -> bool | None:
+    if hybrid_enabled is not None:
+        return hybrid_enabled
+    if retrieval_mode == "hybrid":
+        return True
+    if retrieval_mode == "dense":
+        return False
+    return None
 
 
 if __name__ == "__main__":

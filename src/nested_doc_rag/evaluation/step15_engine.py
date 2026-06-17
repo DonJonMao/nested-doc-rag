@@ -9,7 +9,7 @@ from nested_doc_rag.config import load_app_config
 from nested_doc_rag.embedding import RerankClient
 from nested_doc_rag.gongkan_eval import BASE_CLOUD_FILE
 from nested_doc_rag.io import display_text, read_jsonl
-from nested_doc_rag.retrieval import QdrantRetriever, layered_rerank_hits, rerank_hits
+from nested_doc_rag.retrieval import BM25Index, QdrantRetriever, hybrid_layered_rerank_hits, layered_rerank_hits, rerank_hits
 
 DEFAULT_CONFIG = load_app_config()
 STEP12_DIR = DEFAULT_CONFIG.paths.artifacts_dir / "12_gongkan_form_analysis"
@@ -20,6 +20,8 @@ class Step15RetrievalResult:
     reranked_hits: list[dict[str, Any]]
     vector_hits: list[dict[str, Any]]
     retrieval_mode: str
+    trace_records: list[dict[str, Any]] | None = None
+    metadata: dict[str, Any] | None = None
 
 
 def add_room_context(query_text: str, room_context: str | None) -> str:
@@ -50,7 +52,65 @@ def run_step15_retrieval(
     vector_top_k: int,
     rerank_top_n: int,
     layered_plan: list[dict[str, Any]],
+    hybrid_enabled: bool = False,
+    lexical_index: BM25Index | None = None,
+    rrf_k: int = 60,
+    dense_top_k: int | None = None,
+    bm25_top_k: int | None = None,
+    fusion_top_k: int | None = None,
+    fallback_to_dense: bool = True,
 ) -> Step15RetrievalResult:
+    if hybrid_enabled:
+        if retrieval_mode != "layered":
+            vector_hits = retriever.search(
+                query_text,
+                namespaces=[target_namespace, global_namespace],
+                layers=allowed_layers,
+                top_k=dense_top_k or vector_top_k,
+            )
+            reranked_hits = rerank_hits(query_text, vector_hits, rerank_top_n, reranker)
+            return Step15RetrievalResult(
+                reranked_hits=reranked_hits,
+                vector_hits=vector_hits,
+                retrieval_mode=retrieval_mode,
+                trace_records=[
+                    {
+                        "query_text": query_text,
+                        "retrieval_mode": "dense",
+                        "fallback_used": True,
+                        "fallback_reason": "hybrid_requires_layered_plan",
+                        "dense_hit_ids": [str(hit.get("chunk_id")) for hit in vector_hits if hit.get("chunk_id")],
+                        "bm25_hit_ids": [],
+                        "fused_hit_ids": [str(hit.get("chunk_id")) for hit in reranked_hits if hit.get("chunk_id")],
+                    }
+                ],
+                metadata={"hybrid_enabled": True, "hybrid_fallback_used": True},
+            )
+        reranked_hits, vector_hits, trace_records = hybrid_layered_rerank_hits(
+            query_text,
+            retriever=retriever,
+            lexical_index=lexical_index,
+            target_namespace=target_namespace,
+            global_namespace=global_namespace,
+            allowed_layers=allowed_layers,
+            reranker=reranker,
+            layered_plan=layered_plan,
+            rrf_k=rrf_k,
+            dense_top_k=dense_top_k,
+            bm25_top_k=bm25_top_k,
+            fusion_top_k=fusion_top_k,
+            fallback_to_dense=fallback_to_dense,
+        )
+        return Step15RetrievalResult(
+            reranked_hits=reranked_hits,
+            vector_hits=vector_hits,
+            retrieval_mode=retrieval_mode,
+            trace_records=trace_records,
+            metadata={
+                "hybrid_enabled": True,
+                "hybrid_fallback_count": sum(1 for record in trace_records if record.get("fallback_used")),
+            },
+        )
     if retrieval_mode == "layered":
         reranked_hits, vector_hits = layered_rerank_hits(
             query_text,

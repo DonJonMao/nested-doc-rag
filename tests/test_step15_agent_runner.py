@@ -10,6 +10,7 @@ from nested_doc_rag.agent.step15_runner import (
     critic_check_step15_answer,
     make_step15_review_item,
 )
+from nested_doc_rag.artifacts import validate_step15_artifacts
 from nested_doc_rag.cli import build_parser
 from nested_doc_rag.config import load_app_config
 from nested_doc_rag.evaluation.step15_engine import Step15RetrievalResult
@@ -194,6 +195,82 @@ def test_predictions_json_is_raw(tmp_path: Path) -> None:
     assert agent_view[0]["agent_overlay"]["suggested_status"] == "partial_clue"
 
 
+def test_dense_default_artifact_contract_unchanged(tmp_path: Path) -> None:
+    runner = make_runner(tmp_path, answer_caller=answered_answer_caller)
+
+    runner.run([make_item(4)])
+
+    assert validate_step15_artifacts(tmp_path)["valid"] is True
+    manifest = read_jsonl(tmp_path / "predictions_raw.jsonl")[0]
+    assert "evidence_strength" not in manifest
+    assert not (tmp_path / "hybrid_retrieval_trace.jsonl").exists()
+
+
+def test_hybrid_mode_artifact_contract_with_optional_trace(tmp_path: Path) -> None:
+    runner = make_runner(
+        tmp_path,
+        answer_caller=answered_answer_caller,
+        retrieval_fn=fake_hybrid_retrieval,
+        hybrid_enabled=True,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    runner.run([make_item(4)])
+
+    assert validate_step15_artifacts(tmp_path)["valid"] is True
+    manifest = read_jsonl(tmp_path / "predictions_raw.jsonl")[0]
+    assert "evidence_strength" not in manifest
+    run_manifest = load_json_file(tmp_path / "run_manifest.json")
+    assert run_manifest["artifacts"]["hybrid_retrieval_trace"] == "hybrid_retrieval_trace.jsonl"
+    trace_rows = read_jsonl(tmp_path / "hybrid_retrieval_trace.jsonl")
+    assert trace_rows[0]["fused_hit_ids"] == ["chunk_main"]
+
+
+def test_grounding_blocks_unsupported_answer_without_mutating_raw(tmp_path: Path) -> None:
+    captured: list[int] = []
+    template = tmp_path / "template.xlsx"
+    template.write_text("fake", encoding="utf-8")
+    runner = make_runner(
+        tmp_path,
+        answer_caller=unsupported_answer_caller,
+        retrieval_fn=fake_retrieval_without_answer_value,
+        writeback_enabled=True,
+        template_path=template,
+        writeback_fn=capturing_writeback(captured),
+        grounding_enabled=True,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    predictions = runner.run([make_item(4)])
+
+    assert predictions[0].answer_status == "answered"
+    assert captured == [0]
+    raw = read_jsonl(tmp_path / "predictions_raw.jsonl")[0]
+    overlays = read_jsonl(tmp_path / "agent_overlays.jsonl")
+    assert "evidence_strength" not in raw
+    assert overlays[0]["writeback_allowed"] is False
+    assert overlays[0]["review_required"] is True
+    assert "unsupported_by_strong_evidence" in overlays[0]["reasons"]
+    assert (tmp_path / "grounding_trace.jsonl").exists()
+    assert read_jsonl(tmp_path / "review_items.jsonl")
+
+
+def test_grounding_never_turns_blocked_overlay_allowed(tmp_path: Path) -> None:
+    runner = make_runner(
+        tmp_path,
+        answer_caller=invalid_source_answer_caller,
+        grounding_enabled=True,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    runner.run([make_item(4)])
+
+    overlay = read_jsonl(tmp_path / "agent_overlays.jsonl")[0]
+    assert "invalid_source_reference" in overlay["critic_flags"]
+    assert overlay["writeback_allowed"] is False
+    assert overlay["review_required"] is True
+
+
 def test_resume_skips_completed_rows(tmp_path: Path) -> None:
     completed = FieldPrediction(
         field_id="item_4",
@@ -306,6 +383,14 @@ def test_cli_run_step15_agent_args(tmp_path: Path) -> None:
             "--rows",
             "4-5",
             "--retrieval-mode",
+            "hybrid",
+            "--hybrid-enabled",
+            "--rrf-k",
+            "60",
+            "--lexical-index-path",
+            str(tmp_path / "lexical_index.json"),
+            "--grounding-enabled",
+            "--retrieval-plan",
             "layered",
             "--out-dir",
             str(tmp_path),
@@ -323,6 +408,12 @@ def test_cli_run_step15_agent_args(tmp_path: Path) -> None:
 
     assert args.command == "run-step15-agent"
     assert args.rows == "4-5"
+    assert args.retrieval_mode == "hybrid"
+    assert args.hybrid_enabled is True
+    assert args.rrf_k == 60
+    assert args.lexical_index_path == tmp_path / "lexical_index.json"
+    assert args.grounding_enabled is True
+    assert args.retrieval_plan == "layered"
     assert args.judge is True
     assert args.resume is True
     assert args.chat_max_retries == 3
@@ -455,8 +546,11 @@ def make_runner(
     prompt_version: str = "step15_compat",
     judge_cache_path: Path | None = None,
     use_judge_cache: bool = False,
+    hybrid_enabled: bool | None = None,
+    grounding_enabled: bool | None = None,
+    config_overrides: dict[str, Any] | None = None,
 ) -> Step15AgentRunner:
-    config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml")
+    config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml", cli_overrides=config_overrides)
     return Step15AgentRunner(
         config=config,
         target_namespace="xixian_4",
@@ -477,6 +571,8 @@ def make_runner(
         prompt_version=prompt_version,
         judge_cache_path=judge_cache_path,
         use_judge_cache=use_judge_cache,
+        hybrid_enabled=hybrid_enabled,
+        grounding_enabled=grounding_enabled,
     )
 
 
@@ -536,6 +632,39 @@ def fake_retrieval(query: str) -> Step15RetrievalResult:
     return Step15RetrievalResult(reranked_hits=hits, vector_hits=hits, retrieval_mode="layered")
 
 
+def fake_hybrid_retrieval(query: str) -> Step15RetrievalResult:
+    hits = make_hits()
+    return Step15RetrievalResult(
+        reranked_hits=hits,
+        vector_hits=hits,
+        retrieval_mode="layered",
+        trace_records=[
+            {
+                "query_text": query,
+                "retrieval_mode": "hybrid",
+                "dense_hit_ids": ["chunk_main"],
+                "bm25_hit_ids": ["chunk_main"],
+                "fused_hit_ids": ["chunk_main"],
+                "rrf_scores": [{"chunk_id": "chunk_main", "rrf_score": 0.03}],
+                "fallback_used": False,
+            }
+        ],
+        metadata={"hybrid_fallback_count": 0},
+    )
+
+
+def fake_retrieval_without_answer_value(query: str) -> Step15RetrievalResult:
+    del query
+    hits = [
+        {
+            **make_hits()[0],
+            "raw_text": "市电进线情况：2路市电，来自同一变电站。",
+            "text_for_embedding": "市电进线情况 2路市电",
+        }
+    ]
+    return Step15RetrievalResult(reranked_hits=hits, vector_hits=hits, retrieval_mode="layered")
+
+
 def recording_retrieval(calls: list[str]):
     def retrieve(query: str) -> Step15RetrievalResult:
         calls.append(query)
@@ -575,6 +704,29 @@ def liquid_mismatch_answer_caller(**kwargs: Any) -> dict[str, Any]:
         "answer_status": "answered",
         "confidence": 0.86,
         "source_chunk_ids": [kwargs["hits"][0]["chunk_id"]],
+        "evidence_attachment_ids": [],
+        "reference_source_documents": [],
+    }
+
+
+def unsupported_answer_caller(**kwargs: Any) -> dict[str, Any]:
+    return {
+        "answer_value": "500kVA",
+        "answer_status": "answered",
+        "confidence": 0.86,
+        "source_chunk_ids": [kwargs["hits"][0]["chunk_id"]],
+        "evidence_attachment_ids": [],
+        "reference_source_documents": [],
+    }
+
+
+def invalid_source_answer_caller(**kwargs: Any) -> dict[str, Any]:
+    del kwargs
+    return {
+        "answer_value": "2路市电",
+        "answer_status": "answered",
+        "confidence": 0.86,
+        "source_chunk_ids": ["missing_chunk"],
         "evidence_attachment_ids": [],
         "reference_source_documents": [],
     }
@@ -621,3 +773,9 @@ def load_simple_rows_yaml(path: Path) -> dict[str, list[int]]:
         if line.startswith("-") and current:
             rows[current].append(int(line.removeprefix("-").strip()))
     return rows
+
+
+def load_json_file(path: Path) -> dict[str, Any]:
+    import json
+
+    return json.loads(path.read_text(encoding="utf-8"))
