@@ -145,3 +145,23 @@ def test_legacy_retrieval_config_normalizes_to_layered(tmp_path: Path) -> None:
         )
 
     assert config.retrieval.plan == "layered"
+
+
+def test_unsupported_retrieval_config_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="hybrid"):
+        app_config_from_dict(
+            {
+                "paths": {"project_root": str(tmp_path)},
+                "retrieval": {"mode": "hybrid"},
+            },
+            project_root_base=tmp_path,
+        )
+
+    with pytest.raises(ValueError, match="hybrid"):
+        app_config_from_dict(
+            {
+                "paths": {"project_root": str(tmp_path)},
+                "retrieval": {"plan": "hybrid"},
+            },
+            project_root_base=tmp_path,
+        )

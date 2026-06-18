@@ -9,7 +9,7 @@ from nested_doc_rag.config import load_app_config
 from nested_doc_rag.embedding import RerankClient
 from nested_doc_rag.gongkan_eval import BASE_CLOUD_FILE
 from nested_doc_rag.io import display_text, read_jsonl
-from nested_doc_rag.retrieval import QdrantRetriever, layered_rerank_hits, rerank_hits
+from nested_doc_rag.retrieval import QdrantRetriever, layered_rerank_hits
 
 DEFAULT_CONFIG = load_app_config()
 STEP12_DIR = DEFAULT_CONFIG.paths.artifacts_dir / "12_gongkan_form_analysis"
@@ -53,29 +53,19 @@ def run_step15_retrieval(
     rerank_top_n: int,
     layered_plan: list[dict[str, Any]],
 ) -> Step15RetrievalResult:
-    if retrieval_mode == "layered":
-        reranked_hits, vector_hits = layered_rerank_hits(
-            query_text,
-            retriever=retriever,
-            target_namespace=target_namespace,
-            global_namespace=global_namespace,
-            allowed_layers=allowed_layers,
-            reranker=reranker,
-            layered_plan=layered_plan,
-        )
-        return Step15RetrievalResult(reranked_hits=reranked_hits, vector_hits=vector_hits, retrieval_mode=retrieval_mode)
-    # Legacy/debug-only path. Step15AgentRunner production calls this function
-    # with retrieval_mode="layered" only.
-    if retrieval_mode == "flat":
-        vector_hits = retriever.search(
-            query_text,
-            namespaces=[target_namespace, global_namespace],
-            layers=allowed_layers,
-            top_k=vector_top_k,
-        )
-        reranked_hits = rerank_hits(query_text, vector_hits, rerank_top_n, reranker)
-        return Step15RetrievalResult(reranked_hits=reranked_hits, vector_hits=vector_hits, retrieval_mode=retrieval_mode)
-    raise ValueError(f"unsupported retrieval_mode: {retrieval_mode}")
+    del vector_top_k, rerank_top_n
+    if retrieval_mode != "layered":
+        raise ValueError(f"unsupported retrieval_mode: {retrieval_mode}")
+    reranked_hits, vector_hits = layered_rerank_hits(
+        query_text,
+        retriever=retriever,
+        target_namespace=target_namespace,
+        global_namespace=global_namespace,
+        allowed_layers=allowed_layers,
+        reranker=reranker,
+        layered_plan=layered_plan,
+    )
+    return Step15RetrievalResult(reranked_hits=reranked_hits, vector_hits=vector_hits, retrieval_mode="layered")
 
 
 def build_qdrant_answer_messages(

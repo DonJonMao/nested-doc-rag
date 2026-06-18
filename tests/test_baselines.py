@@ -18,7 +18,7 @@ def test_build_summary_counts_labels() -> None:
         global_namespace="global",
         layers=["fact"],
         room_context="西咸4号楼 301机房",
-        retrieval_mode="flat",
+        retrieval_mode="layered",
         layered_plan=[],
     )
 

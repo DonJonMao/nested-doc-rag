@@ -151,7 +151,7 @@ def run(
     qdrant_path = qdrant_path or (STEP15_DIR / "qdrant")
     form_items_path = form_items_path or (STEP12_DIR / "form_items.jsonl")
     layered_plan = layered_plan or LAYERED_RETRIEVAL_PLAN
-    if retrieval_mode not in {"flat", "layered"}:
+    if retrieval_mode != "layered":
         raise ValueError(f"unsupported retrieval_mode: {retrieval_mode}")
 
     eval_items = select_eval_items(rows, form_items_path=form_items_path)
@@ -317,7 +317,7 @@ def write_report(path: Path, results: list[dict[str, Any]], summary: dict[str, A
     lines.append("## 总览\n")
     lines.append(f"- 检索器：`{summary['retriever']}`")
     lines.append(f"- collection：`{summary['collection_name']}`")
-    lines.append(f"- retrieval mode：`{summary.get('retrieval_mode', 'flat')}`")
+    lines.append(f"- retrieval mode：`{summary.get('retrieval_mode', 'layered')}`")
     lines.append(f"- namespace filter：`{', '.join(summary['namespace_filter'])}`")
     lines.append(f"- layer filter：`{', '.join(summary['layer_filter'])}`")
     if summary.get("external_room_context"):
@@ -372,7 +372,7 @@ def main() -> None:
     parser.add_argument("--deepseek-api-key", default="")
     parser.add_argument("--deepseek-api-key-env", default=None)
     parser.add_argument("--room-context", default="")
-    parser.add_argument("--retrieval-mode", choices=["flat", "layered"], default=None)
+    parser.add_argument("--retrieval-mode", choices=["layered"], default=None)
     parser.add_argument("--resume", action="store_true", default=None)
     parser.add_argument("--timeout", type=int, default=None)
     args = parser.parse_args()

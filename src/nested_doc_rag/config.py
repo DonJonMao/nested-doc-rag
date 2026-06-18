@@ -249,6 +249,9 @@ load_config = load_app_config
 
 def _normalize_step15_retrieval_plan(retrieval_data: Mapping[str, Any]) -> str:
     legacy_keys = [key for key in ("retrieval_plan", "retrieval_mode", "mode") if key in retrieval_data]
+    legacy_values = {key: str(retrieval_data.get(key) or "").lower() for key in legacy_keys}
+    if any(value == "hybrid" for value in legacy_values.values()):
+        raise ValueError("Step15 production retrieval does not support hybrid mode")
     if legacy_keys:
         raw_value = retrieval_data.get("plan", retrieval_data.get(legacy_keys[0]))
         warnings.warn(
@@ -259,6 +262,8 @@ def _normalize_step15_retrieval_plan(retrieval_data: Mapping[str, Any]) -> str:
     else:
         raw_value = retrieval_data.get("plan")
     value = str(raw_value or "layered")
+    if value == "hybrid":
+        raise ValueError("Step15 production retrieval does not support hybrid mode")
     if value != "layered":
         warnings.warn(
             f"Step15 production retrieval only supports layered; ignoring retrieval plan {value!r}.",
