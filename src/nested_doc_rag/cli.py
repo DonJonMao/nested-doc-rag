@@ -76,7 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
     agent_parser.add_argument("--no-writeback", action="store_true", help="Disable Excel writeback even when a template is provided.")
     agent_parser.add_argument("--trace-format", default="md,jsonl", help="Accepted for compatibility; both md and jsonl are written.")
     agent_parser.add_argument("--retrieval-backend", choices=["mini", "qdrant"], default=None, help="Evidence retrieval backend.")
-    agent_parser.add_argument("--retrieval-plan", choices=["flat", "layered"], default=None, help="Qdrant retrieval plan.")
+    agent_parser.add_argument("--retrieval-plan", default=None, help="Qdrant retrieval plan for run-agent.")
     agent_parser.add_argument("--generation-backend", choices=["deterministic", "llm"], default=None, help="Answer generation backend.")
     agent_parser.add_argument("--enable-rerank", action="store_true", help="Enable rerank for qdrant retrieval.")
     agent_parser.add_argument("--qdrant-path", type=Path, default=None, help="Qdrant local path.")

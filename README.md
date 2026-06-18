@@ -111,13 +111,13 @@ python -m nested_doc_rag.cli run-baselines \
 Recommended real form-filling run:
 
 ```bash
+# Step15 retrieval plan is layered by default.
 python -m nested_doc_rag.cli run-step15-agent \
   --config config/local.yaml \
   --target-namespace xixian_4 \
   --global-namespace global \
   --room-context "西咸4号楼 301机房" \
   --rows 4-144 \
-  --retrieval-mode layered \
   --prompt-version step15_compat \
   --judge \
   --use-judge-cache \
@@ -128,12 +128,12 @@ python -m nested_doc_rag.cli run-step15-agent \
 Run with Excel writeback:
 
 ```bash
+# Step15 retrieval plan is layered by default.
 python -m nested_doc_rag.cli run-step15-agent \
   --config config/local.yaml \
   --target-namespace xixian_4 \
   --room-context "西咸4号楼 301机房" \
   --rows 4-144 \
-  --retrieval-mode layered \
   --prompt-version step15_compat \
   --no-judge \
   --template data/forms/基地云机房信息调研表.xlsx \
