@@ -23,8 +23,7 @@ retrieval:
   target_namespace: xixian_4
   global_namespace: global
   query_layers: [fact, evidence, intro_doc, raw_text, meta]
-  mode: dense
-  retrieval_mode: flat
+  plan: layered
   vector_top_k: 40
   rerank_top_n: 10
   layered_plan:

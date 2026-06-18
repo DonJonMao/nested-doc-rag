@@ -19,6 +19,8 @@ def test_manifest_generated_after_fake_run(tmp_path: Path) -> None:
     assert manifest["status"] == "completed"
     assert manifest["artifacts"]["predictions_raw"] == "predictions_raw.jsonl"
     assert manifest["artifacts"]["agent_overlays"] == "agent_overlays.jsonl"
+    assert manifest["retrieval_plan"] == "layered"
+    assert not any("hybrid" in key for key in manifest["artifacts"])
     assert manifest["counts"]["total_fields"] == 1
     assert manifest["counts"]["answered"] == 1
     assert manifest["counts"]["writeback_allowed"] == 1
@@ -68,7 +70,7 @@ def make_runner(tmp_path: Path, *, answer_caller) -> Step15AgentRunner:
         global_namespace="global",
         room_context="西咸4号楼 301机房",
         out_dir=tmp_path,
-        retrieval_mode="layered",
+        retrieval_plan="layered",
         retrieval_fn=fake_retrieval,
         answer_caller=answer_caller,
         chat_retry_backoff_seconds=0,

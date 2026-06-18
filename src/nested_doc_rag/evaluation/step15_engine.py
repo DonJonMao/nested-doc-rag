@@ -64,6 +64,8 @@ def run_step15_retrieval(
             layered_plan=layered_plan,
         )
         return Step15RetrievalResult(reranked_hits=reranked_hits, vector_hits=vector_hits, retrieval_mode=retrieval_mode)
+    # Legacy/debug-only path. Step15AgentRunner production calls this function
+    # with retrieval_mode="layered" only.
     if retrieval_mode == "flat":
         vector_hits = retriever.search(
             query_text,

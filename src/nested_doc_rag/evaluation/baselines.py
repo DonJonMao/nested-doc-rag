@@ -32,7 +32,7 @@ DEFAULT_COLLECTION = DEFAULT_CONFIG.qdrant.collection_name
 DEFAULT_TARGET_NAMESPACE = DEFAULT_CONFIG.retrieval.target_namespace
 DEFAULT_EVAL_ROWS = DEFAULT_CONFIG.evaluation.default_rows
 DEFAULT_QUERY_LAYERS = DEFAULT_CONFIG.retrieval.query_layers
-DEFAULT_RETRIEVAL_MODE = DEFAULT_CONFIG.retrieval.retrieval_mode
+DEFAULT_RETRIEVAL_MODE = DEFAULT_CONFIG.retrieval.plan
 DEFAULT_EMBEDDING_ENDPOINT = DEFAULT_CONFIG.services.embedding_endpoint
 DEFAULT_EMBEDDING_MODEL = DEFAULT_CONFIG.services.embedding_model
 DEFAULT_RERANK_ENDPOINT = DEFAULT_CONFIG.services.rerank_endpoint
@@ -409,7 +409,7 @@ def main() -> None:
         deepseek_api_key=api_key,
         form_items_path=step12_dir / "form_items.jsonl",
         room_context=args.room_context,
-        retrieval_mode=args.retrieval_mode or config.retrieval.retrieval_mode,
+        retrieval_mode=args.retrieval_mode or config.retrieval.plan,
         layered_plan=config.retrieval.layered_plan,
         resume=config.evaluation.resume if args.resume is None else bool(args.resume),
         timeout=args.timeout or config.evaluation.timeout_seconds,

@@ -23,7 +23,7 @@ paths:
 services:
   embedding_endpoint: http://yaml-default/embeddings
 retrieval:
-  mode: dense
+  plan: layered
   vector_top_k: 11
   query_layers: [fact, evidence]
 grounding:
@@ -59,7 +59,7 @@ retrieval:
     assert config.paths.data_dir == (tmp_path / "local_data").resolve()
     assert config.services.embedding_endpoint == "http://cli/embeddings"
     assert config.retrieval.vector_top_k == 33
-    assert config.retrieval.mode == "dense"
+    assert config.retrieval.plan == "layered"
     assert config.retrieval.rerank_top_n == 6
     assert config.retrieval.query_layers == ["fact", "evidence"]
     assert config.grounding.min_strength_for_answered == "E4"
@@ -127,5 +127,21 @@ def test_show_config_command_outputs_merged_config() -> None:
     assert value["services"]["embedding_endpoint"] == "http://111.19.156.74:8001/v1/embeddings"
     assert value["services"]["rerank_endpoint"] == "http://111.19.156.74:8002/rerank"
     assert value["services"]["chat_endpoint"] == "http://111.19.156.30:8006/v1/chat/completions"
-    assert value["retrieval"]["retrieval_mode"] == "layered"
+    assert value["retrieval"]["plan"] == "layered"
+    assert "mode" not in value["retrieval"]
+    assert "retrieval_mode" not in value["retrieval"]
+    assert "retrieval_plan" not in value["retrieval"]
     assert value["qdrant"]["collection_name"] == "datacenter_chunks_v1"
+
+
+def test_legacy_retrieval_config_normalizes_to_layered(tmp_path: Path) -> None:
+    with pytest.warns(DeprecationWarning):
+        config = app_config_from_dict(
+            {
+                "paths": {"project_root": str(tmp_path)},
+                "retrieval": {"mode": "dense", "retrieval_mode": "flat", "retrieval_plan": "flat"},
+            },
+            project_root_base=tmp_path,
+        )
+
+    assert config.retrieval.plan == "layered"

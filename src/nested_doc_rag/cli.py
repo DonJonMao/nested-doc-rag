@@ -101,13 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
     step15_agent_parser.add_argument("--room-context", default=None, help="Known target room context for disambiguation.")
     step15_agent_parser.add_argument("--rows", default="all", help="Rows to run: all, 4-144, or 34,38,42.")
     step15_agent_parser.add_argument("--form-items", type=Path, default=None, help="Optional form_items.jsonl override.")
-    step15_agent_parser.add_argument(
-        "--retrieval-mode",
-        choices=["dense", "flat", "layered"],
-        default=None,
-        help="Dense retrieval mode. flat/layered are accepted as Step 15 plan aliases.",
-    )
-    step15_agent_parser.add_argument("--retrieval-plan", choices=["flat", "layered"], default=None, help="Step 15 dense retrieval plan.")
+    step15_agent_parser.add_argument("--retrieval-plan", choices=["layered"], default=None, help="Step 15 retrieval plan. Production uses layered.")
     grounding_group = step15_agent_parser.add_mutually_exclusive_group()
     grounding_group.add_argument("--grounding-enabled", dest="grounding_enabled", action="store_true", default=None, help="Enable evidence strength overlay gate.")
     grounding_group.add_argument("--no-grounding-enabled", dest="grounding_enabled", action="store_false", help="Disable evidence strength overlay gate.")
@@ -117,8 +111,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="step15_compat",
         help="Answer prompt version. step15_compat preserves the Step 15 effect prompt.",
     )
-    step15_agent_parser.add_argument("--vector-top-k", type=int, default=None, help="Flat vector retrieval top-k.")
-    step15_agent_parser.add_argument("--rerank-top-n", type=int, default=None, help="Flat rerank top-n.")
+    step15_agent_parser.add_argument("--vector-top-k", type=int, default=None, help="Vector retrieval top-k.")
+    step15_agent_parser.add_argument("--rerank-top-n", type=int, default=None, help="Rerank top-n.")
     judge_group = step15_agent_parser.add_mutually_exclusive_group()
     judge_group.add_argument("--judge", dest="judge", action="store_true", default=False, help="Run heldout-answer judge.")
     judge_group.add_argument("--no-judge", dest="judge", action="store_false", help="Disable judge. This is production mode.")
@@ -213,7 +207,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("run-agent requires --fields or --gold")
         retrieval_backend = args.retrieval_backend or config.agent.retrieval_backend
         generation_backend = args.generation_backend or config.agent.generation_backend
-        retrieval_plan = args.retrieval_plan or (config.retrieval.retrieval_plan if retrieval_backend == "qdrant" else "flat")
+        retrieval_plan = args.retrieval_plan or (config.retrieval.plan if retrieval_backend == "qdrant" else "flat")
         target_namespace = args.target_namespace or config.retrieval.target_namespace
         enable_rerank = bool(args.enable_rerank or config.agent.enable_rerank)
         vector_top_k = args.vector_top_k or config.retrieval.vector_top_k
@@ -290,14 +284,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         except (RuntimeError, ValueError) as exc:
             parser.error(str(exc))
         api_key_env = args.deepseek_api_key_env or args.chat_api_key_env or config.services.chat_api_key_env
-        retrieval_plan = resolve_step15_retrieval_plan(args.retrieval_mode, args.retrieval_plan, config)
+        retrieval_plan = resolve_step15_retrieval_plan(args.retrieval_plan, config)
         runner = Step15AgentRunner(
             config=config,
             target_namespace=target_namespace,
             global_namespace=global_namespace,
             room_context=args.room_context,
             out_dir=args.out_dir,
-            retrieval_mode=retrieval_plan,
+            retrieval_plan=retrieval_plan,
             vector_top_k=args.vector_top_k or config.retrieval.vector_top_k,
             rerank_top_n=args.rerank_top_n or config.retrieval.rerank_top_n,
             judge_enabled=bool(args.judge),
@@ -334,7 +328,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "run_id": runner.run_id,
                     "judge": bool(args.judge),
                     "writeback": runner.writeback_status,
-                    "retrieval_mode": "dense",
+                    "retrieval_plan": retrieval_plan,
                 },
                 ensure_ascii=False,
             )
@@ -427,13 +421,13 @@ def build_agent_generator(args: argparse.Namespace, config, generation_backend: 
     )
 
 
-def resolve_step15_retrieval_plan(retrieval_mode: str | None, retrieval_plan: str | None, config) -> str:
-    if retrieval_plan in {"flat", "layered"}:
-        return retrieval_plan
-    if retrieval_mode in {"flat", "layered"}:
-        return retrieval_mode
-    configured = config.retrieval.retrieval_plan or config.retrieval.retrieval_mode or "layered"
-    return configured if configured in {"flat", "layered"} else "layered"
+def resolve_step15_retrieval_plan(retrieval_plan: str | None, config) -> str:
+    if retrieval_plan not in {None, "layered"}:
+        raise ValueError("Step15 production retrieval_plan must be layered")
+    configured = getattr(config.retrieval, "plan", "layered")
+    if configured != "layered":
+        raise ValueError("Step15 production retrieval_plan must be layered")
+    return "layered"
 
 
 if __name__ == "__main__":

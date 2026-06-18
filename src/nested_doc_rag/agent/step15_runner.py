@@ -136,7 +136,7 @@ class Step15AgentRunner:
         out_dir: Path,
         global_namespace: str = "global",
         room_context: str | None = None,
-        retrieval_mode: Literal["layered", "flat"] = "layered",
+        retrieval_plan: Literal["layered"] = "layered",
         vector_top_k: int | None = None,
         rerank_top_n: int | None = None,
         judge_enabled: bool = False,
@@ -175,7 +175,10 @@ class Step15AgentRunner:
         self.global_namespace = global_namespace
         self.room_context = room_context
         self.out_dir = out_dir
-        self.retrieval_mode = retrieval_mode
+        if retrieval_plan != "layered":
+            raise ValueError("Step15 production path supports layered retrieval only")
+        self.retrieval_plan = "layered"
+        self.retrieval_mode = self.retrieval_plan
         self.vector_top_k = vector_top_k or config.retrieval.vector_top_k
         self.rerank_top_n = rerank_top_n or config.retrieval.rerank_top_n
         self.judge_enabled = judge_enabled
@@ -218,7 +221,7 @@ class Step15AgentRunner:
                 "engine": "step15_agent",
                 "target_namespace": self.target_namespace,
                 "global_namespace": self.global_namespace,
-                "retrieval_mode": self.retrieval_mode,
+                "retrieval_plan": self.retrieval_plan,
                 "collection_name": self.collection_name,
                 "chat_model": self.chat_model,
                 "prompt_version": self.prompt_version,
@@ -273,7 +276,7 @@ class Step15AgentRunner:
             "global_namespace": self.global_namespace,
             "room_context": display_text(self.room_context),
             "rows": rows_label_for_items(items),
-            "retrieval_mode": self.retrieval_mode,
+            "retrieval_plan": self.retrieval_plan,
             "retrieval_fusion_mode": "dense",
             "fields_total": len(items),
             "fields_completed": skipped_completed_count,
@@ -389,7 +392,7 @@ class Step15AgentRunner:
             field_id,
             "layered_retrieval_finished",
             {
-                "retrieval_mode": self.retrieval_mode,
+                "retrieval_plan": self.retrieval_plan,
                 "total_hits": len(top_hits),
                 "vector_hit_count": len(vector_hits),
                 "layer_counts": count_layers(top_hits),
@@ -415,7 +418,7 @@ class Step15AgentRunner:
             },
         )
 
-        prediction = convert_step15_generated_to_prediction(item, generated, top_hits, retrieval_mode=self.retrieval_mode)
+        prediction = convert_step15_generated_to_prediction(item, generated, top_hits, retrieval_mode=self.retrieval_plan)
         critic_flags = critic_check_step15_answer(item, generated, top_hits)
         overlay = build_agent_overlay_for_step15_prediction(prediction, top_hits, critic_flags)
         grounding_result: EvidenceStrengthResult | None = None
@@ -439,7 +442,7 @@ class Step15AgentRunner:
                     {
                         "field_id": field_id,
                         "query_text": query_text,
-                        "retrieval_mode": "dense",
+                        "retrieval_plan": self.retrieval_plan,
                         "answer_status": prediction.answer_status,
                         "answer_value": prediction.answer_value,
                         "source_chunk_ids": prediction.source_chunk_ids,
@@ -557,7 +560,7 @@ class Step15AgentRunner:
             field_id,
             "layered_retrieval_finished",
             {
-                "retrieval_mode": self.retrieval_mode,
+                "retrieval_plan": self.retrieval_plan,
                 "total_hits": len(top_hits),
                 "vector_hit_count": len(vector_hits),
                 "layer_counts": count_layers(top_hits),
@@ -748,7 +751,7 @@ class Step15AgentRunner:
             target_namespace=self.target_namespace,
             global_namespace=self.global_namespace,
             allowed_layers=self.allowed_layers,
-            retrieval_mode=self.retrieval_mode,
+            retrieval_mode=self.retrieval_plan,
             vector_top_k=self.vector_top_k,
             rerank_top_n=self.rerank_top_n,
             layered_plan=self.layered_plan,
@@ -1016,7 +1019,7 @@ class Step15AgentRunner:
             "target_namespace": self.target_namespace,
             "global_namespace": self.global_namespace,
             "room_context": display_text(self.room_context),
-            "retrieval_mode": self.retrieval_mode,
+            "retrieval_plan": self.retrieval_plan,
             "retrieval_fusion_mode": "dense",
             "grounding_enabled": self.grounding_enabled,
             "vector_top_k": self.vector_top_k,
@@ -1614,6 +1617,7 @@ def build_run_manifest(
         "global_namespace": summary.get("global_namespace"),
         "room_context": display_text(room_context),
         "rows": run_state.get("rows", ""),
+        "retrieval_plan": summary.get("retrieval_plan", "layered"),
         "judge_enabled": judge_enabled,
         "writeback_enabled": writeback_enabled,
         "artifacts": artifacts,
@@ -1650,7 +1654,7 @@ def build_run_summary_md(*, summary: dict[str, Any], output_files: list[str], wr
         f"- run_id: `{summary.get('run_id')}`",
         f"- target_namespace: `{summary.get('target_namespace')}`",
         f"- global_namespace: `{summary.get('global_namespace')}`",
-        f"- retrieval_mode: `{summary.get('retrieval_mode')}`",
+        f"- retrieval_plan: `{summary.get('retrieval_plan')}`",
         f"- total_fields: {summary.get('fields_total')}",
         f"- answered: {trace_summary.get('answered_count', 0)}",
         f"- partial_clue: {trace_summary.get('partial_clue_count', 0)}",

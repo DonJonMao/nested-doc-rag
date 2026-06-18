@@ -161,6 +161,9 @@ Writeback artifacts are present only when writeback is enabled and completed:
 AgentScope MAS is the default Step15 runtime. The MAS roles are deterministic wrappers around the original Step15 query,
 retrieval, answer arbitration, critic, and overlay control functions. They do not change the stable artifacts above.
 
+Step15 production retrieval uses the dense layered retrieval plan. `summary.json` and `run_manifest.json` record
+`retrieval_plan: layered`; alternate Step15 flat, lexical, or fused retrieval paths are not production artifacts.
+
 Diagnostic MAS/AgentScope trace artifacts may be present when `agentscope.mode` is `equivalent_mas` or `trace_only`:
 
 - `mas_trace.jsonl`

@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from nested_doc_rag.agent.step15_runner import (
     Step15AgentRunner,
     build_agent_overlay_for_step15_prediction,
@@ -204,7 +206,11 @@ def test_dense_default_artifact_contract_unchanged(tmp_path: Path) -> None:
     manifest = read_jsonl(tmp_path / "predictions_raw.jsonl")[0]
     assert "evidence_strength" not in manifest
     summary = load_json_file(tmp_path / "summary.json")
+    run_manifest = load_json_file(tmp_path / "run_manifest.json")
+    assert summary["retrieval_plan"] == "layered"
     assert summary["retrieval_fusion_mode"] == "dense"
+    assert run_manifest["retrieval_plan"] == "layered"
+    assert not any(key.startswith("hybrid") for key in run_manifest["artifacts"])
 
 
 def test_grounding_blocks_unsupported_answer_without_mutating_raw(tmp_path: Path) -> None:
@@ -233,6 +239,8 @@ def test_grounding_blocks_unsupported_answer_without_mutating_raw(tmp_path: Path
     assert overlays[0]["review_required"] is True
     assert "unsupported_by_strong_evidence" in overlays[0]["reasons"]
     assert (tmp_path / "grounding_trace.jsonl").exists()
+    grounding_trace = read_jsonl(tmp_path / "grounding_trace.jsonl")
+    assert grounding_trace[0]["retrieval_plan"] == "layered"
     assert read_jsonl(tmp_path / "review_items.jsonl")
 
 
@@ -384,8 +392,6 @@ def test_cli_run_step15_agent_args(tmp_path: Path) -> None:
             "西咸4号楼 301机房",
             "--rows",
             "4-5",
-            "--retrieval-mode",
-            "dense",
             "--grounding-enabled",
             "--retrieval-plan",
             "layered",
@@ -405,7 +411,6 @@ def test_cli_run_step15_agent_args(tmp_path: Path) -> None:
 
     assert args.command == "run-step15-agent"
     assert args.rows == "4-5"
-    assert args.retrieval_mode == "dense"
     assert args.grounding_enabled is True
     assert args.retrieval_plan == "layered"
     assert args.judge is True
@@ -417,11 +422,31 @@ def test_cli_run_step15_agent_args(tmp_path: Path) -> None:
     assert args.judge_cache == tmp_path / "judge_cache.jsonl"
 
 
-def test_cli_dense_mode_resolves_to_layered_plan(tmp_path: Path) -> None:
+def test_cli_retrieval_plan_resolves_to_layered(tmp_path: Path) -> None:
     config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml")
 
-    assert resolve_step15_retrieval_plan("dense", None, config) == "layered"
-    assert resolve_step15_retrieval_plan("dense", "flat", config) == "flat"
+    assert resolve_step15_retrieval_plan(None, config) == "layered"
+    assert resolve_step15_retrieval_plan("layered", config) == "layered"
+
+
+def test_run_step15_agent_rejects_hybrid_mode() -> None:
+    parser = build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["run-step15-agent", "--out-dir", "artifacts/runs/test", "--retrieval-mode", "hybrid"])
+
+
+def test_flat_not_exposed_in_step15_cli(capsys) -> None:
+    parser = build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["run-step15-agent", "--out-dir", "artifacts/runs/test", "--retrieval-plan", "flat"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["run-step15-agent", "--help"])
+    help_text = capsys.readouterr().out
+    assert "--retrieval-mode" not in help_text
+    assert "flat" not in help_text
+    assert "--retrieval-plan {layered}" in help_text
 
 
 def test_prompt_version_default_step15_compat() -> None:
@@ -557,7 +582,7 @@ def make_runner(
         global_namespace="global",
         room_context="西咸4号楼 301机房",
         out_dir=tmp_path,
-        retrieval_mode="layered",
+        retrieval_plan="layered",
         judge_enabled=judge_enabled,
         resume=resume,
         writeback_enabled=writeback_enabled,

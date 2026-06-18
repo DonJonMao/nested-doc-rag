@@ -4,6 +4,7 @@ import copy
 import json
 import os
 import re
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -95,9 +96,7 @@ class RetrievalConfig:
     target_namespace: str = "xixian_4"
     global_namespace: str = "global"
     query_layers: list[str] = field(default_factory=lambda: ["fact", "evidence", "intro_doc", "raw_text", "meta"])
-    mode: str = "dense"
-    retrieval_mode: str = "flat"
-    retrieval_plan: str = "layered"
+    plan: str = "layered"
     vector_top_k: int = 40
     rerank_top_n: int = 10
     layer_top_k: int = 8
@@ -248,6 +247,27 @@ def load_app_config(
 load_config = load_app_config
 
 
+def _normalize_step15_retrieval_plan(retrieval_data: Mapping[str, Any]) -> str:
+    legacy_keys = [key for key in ("retrieval_plan", "retrieval_mode", "mode") if key in retrieval_data]
+    if legacy_keys:
+        raw_value = retrieval_data.get("plan", retrieval_data.get(legacy_keys[0]))
+        warnings.warn(
+            "retrieval.mode/retrieval_mode/retrieval_plan are deprecated for Step15; using retrieval.plan=layered.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+    else:
+        raw_value = retrieval_data.get("plan")
+    value = str(raw_value or "layered")
+    if value != "layered":
+        warnings.warn(
+            f"Step15 production retrieval only supports layered; ignoring retrieval plan {value!r}.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+    return "layered"
+
+
 def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | None = None) -> AppConfig:
     raw_paths = dict(data.get("paths") or {})
     base = project_root_base or discover_project_root()
@@ -281,9 +301,7 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         target_namespace=str(retrieval_data.get("target_namespace", "xixian_4")),
         global_namespace=str(retrieval_data.get("global_namespace", "global")),
         query_layers=[str(item) for item in _as_list(retrieval_data.get("query_layers"))],
-        mode=str(retrieval_data.get("mode", "dense")),
-        retrieval_mode=str(retrieval_data.get("retrieval_mode", "flat")),
-        retrieval_plan=str(retrieval_data.get("retrieval_plan", retrieval_data.get("retrieval_mode", "layered"))),
+        plan=_normalize_step15_retrieval_plan(retrieval_data),
         vector_top_k=_as_int(retrieval_data.get("vector_top_k", 40)),
         rerank_top_n=_as_int(retrieval_data.get("rerank_top_n", 10)),
         layer_top_k=_as_int(retrieval_data.get("layer_top_k", 8)),
@@ -427,9 +445,9 @@ def _env_aliases() -> dict[str, tuple[str, str]]:
         "NDR_QDRANT_PATH": ("paths", "qdrant_path"),
         "NDR_QDRANT_COLLECTION": ("qdrant", "collection_name"),
         "TARGET_NAMESPACE": ("retrieval", "target_namespace"),
-        "RETRIEVAL_MODE": ("retrieval", "retrieval_mode"),
-        "NDR_RETRIEVAL_MODE": ("retrieval", "mode"),
-        "NDR_RETRIEVAL_PLAN": ("retrieval", "retrieval_plan"),
+        "RETRIEVAL_MODE": ("retrieval", "plan"),
+        "NDR_RETRIEVAL_MODE": ("retrieval", "plan"),
+        "NDR_RETRIEVAL_PLAN": ("retrieval", "plan"),
         "NDR_AGENT_RETRIEVAL_BACKEND": ("agent", "retrieval_backend"),
         "NDR_AGENT_GENERATION_BACKEND": ("agent", "generation_backend"),
         "NDR_AGENT_ENABLE_RERANK": ("agent", "enable_rerank"),
