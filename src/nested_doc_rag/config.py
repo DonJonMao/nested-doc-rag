@@ -102,6 +102,11 @@ class RetrievalConfig:
     layer_top_k: int = 8
     layer_rerank_top_n: int = 5
     max_reference_chunks: int = 5
+    expand_parent_payload: bool = True
+    parent_payload_max_chars: int = 300
+    parent_payload_include_neighbors: bool = True
+    parent_payload_neighbor_window: int = 1
+    parent_payload_include_raw_parent_text: bool = True
     layered_plan: list[dict[str, Any]] = field(default_factory=_default_layered_plan)
 
 
@@ -312,6 +317,11 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         layer_top_k=_as_int(retrieval_data.get("layer_top_k", 8)),
         layer_rerank_top_n=_as_int(retrieval_data.get("layer_rerank_top_n", 5)),
         max_reference_chunks=_as_int(retrieval_data.get("max_reference_chunks", 5)),
+        expand_parent_payload=_as_bool(retrieval_data.get("expand_parent_payload", True)),
+        parent_payload_max_chars=_as_int(retrieval_data.get("parent_payload_max_chars", 300)),
+        parent_payload_include_neighbors=_as_bool(retrieval_data.get("parent_payload_include_neighbors", True)),
+        parent_payload_neighbor_window=_as_int(retrieval_data.get("parent_payload_neighbor_window", 1)),
+        parent_payload_include_raw_parent_text=_as_bool(retrieval_data.get("parent_payload_include_raw_parent_text", True)),
         layered_plan=copy.deepcopy(_as_list(retrieval_data.get("layered_plan"))),
     )
     grounding_data = _section(data, "grounding", GroundingConfig())

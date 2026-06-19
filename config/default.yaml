@@ -26,6 +26,11 @@ retrieval:
   plan: layered
   vector_top_k: 40
   rerank_top_n: 10
+  expand_parent_payload: true
+  parent_payload_max_chars: 300
+  parent_payload_include_neighbors: true
+  parent_payload_neighbor_window: 1
+  parent_payload_include_raw_parent_text: true
   layered_plan:
     - layer_name: target_main_fact
       description: 目标机房主知识库事实行，优先作为可填答案来源。

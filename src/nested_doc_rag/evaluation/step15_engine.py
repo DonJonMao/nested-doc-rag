@@ -179,7 +179,7 @@ def build_answer_schema(prompt_version: str) -> dict[str, Any]:
 
 
 def normalize_hit_for_prompt(hit: dict[str, Any]) -> dict[str, Any]:
-    return {
+    normalized = {
         "chunk_id": hit.get("chunk_id"),
         "rank": hit.get("final_rank", hit.get("rerank_rank", hit.get("vector_rank"))),
         "score": hit.get("rerank_score", hit.get("vector_score")),
@@ -195,3 +195,51 @@ def normalize_hit_for_prompt(hit: dict[str, Any]) -> dict[str, Any]:
         "text_for_embedding": hit.get("text_for_embedding"),
         "proof_attachment_ids": hit.get("proof_attachment_ids") or hit.get("evidence_attachment_ids") or [],
     }
+    parent_payload = compact_parent_payload_for_prompt(hit.get("parent_payload"))
+    if parent_payload:
+        normalized["evidence_header"] = format_parent_payload_header(parent_payload)
+        normalized["parent_payload"] = parent_payload
+    return normalized
+
+
+def compact_parent_payload_for_prompt(parent_payload: Any) -> dict[str, Any]:
+    if not isinstance(parent_payload, dict):
+        return {}
+    keys = [
+        "source_document",
+        "sheet_name",
+        "table_title",
+        "section_path",
+        "row_header",
+        "column_header",
+        "unit",
+        "scope",
+        "status",
+        "parent_text",
+        "neighbor_text",
+        "row_index",
+        "cell_range",
+        "confidence",
+    ]
+    return {key: parent_payload.get(key) for key in keys if parent_payload.get(key) is not None and parent_payload.get(key) != "" and parent_payload.get(key) != []}
+
+
+def format_parent_payload_header(parent_payload: dict[str, Any]) -> str:
+    structure_path = " / ".join(
+        display_text(parent_payload.get(key))
+        for key in ["source_document", "sheet_name", "table_title", "section_path"]
+        if display_text(parent_payload.get(key))
+    )
+    field_path = " / ".join(
+        display_text(parent_payload.get(key))
+        for key in ["row_header", "column_header"]
+        if display_text(parent_payload.get(key))
+    )
+    parts = [
+        f"结构路径：{structure_path}" if structure_path else "",
+        f"字段路径：{field_path}" if field_path else "",
+        f"单位：{display_text(parent_payload.get('unit'))}" if display_text(parent_payload.get("unit")) else "",
+        f"范围：{display_text(parent_payload.get('scope'))}" if display_text(parent_payload.get("scope")) else "",
+        f"状态：{display_text(parent_payload.get('status'))}" if display_text(parent_payload.get("status")) else "",
+    ]
+    return "；".join(part for part in parts if part)

@@ -68,22 +68,44 @@ class QdrantRetriever:
             with_payload=True,
         )
         hits: list[dict[str, Any]] = []
+        metadata_keys = [
+            "source_document",
+            "sheet_name",
+            "table_id",
+            "table_title",
+            "section_path",
+            "category",
+            "category_path",
+            "capability_desc",
+            "row_header",
+            "column_header",
+            "unit",
+            "row_index",
+            "cell_range",
+            "scope",
+            "status",
+            "parent_text",
+            "neighbor_text",
+            "parent_payload",
+        ]
         for rank, point in enumerate(response.points, 1):
             payload = point.payload or {}
-            hits.append(
-                {
-                    "vector_rank": rank,
-                    "vector_score": round(float(point.score), 6),
-                    "chunk_id": payload.get("chunk_id"),
-                    "namespace": payload.get("namespace"),
-                    "source_type": payload.get("source_type"),
-                    "corpus_layer": payload.get("corpus_layer"),
-                    "anchor": payload.get("anchor"),
-                    "file_name": payload.get("file_name"),
-                    "raw_text": payload.get("raw_text"),
-                    "text_for_embedding": payload.get("text_for_embedding") or payload.get("raw_text"),
-                    "proof_attachment_ids": payload.get("proof_attachment_ids") or [],
-                    "source": payload.get("source") or {},
-                }
-            )
+            hit = {
+                "vector_rank": rank,
+                "vector_score": round(float(point.score), 6),
+                "chunk_id": payload.get("chunk_id"),
+                "namespace": payload.get("namespace"),
+                "source_type": payload.get("source_type"),
+                "corpus_layer": payload.get("corpus_layer"),
+                "anchor": payload.get("anchor"),
+                "file_name": payload.get("file_name"),
+                "raw_text": payload.get("raw_text"),
+                "text_for_embedding": payload.get("text_for_embedding") or payload.get("raw_text"),
+                "proof_attachment_ids": payload.get("proof_attachment_ids") or [],
+                "source": payload.get("source") or {},
+            }
+            for key in metadata_keys:
+                if key in payload:
+                    hit[key] = payload.get(key)
+            hits.append(hit)
         return hits

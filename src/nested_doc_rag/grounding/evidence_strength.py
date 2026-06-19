@@ -726,6 +726,9 @@ def field_intent_summary(intent: FieldIntent) -> str:
 def evidence_field_path_parts(hits: list[dict[str, Any]]) -> list[str]:
     parts: list[str] = []
     for hit in hits:
+        parent = hit.get("parent_payload")
+        if isinstance(parent, dict):
+            parts.extend(parent_payload_path_values(parent))
         for key in [
             "source_document",
             "file_name",
@@ -760,8 +763,43 @@ def parent_payload_path_parts(hits: list[dict[str, Any]]) -> list[str]:
     for hit in hits:
         parent = hit.get("parent_payload")
         if isinstance(parent, dict):
-            parts.extend(flatten_payload_values(parent))
+            parts.extend(parent_payload_path_values(parent))
     return dedupe(part for part in parts if part)
+
+
+def parent_payload_path_values(parent: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    known_keys = [
+        "source_document",
+        "sheet_name",
+        "table_title",
+        "section_path",
+        "row_header",
+        "column_header",
+        "unit",
+        "scope",
+        "status",
+        "parent_text",
+        "neighbor_text",
+        "row_index",
+        "cell_range",
+    ]
+    for key in known_keys:
+        value = parent.get(key)
+        if isinstance(value, list):
+            values.extend(display_text(item) for item in value if display_text(item))
+        elif display_text(value):
+            values.append(display_text(value))
+    for key, value in parent.items():
+        if key in {*known_keys, "confidence", "reasons"}:
+            continue
+        if isinstance(value, list):
+            values.extend(display_text(item) for item in value if display_text(item))
+        elif isinstance(value, dict):
+            values.extend(flatten_payload_values(value))
+        elif display_text(value):
+            values.append(display_text(value))
+    return values
 
 
 def flatten_payload_values(value: Any) -> list[str]:

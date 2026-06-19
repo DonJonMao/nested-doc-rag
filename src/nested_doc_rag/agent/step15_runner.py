@@ -25,7 +25,7 @@ from nested_doc_rag.gongkan_eval import build_judge_messages, build_masked_query
 from nested_doc_rag.grounding import EvidenceStrengthEvaluator, EvidenceStrengthResult, apply_evidence_strength_to_overlay
 from nested_doc_rag.io import display_text, read_jsonl, write_json, write_jsonl
 from nested_doc_rag.llm import JsonRepairError
-from nested_doc_rag.retrieval import QdrantRetriever
+from nested_doc_rag.retrieval import QdrantRetriever, attach_parent_payloads
 from nested_doc_rag.schemas.eval import FieldPrediction
 
 from .mas.controller import Step15MASController
@@ -386,8 +386,8 @@ class Step15AgentRunner:
         retrieval_started = perf_counter_ms()
         retrieval_result = self.retrieve(query_text)
         retrieval_latency_ms = round(perf_counter_ms() - retrieval_started, 3)
-        top_hits = retrieval_result.reranked_hits
-        vector_hits = retrieval_result.vector_hits
+        top_hits = self.attach_parent_payloads(retrieval_result.reranked_hits)
+        vector_hits = self.attach_parent_payloads(retrieval_result.vector_hits)
         self.trace.record(
             field_id,
             "layered_retrieval_finished",
@@ -546,8 +546,8 @@ class Step15AgentRunner:
         )
 
         retrieval = self.mas_controller.run_evidence_retrieval(item, query_text)
-        top_hits = retrieval.top_hits
-        vector_hits = retrieval.vector_hits
+        top_hits = self.attach_parent_payloads(retrieval.top_hits)
+        vector_hits = self.attach_parent_payloads(retrieval.vector_hits)
         self.mas_controller.trace.record(
             field_id,
             self.mas_controller.evidence_retrieval.name,
@@ -914,6 +914,17 @@ class Step15AgentRunner:
         write_jsonl(self.review_checkpoint_path(), self.review_items)
         self.trace.write_jsonl(self.trace_checkpoint_path())
         write_json(self.out_dir / "run_state.json", run_state)
+
+    def attach_parent_payloads(self, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not self.config.retrieval.expand_parent_payload:
+            return hits
+        return attach_parent_payloads(
+            hits,
+            max_chars=self.config.retrieval.parent_payload_max_chars,
+            include_neighbors=self.config.retrieval.parent_payload_include_neighbors,
+            neighbor_window=self.config.retrieval.parent_payload_neighbor_window,
+            include_raw_parent_text=self.config.retrieval.parent_payload_include_raw_parent_text,
+        )
 
     def write_outputs(self, predictions: list[FieldPrediction], overlays: list[AgentOverlay], run_state: dict[str, Any]) -> None:
         predictions_path = self.out_dir / "predictions.jsonl"
