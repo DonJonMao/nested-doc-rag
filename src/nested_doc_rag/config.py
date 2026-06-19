@@ -102,7 +102,7 @@ class RetrievalConfig:
     layer_top_k: int = 8
     layer_rerank_top_n: int = 5
     max_reference_chunks: int = 5
-    expand_parent_payload: bool = True
+    expand_parent_payload: bool = False
     parent_payload_max_chars: int = 300
     parent_payload_include_neighbors: bool = True
     parent_payload_neighbor_window: int = 1
@@ -113,6 +113,7 @@ class RetrievalConfig:
 @dataclass(frozen=True)
 class GroundingConfig:
     evidence_strength_enabled: bool = True
+    field_binding_enabled: bool = False
     min_strength_for_answered: str = "E3"
     min_strength_for_writeback: str = "E3"
     require_target_source_for_answered: bool = True
@@ -317,7 +318,7 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         layer_top_k=_as_int(retrieval_data.get("layer_top_k", 8)),
         layer_rerank_top_n=_as_int(retrieval_data.get("layer_rerank_top_n", 5)),
         max_reference_chunks=_as_int(retrieval_data.get("max_reference_chunks", 5)),
-        expand_parent_payload=_as_bool(retrieval_data.get("expand_parent_payload", True)),
+        expand_parent_payload=_as_bool(retrieval_data.get("expand_parent_payload", False)),
         parent_payload_max_chars=_as_int(retrieval_data.get("parent_payload_max_chars", 300)),
         parent_payload_include_neighbors=_as_bool(retrieval_data.get("parent_payload_include_neighbors", True)),
         parent_payload_neighbor_window=_as_int(retrieval_data.get("parent_payload_neighbor_window", 1)),
@@ -327,6 +328,7 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
     grounding_data = _section(data, "grounding", GroundingConfig())
     grounding = GroundingConfig(
         evidence_strength_enabled=_as_bool(grounding_data.get("evidence_strength_enabled", True)),
+        field_binding_enabled=_as_bool(grounding_data.get("field_binding_enabled", False)),
         min_strength_for_answered=str(grounding_data.get("min_strength_for_answered", "E3")),
         min_strength_for_writeback=str(grounding_data.get("min_strength_for_writeback", "E3")),
         require_target_source_for_answered=_as_bool(grounding_data.get("require_target_source_for_answered", True)),

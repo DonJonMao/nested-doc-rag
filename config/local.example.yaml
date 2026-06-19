@@ -32,7 +32,7 @@ retrieval:
   layer_top_k: 8
   layer_rerank_top_n: 5
   max_reference_chunks: 5
-  expand_parent_payload: true
+  expand_parent_payload: false
   parent_payload_max_chars: 300
   parent_payload_include_neighbors: true
   parent_payload_neighbor_window: 1
@@ -76,6 +76,7 @@ retrieval:
 
 grounding:
   evidence_strength_enabled: true
+  field_binding_enabled: false
   min_strength_for_answered: E3
   min_strength_for_writeback: E3
   require_target_source_for_answered: true

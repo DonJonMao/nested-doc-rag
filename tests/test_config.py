@@ -60,8 +60,10 @@ retrieval:
     assert config.services.embedding_endpoint == "http://cli/embeddings"
     assert config.retrieval.vector_top_k == 33
     assert config.retrieval.plan == "layered"
+    assert config.retrieval.expand_parent_payload is False
     assert config.retrieval.rerank_top_n == 6
     assert config.retrieval.query_layers == ["fact", "evidence"]
+    assert config.grounding.field_binding_enabled is False
     assert config.grounding.min_strength_for_answered == "E4"
 
 
@@ -128,6 +130,8 @@ def test_show_config_command_outputs_merged_config() -> None:
     assert value["services"]["rerank_endpoint"] == "http://111.19.156.74:8002/rerank"
     assert value["services"]["chat_endpoint"] == "http://111.19.156.30:8006/v1/chat/completions"
     assert value["retrieval"]["plan"] == "layered"
+    assert value["retrieval"]["expand_parent_payload"] is False
+    assert value["grounding"]["field_binding_enabled"] is False
     assert "mode" not in value["retrieval"]
     assert "retrieval_mode" not in value["retrieval"]
     assert "retrieval_plan" not in value["retrieval"]

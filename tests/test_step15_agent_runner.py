@@ -225,6 +225,7 @@ def test_grounding_blocks_unsupported_answer_without_mutating_raw(tmp_path: Path
         template_path=template,
         writeback_fn=capturing_writeback(captured),
         grounding_enabled=True,
+        field_binding_enabled=True,
         config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
     )
 
@@ -293,6 +294,7 @@ def test_field_binding_blocks_wrong_field_without_mutating_raw(tmp_path: Path) -
         template_path=template,
         writeback_fn=capturing_writeback(captured),
         grounding_enabled=True,
+        field_binding_enabled=True,
         config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
     )
 
@@ -333,6 +335,7 @@ def test_field_binding_exact_allows_existing_safe_overlay(tmp_path: Path) -> Non
         template_path=template,
         writeback_fn=capturing_writeback(captured),
         grounding_enabled=True,
+        field_binding_enabled=True,
         config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
     )
 
@@ -365,6 +368,7 @@ def test_grounding_trace_includes_field_binding(tmp_path: Path) -> None:
         answer_caller=built_cabinet_answer_caller,
         retrieval_fn=fake_retrieval_built_cabinet_count,
         grounding_enabled=True,
+        field_binding_enabled=True,
         config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
     )
 
@@ -403,6 +407,7 @@ def test_field_binding_never_turns_writeback_false_to_true(tmp_path: Path) -> No
         answer_caller=invalid_source_answer_caller,
         retrieval_fn=fake_retrieval_built_cabinet_count,
         grounding_enabled=True,
+        field_binding_enabled=True,
         config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
     )
 
@@ -420,6 +425,67 @@ def test_field_binding_never_turns_writeback_false_to_true(tmp_path: Path) -> No
     overlay = read_jsonl(tmp_path / "agent_overlays.jsonl")[0]
     assert "invalid_source_reference" in overlay["critic_flags"]
     assert overlay["writeback_allowed"] is False
+
+
+def test_field_binding_disabled_keeps_prompt1_overlay_behavior(tmp_path: Path) -> None:
+    captured: list[int] = []
+    template = tmp_path / "template.xlsx"
+    template.write_text("fake", encoding="utf-8")
+    runner = make_runner(
+        tmp_path,
+        answer_caller=planned_cabinet_answer_caller,
+        retrieval_fn=fake_retrieval_planned_cabinet_count,
+        writeback_enabled=True,
+        template_path=template,
+        writeback_fn=capturing_writeback(captured),
+        grounding_enabled=True,
+        field_binding_enabled=False,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    runner.run(
+        [
+            make_item(
+                31,
+                question_text="已建设机柜数量是多少？",
+                instruction_text="填写已建设机柜数量",
+                category_path=["资源", "机柜"],
+            )
+        ]
+    )
+
+    overlay = read_jsonl(tmp_path / "agent_overlays.jsonl")[0]
+    grounding_trace = read_jsonl(tmp_path / "grounding_trace.jsonl")[0]
+    assert grounding_trace["field_binding"] == "disabled"
+    assert "field_mismatch" not in overlay["reasons"]
+    assert overlay["writeback_allowed"] is True
+    assert captured == [1]
+
+
+def test_parent_payload_disabled_by_default_for_step15(tmp_path: Path) -> None:
+    runner = make_runner(
+        tmp_path,
+        answer_caller=assert_no_parent_payload_answer_caller,
+        retrieval_fn=fake_retrieval_built_cabinet_count,
+        grounding_enabled=False,
+        parent_payload_enabled=False,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    runner.run([make_item(31, question_text="已建设机柜数量是多少？", instruction_text="填写已建设机柜数量")])
+
+
+def test_parent_payload_enabled_attaches_context_for_step15(tmp_path: Path) -> None:
+    runner = make_runner(
+        tmp_path,
+        answer_caller=assert_parent_payload_answer_caller,
+        retrieval_fn=fake_retrieval_built_cabinet_count,
+        grounding_enabled=False,
+        parent_payload_enabled=True,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    runner.run([make_item(31, question_text="已建设机柜数量是多少？", instruction_text="填写已建设机柜数量")])
 
 
 def test_resume_skips_completed_rows(tmp_path: Path) -> None:
@@ -534,6 +600,8 @@ def test_cli_run_step15_agent_args(tmp_path: Path) -> None:
             "--rows",
             "4-5",
             "--grounding-enabled",
+            "--field-binding-enabled",
+            "--parent-payload-enabled",
             "--retrieval-plan",
             "layered",
             "--out-dir",
@@ -553,6 +621,8 @@ def test_cli_run_step15_agent_args(tmp_path: Path) -> None:
     assert args.command == "run-step15-agent"
     assert args.rows == "4-5"
     assert args.grounding_enabled is True
+    assert args.field_binding_enabled is True
+    assert args.parent_payload_enabled is True
     assert args.retrieval_plan == "layered"
     assert args.judge is True
     assert args.resume is True
@@ -714,6 +784,8 @@ def make_runner(
     judge_cache_path: Path | None = None,
     use_judge_cache: bool = False,
     grounding_enabled: bool | None = None,
+    field_binding_enabled: bool | None = None,
+    parent_payload_enabled: bool | None = None,
     config_overrides: dict[str, Any] | None = None,
 ) -> Step15AgentRunner:
     config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml", cli_overrides=config_overrides)
@@ -738,6 +810,8 @@ def make_runner(
         judge_cache_path=judge_cache_path,
         use_judge_cache=use_judge_cache,
         grounding_enabled=grounding_enabled,
+        field_binding_enabled=field_binding_enabled,
+        parent_payload_enabled=parent_payload_enabled,
     )
 
 
@@ -953,6 +1027,19 @@ def built_cabinet_answer_caller(**kwargs: Any) -> dict[str, Any]:
         "evidence_attachment_ids": [],
         "reference_source_documents": [],
     }
+
+
+def assert_no_parent_payload_answer_caller(**kwargs: Any) -> dict[str, Any]:
+    assert "parent_payload" not in kwargs["hits"][0]
+    return built_cabinet_answer_caller(**kwargs)
+
+
+def assert_parent_payload_answer_caller(**kwargs: Any) -> dict[str, Any]:
+    parent_payload = kwargs["hits"][0].get("parent_payload")
+    assert isinstance(parent_payload, dict)
+    assert parent_payload["row_header"] == "机柜"
+    assert parent_payload["column_header"] == "已建设数量"
+    return built_cabinet_answer_caller(**kwargs)
 
 
 def invalid_source_answer_caller(**kwargs: Any) -> dict[str, Any]:

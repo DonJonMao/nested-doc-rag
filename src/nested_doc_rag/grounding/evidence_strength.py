@@ -141,11 +141,13 @@ class EvidenceStrengthEvaluator:
         global_intro_answer_allowed: bool = False,
         require_target_source_for_answered: bool = True,
         room_context: str | None = None,
+        field_binding_enabled: bool = True,
     ) -> None:
         self.target_namespace = target_namespace
         self.global_intro_answer_allowed = global_intro_answer_allowed
         self.require_target_source_for_answered = require_target_source_for_answered
         self.room_context = room_context
+        self.field_binding_enabled = field_binding_enabled
 
     def evaluate(self, *, item: dict[str, Any], prediction: Any, top_hits: list[dict[str, Any]]) -> EvidenceStrengthResult:
         status = str(getattr(prediction, "answer_status", "") or "")
@@ -156,13 +158,7 @@ class EvidenceStrengthEvaluator:
         invalid_source_chunk_ids = [chunk_id for chunk_id in source_chunk_ids if chunk_id not in hit_by_id]
         reasons: list[str] = []
         if status != "answered":
-            binding = evaluate_field_binding(
-                item=item,
-                prediction=prediction,
-                cited_hits=[hit_by_id[chunk_id] for chunk_id in valid_source_chunk_ids],
-                target_namespace=self.target_namespace,
-                room_context=self.room_context,
-            )
+            binding = self.evaluate_binding(item=item, prediction=prediction, cited_hits=[hit_by_id[chunk_id] for chunk_id in valid_source_chunk_ids])
             if status == "partial_clue":
                 reasons.append("partial_clue_status_preserved")
             return EvidenceStrengthResult(
@@ -179,7 +175,7 @@ class EvidenceStrengthEvaluator:
                 field_binding_details=binding.to_details(),
             )
         if not source_chunk_ids:
-            binding = unsupported_field_binding(item=item, prediction=prediction, target_namespace=self.target_namespace, room_context=self.room_context)
+            binding = self.unsupported_binding(item=item, prediction=prediction)
             return EvidenceStrengthResult(
                 "E0",
                 ["no_source_chunk_ids"],
@@ -196,7 +192,7 @@ class EvidenceStrengthEvaluator:
         if invalid_source_chunk_ids:
             reasons.append("cited_source_not_in_retrieved_hits")
         if not valid_source_chunk_ids:
-            binding = unsupported_field_binding(item=item, prediction=prediction, target_namespace=self.target_namespace, room_context=self.room_context)
+            binding = self.unsupported_binding(item=item, prediction=prediction)
             return EvidenceStrengthResult(
                 "E0",
                 dedupe([*reasons, "no_valid_evidence_support"]),
@@ -212,13 +208,7 @@ class EvidenceStrengthEvaluator:
             )
 
         cited_hits = [hit_by_id[chunk_id] for chunk_id in valid_source_chunk_ids]
-        binding = evaluate_field_binding(
-            item=item,
-            prediction=prediction,
-            cited_hits=cited_hits,
-            target_namespace=self.target_namespace,
-            room_context=self.room_context,
-        )
+        binding = self.evaluate_binding(item=item, prediction=prediction, cited_hits=cited_hits)
         evidence_text = normalize_support_text(" ".join(display_text(hit.get("raw_text") or hit.get("text_for_embedding")) for hit in cited_hits))
         answer_tokens = core_answer_tokens(answer_value)
         matched_tokens, missing_tokens = partition_tokens(answer_tokens, evidence_text)
@@ -273,6 +263,22 @@ class EvidenceStrengthEvaluator:
             field_binding_details=binding.to_details(),
         )
 
+    def evaluate_binding(self, *, item: dict[str, Any], prediction: Any, cited_hits: list[dict[str, Any]]) -> FieldBindingResult:
+        if not self.field_binding_enabled:
+            return disabled_field_binding(item=item, prediction=prediction, target_namespace=self.target_namespace, room_context=self.room_context)
+        return evaluate_field_binding(
+            item=item,
+            prediction=prediction,
+            cited_hits=cited_hits,
+            target_namespace=self.target_namespace,
+            room_context=self.room_context,
+        )
+
+    def unsupported_binding(self, *, item: dict[str, Any], prediction: Any) -> FieldBindingResult:
+        if not self.field_binding_enabled:
+            return disabled_field_binding(item=item, prediction=prediction, target_namespace=self.target_namespace, room_context=self.room_context)
+        return unsupported_field_binding(item=item, prediction=prediction, target_namespace=self.target_namespace, room_context=self.room_context)
+
 
 def apply_evidence_strength_to_overlay(
     prediction: Any,
@@ -322,7 +328,7 @@ def apply_evidence_strength_to_overlay(
         risk_level = "high"
         reasons.append("no_valid_evidence_support")
         critic_flags.append("no_valid_evidence_support")
-    if field_binding not in SUPPORTED_BINDINGS:
+    if field_binding != "disabled" and field_binding not in SUPPORTED_BINDINGS:
         writeback_allowed = False
         review_required = True
         reasons.append("field_binding_not_exact")
@@ -359,6 +365,25 @@ def unsupported_field_binding(
         field_intent=field_intent_summary(intent),
         expected_scope=expected_scope,
         details={"field_intent": intent.to_dict(), "expected_scope": expected_scope},
+    )
+
+
+def disabled_field_binding(
+    *,
+    item: dict[str, Any],
+    prediction: Any,
+    target_namespace: str,
+    room_context: str | None,
+) -> FieldBindingResult:
+    intent = parse_field_intent(item=item, answer_value=getattr(prediction, "answer_value", ""), room_context=room_context)
+    expected_scope = infer_expected_scope(item=item, room_context=room_context, target_namespace=target_namespace)
+    return FieldBindingResult(
+        label="disabled",
+        score=0.0,
+        reasons=["field_binding_disabled"],
+        field_intent=field_intent_summary(intent),
+        expected_scope=expected_scope,
+        details={"field_intent": intent.to_dict(), "expected_scope": expected_scope, "field_binding_enabled": False},
     )
 
 

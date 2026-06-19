@@ -26,7 +26,7 @@ retrieval:
   plan: layered
   vector_top_k: 40
   rerank_top_n: 10
-  expand_parent_payload: true
+  expand_parent_payload: false
   parent_payload_max_chars: 300
   parent_payload_include_neighbors: true
   parent_payload_neighbor_window: 1
@@ -70,6 +70,7 @@ retrieval:
 
 grounding:
   evidence_strength_enabled: true
+  field_binding_enabled: false
   min_strength_for_answered: E3
   min_strength_for_writeback: E3
   require_target_source_for_answered: true

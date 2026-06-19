@@ -163,6 +163,8 @@ class Step15AgentRunner:
         allowed_layers: list[str] | None = None,
         layered_plan: list[dict[str, Any]] | None = None,
         grounding_enabled: bool | None = None,
+        field_binding_enabled: bool | None = None,
+        parent_payload_enabled: bool | None = None,
         retriever: QdrantRetriever | None = None,
         reranker: RerankClient | None = None,
         retrieval_fn: RetrievalFn | None = None,
@@ -209,6 +211,12 @@ class Step15AgentRunner:
         self.layered_plan = layered_plan or config.retrieval.layered_plan
         self.grounding_enabled = (
             bool(config.grounding.evidence_strength_enabled) if grounding_enabled is None else bool(grounding_enabled)
+        )
+        self.field_binding_enabled = (
+            bool(config.grounding.field_binding_enabled) if field_binding_enabled is None else bool(field_binding_enabled)
+        )
+        self.parent_payload_enabled = (
+            bool(config.retrieval.expand_parent_payload) if parent_payload_enabled is None else bool(parent_payload_enabled)
         )
         self.answer_caller = answer_caller
         self.judge_caller = judge_caller
@@ -428,6 +436,7 @@ class Step15AgentRunner:
                 global_intro_answer_allowed=self.config.grounding.global_intro_answer_allowed,
                 require_target_source_for_answered=self.config.grounding.require_target_source_for_answered,
                 room_context=self.room_context,
+                field_binding_enabled=self.field_binding_enabled,
             ).evaluate(item=item, prediction=prediction, top_hits=top_hits)
             overlay = apply_evidence_strength_to_overlay(
                 prediction,
@@ -916,7 +925,7 @@ class Step15AgentRunner:
         write_json(self.out_dir / "run_state.json", run_state)
 
     def attach_parent_payloads(self, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if not self.config.retrieval.expand_parent_payload:
+        if not self.parent_payload_enabled:
             return hits
         return attach_parent_payloads(
             hits,
@@ -1035,6 +1044,8 @@ class Step15AgentRunner:
             "retrieval_plan": self.retrieval_plan,
             "retrieval_fusion_mode": "dense",
             "grounding_enabled": self.grounding_enabled,
+            "field_binding_enabled": self.field_binding_enabled,
+            "parent_payload_enabled": self.parent_payload_enabled,
             "vector_top_k": self.vector_top_k,
             "rerank_top_n": self.rerank_top_n,
             "collection_name": self.collection_name,

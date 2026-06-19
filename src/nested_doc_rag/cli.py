@@ -105,6 +105,12 @@ def build_parser() -> argparse.ArgumentParser:
     grounding_group = step15_agent_parser.add_mutually_exclusive_group()
     grounding_group.add_argument("--grounding-enabled", dest="grounding_enabled", action="store_true", default=None, help="Enable evidence strength overlay gate.")
     grounding_group.add_argument("--no-grounding-enabled", dest="grounding_enabled", action="store_false", help="Disable evidence strength overlay gate.")
+    field_binding_group = step15_agent_parser.add_mutually_exclusive_group()
+    field_binding_group.add_argument("--field-binding-enabled", dest="field_binding_enabled", action="store_true", default=None, help="Enable Prompt 2 field-level schema binding gate.")
+    field_binding_group.add_argument("--no-field-binding-enabled", dest="field_binding_enabled", action="store_false", help="Disable Prompt 2 field-level schema binding gate.")
+    parent_payload_group = step15_agent_parser.add_mutually_exclusive_group()
+    parent_payload_group.add_argument("--parent-payload-enabled", dest="parent_payload_enabled", action="store_true", default=None, help="Enable Prompt 3 compact parent payload evidence context.")
+    parent_payload_group.add_argument("--no-parent-payload-enabled", dest="parent_payload_enabled", action="store_false", help="Disable Prompt 3 compact parent payload evidence context.")
     step15_agent_parser.add_argument(
         "--prompt-version",
         choices=["step15_compat", "agent_v2"],
@@ -318,6 +324,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             allowed_layers=config.retrieval.query_layers,
             layered_plan=config.retrieval.layered_plan,
             grounding_enabled=args.grounding_enabled,
+            field_binding_enabled=args.field_binding_enabled,
+            parent_payload_enabled=args.parent_payload_enabled,
         )
         predictions = runner.run(items)
         print(
