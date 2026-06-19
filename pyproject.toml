@@ -30,22 +30,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = [
   "tests",
-  "01_file_registration",
-  "02_datacenter_routing",
-  "03_format_probe",
-  "04a_structure_parse",
-  "04b_embedded_object_parse",
-  "05_segment_extract",
-  "06_segmentation_audit",
-  "07_agent_need_audit",
-  "08_llm_structure_hint",
-  "09_table_candidate_resolution",
-  "10_semantic_segment_audit",
-  "11_embedding_build",
-  "12_gongkan_form_analysis",
-  "13_gongkan_rag_inputs",
-  "14_gongkan_rag_eval",
-  "15_vector_store",
 ]
 pythonpath = ["src"]
 
@@ -57,22 +41,6 @@ exclude = [
   ".git",
   "artifacts",
   "data",
-  "01_file_registration",
-  "02_datacenter_routing",
-  "03_format_probe",
-  "04a_structure_parse",
-  "04b_embedded_object_parse",
-  "05_segment_extract",
-  "06_segmentation_audit",
-  "07_agent_need_audit",
-  "08_llm_structure_hint",
-  "09_table_candidate_resolution",
-  "10_semantic_segment_audit",
-  "11_embedding_build",
-  "12_gongkan_form_analysis",
-  "13_gongkan_rag_inputs",
-  "14_gongkan_rag_eval",
-  "15_vector_store",
   "tmp_ole_probe",
 ]
 

@@ -41,22 +41,14 @@ Runtime choices:
 
 ### 1. Knowledge ingestion and indexing
 
-Current main chain:
+This branch keeps the maintained Python package entry points under `src/nested_doc_rag` and removes the historical numbered step directories. Ingestion/indexing code lives in:
 
 ```text
-01_file_registration
-02_datacenter_routing
-03_format_probe
-04a_structure_parse
-04b_embedded_object_parse
-05_segment_extract
-06_segmentation_audit
-07_agent_need_audit
-08_llm_structure_hint
-09_table_candidate_resolution
-10_semantic_segment_audit
-11_embedding_build
-15_vector_store / Qdrant index
+src/nested_doc_rag/parsing
+src/nested_doc_rag/segmentation
+src/nested_doc_rag/embedding
+src/nested_doc_rag/form
+src/nested_doc_rag/retrieval
 ```
 
 The pipeline does not rely on fixed-length chunks. Excel row-level capability items are primary segments. `raw_text` is used as evidence, `text_for_embedding` is used for embedding, `source_anchor` supports source tracing, and `proof_attachment_ids` supports audit/review. Qdrant payloads preserve `namespace`, `source_type`, `corpus_layer`, and `source_anchor` so retrieval results remain explainable.
