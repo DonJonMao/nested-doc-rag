@@ -107,8 +107,140 @@ def test_apply_evidence_strength_only_makes_overlay_more_conservative() -> None:
     assert "global_intro_only" in global_blocked.reasons
 
 
+def test_field_binding_exact_numeric_row() -> None:
+    result = evaluator().evaluate(
+        item=item("已建设机柜数量是多少？"),
+        prediction=prediction("12台", ["chunk_main"]),
+        top_hits=hits(
+            raw_text="现网资源 / 机柜 / 已建设数量：12台。",
+            row_header="机柜",
+            column_header="已建设数量",
+            unit="台",
+            table_title="现网资源",
+        ),
+    )
+
+    assert result.field_binding == "exact"
+    assert result.field_binding_score == 1.0
+
+
+def test_same_value_wrong_field_is_field_mismatch() -> None:
+    result = evaluator().evaluate(
+        item=item("已建设机柜数量是多少？"),
+        prediction=prediction("20台", ["chunk_main"]),
+        top_hits=hits(
+            raw_text="规划资源 / 机柜 / 规划数量：20台。",
+            row_header="机柜",
+            column_header="规划数量",
+            unit="台",
+            table_title="规划资源",
+        ),
+    )
+
+    assert result.field_binding == "field_mismatch"
+    blocked = apply_evidence_strength_to_overlay(
+        prediction("20台", ["chunk_main"]),
+        overlay_row(writeback_allowed=True, review_required=False, risk_level="low"),
+        result,
+        min_strength_for_answered="E3",
+        min_strength_for_writeback="E3",
+        downgrade_unsupported_answer_to_partial=False,
+    )
+    assert blocked.writeback_allowed is False
+    assert blocked.review_required is True
+    assert blocked.risk_level == "high"
+    assert "field_mismatch" in blocked.reasons
+
+
+def test_planned_value_for_current_question_is_status_mismatch() -> None:
+    result = evaluator().evaluate(
+        item=item("当前是否支持双路市电？"),
+        prediction=prediction("是", ["chunk_main"]),
+        top_hits=hits(raw_text="规划方案支持双路市电接入。", row_header="市电", column_header="规划支持状态"),
+    )
+
+    assert result.field_binding == "status_mismatch"
+
+
+def test_global_scope_for_target_room_is_scope_mismatch() -> None:
+    result = evaluator().evaluate(
+        item=item("301机房 UPS 容量是多少？"),
+        prediction=prediction("500kVA", ["chunk_global"]),
+        top_hits=[
+            {
+                "chunk_id": "chunk_global",
+                "namespace": "global",
+                "source_type": "intro_doc_paragraph",
+                "corpus_layer": "intro_doc",
+                "retrieval_layer": "global_intro",
+                "raw_text": "园区 UPS 总容量 500kVA。",
+                "text_for_embedding": "园区 UPS 总容量 500kVA。",
+            }
+        ],
+    )
+
+    assert result.field_binding == "scope_mismatch"
+
+
+def test_parent_payload_can_make_binding_parent_exact() -> None:
+    result = evaluator().evaluate(
+        item=item("301机房 UPS 容量是多少？"),
+        prediction=prediction("500kVA", ["chunk_main"]),
+        top_hits=hits(
+            raw_text="500",
+            parent_payload={"system": "UPS系统", "metric": "容量", "unit": "kVA", "room": "301机房"},
+        ),
+    )
+
+    assert result.field_binding == "parent_exact"
+    assert "parent_payload_binds_short_hit" in result.field_binding_reasons
+
+
+def test_unit_mismatch_blocks_writeback() -> None:
+    result = evaluator().evaluate(
+        item=item("UPS 容量 kVA 是多少？"),
+        prediction=prediction("500kVA", ["chunk_main"]),
+        top_hits=hits(raw_text="UPS 功率 500kW。", row_header="UPS", column_header="功率", unit="kW"),
+    )
+
+    assert result.field_binding == "unit_mismatch"
+    blocked = apply_evidence_strength_to_overlay(
+        prediction("500kVA", ["chunk_main"]),
+        overlay_row(writeback_allowed=True, review_required=False, risk_level="low"),
+        result,
+        min_strength_for_answered="E3",
+        min_strength_for_writeback="E3",
+        downgrade_unsupported_answer_to_partial=False,
+    )
+    assert blocked.writeback_allowed is False
+    assert blocked.review_required is True
+    assert blocked.risk_level == "medium"
+    assert "unit_mismatch" in blocked.reasons
+
+
+def test_boolean_condition_mismatch_blocks_writeback() -> None:
+    result = evaluator().evaluate(
+        item=item("是否已支持双路市电？"),
+        prediction=prediction("是", ["chunk_main"]),
+        top_hits=hits(raw_text="具备双路市电改造条件。", row_header="市电", column_header="改造条件"),
+    )
+
+    assert result.field_binding == "status_mismatch"
+    blocked = apply_evidence_strength_to_overlay(
+        prediction("是", ["chunk_main"]),
+        overlay_row(writeback_allowed=True, review_required=False, risk_level="low"),
+        result,
+        min_strength_for_answered="E3",
+        min_strength_for_writeback="E3",
+        downgrade_unsupported_answer_to_partial=False,
+    )
+    assert blocked.writeback_allowed is False
+    assert blocked.review_required is True
+    assert "status_mismatch" in blocked.reasons
+
+
 def evaluator() -> EvidenceStrengthEvaluator:
-    return EvidenceStrengthEvaluator(target_namespace="xixian_4")
+    return EvidenceStrengthEvaluator(target_namespace="xixian_4", room_context="西咸4号楼 301机房")
 
 
 def item(question_text: str) -> dict:
@@ -128,17 +260,21 @@ def prediction(answer_value: str, sources: list[str], *, status: str = "answered
     )
 
 
-def hits(raw_text: str = "UPS容量：500kVA。") -> list[dict]:
+def hits(raw_text: str = "UPS容量：500kVA。", **overrides) -> list[dict]:
+    hit = {
+        "chunk_id": "chunk_main",
+        "namespace": "xixian_4",
+        "source_type": "main_excel_capability",
+        "corpus_layer": "fact",
+        "retrieval_layer": "target_main_fact",
+        "raw_text": raw_text,
+        "text_for_embedding": raw_text,
+    }
+    hit.update(overrides)
+    if "text_for_embedding" not in overrides:
+        hit["text_for_embedding"] = raw_text
     return [
-        {
-            "chunk_id": "chunk_main",
-            "namespace": "xixian_4",
-            "source_type": "main_excel_capability",
-            "corpus_layer": "fact",
-            "retrieval_layer": "target_main_fact",
-            "raw_text": raw_text,
-            "text_for_embedding": raw_text,
-        }
+        hit
     ]
 
 

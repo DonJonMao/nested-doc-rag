@@ -427,6 +427,7 @@ class Step15AgentRunner:
                 target_namespace=self.target_namespace,
                 global_intro_answer_allowed=self.config.grounding.global_intro_answer_allowed,
                 require_target_source_for_answered=self.config.grounding.require_target_source_for_answered,
+                room_context=self.room_context,
             ).evaluate(item=item, prediction=prediction, top_hits=top_hits)
             overlay = apply_evidence_strength_to_overlay(
                 prediction,
@@ -467,6 +468,7 @@ class Step15AgentRunner:
                 "reasons": overlay.reasons,
                 "critic_flags": critic_flags,
                 "evidence_strength": grounding_result.evidence_strength if grounding_result else None,
+                "field_binding": grounding_result.field_binding if grounding_result else None,
                 "suggested_reference_source_documents_count": len(overlay.suggested_reference_source_documents),
             },
         )
@@ -1525,6 +1527,11 @@ def build_trace_summary(
         for event in events
         if event.step == "grounding_evaluated" and event.payload.get("evidence_strength")
     )
+    field_bindings = Counter(
+        str(event.payload.get("field_binding"))
+        for event in events
+        if event.step == "grounding_evaluated" and event.payload.get("field_binding")
+    )
     return {
         "total_fields": len(predictions),
         "answered_count": status_counts.get("answered", 0),
@@ -1541,6 +1548,7 @@ def build_trace_summary(
         "resumed_count": sum(1 for event in events if event.step == "resume_started"),
         "skipped_completed_count": sum(int(event.payload.get("skipped_completed_count") or 0) for event in events if event.step == "resume_started"),
         "evidence_strength_distribution": dict(evidence_strengths),
+        "field_binding_distribution": dict(field_bindings),
     }
 
 
@@ -1565,6 +1573,7 @@ def build_summary_json(
         "raw_status_counts": dict(Counter(prediction.answer_status for prediction in predictions)),
         "overlay_counts": build_overlay_counts(overlays),
         "trace_summary": trace_summary,
+        "field_binding_distribution": trace_summary.get("field_binding_distribution", {}),
         "label_counts": dict(label_counts),
         "average_score": round(sum(numeric_scores) / len(numeric_scores), 4) if numeric_scores else 0,
         "acceptable_or_better": sum(1 for result in eval_results if result.get("judge", {}).get("label") in {"exact", "acceptable"}),

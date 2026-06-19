@@ -281,6 +281,147 @@ def test_grounding_never_turns_blocked_overlay_allowed(tmp_path: Path) -> None:
     assert overlay["review_required"] is True
 
 
+def test_field_binding_blocks_wrong_field_without_mutating_raw(tmp_path: Path) -> None:
+    captured: list[int] = []
+    template = tmp_path / "template.xlsx"
+    template.write_text("fake", encoding="utf-8")
+    runner = make_runner(
+        tmp_path,
+        answer_caller=planned_cabinet_answer_caller,
+        retrieval_fn=fake_retrieval_planned_cabinet_count,
+        writeback_enabled=True,
+        template_path=template,
+        writeback_fn=capturing_writeback(captured),
+        grounding_enabled=True,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    runner.run(
+        [
+            make_item(
+                31,
+                question_text="已建设机柜数量是多少？",
+                instruction_text="填写已建设机柜数量",
+                category_path=["资源", "机柜"],
+            )
+        ]
+    )
+
+    raw = read_jsonl(tmp_path / "predictions_raw.jsonl")[0]
+    overlay = read_jsonl(tmp_path / "agent_overlays.jsonl")[0]
+    grounding_trace = read_jsonl(tmp_path / "grounding_trace.jsonl")[0]
+    assert raw["answer_status"] == "answered"
+    assert raw["answer_value"] == "20台"
+    assert "field_binding" not in raw
+    assert overlay["writeback_allowed"] is False
+    assert overlay["review_required"] is True
+    assert overlay["risk_level"] == "high"
+    assert "field_mismatch" in overlay["reasons"]
+    assert grounding_trace["field_binding"] == "field_mismatch"
+    assert captured == [0]
+
+
+def test_field_binding_exact_allows_existing_safe_overlay(tmp_path: Path) -> None:
+    captured: list[int] = []
+    template = tmp_path / "template.xlsx"
+    template.write_text("fake", encoding="utf-8")
+    runner = make_runner(
+        tmp_path,
+        answer_caller=built_cabinet_answer_caller,
+        retrieval_fn=fake_retrieval_built_cabinet_count,
+        writeback_enabled=True,
+        template_path=template,
+        writeback_fn=capturing_writeback(captured),
+        grounding_enabled=True,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    runner.run(
+        [
+            make_item(
+                31,
+                question_text="已建设机柜数量是多少？",
+                instruction_text="填写已建设机柜数量",
+                category_path=["资源", "机柜"],
+            )
+        ]
+    )
+
+    overlay = read_jsonl(tmp_path / "agent_overlays.jsonl")[0]
+    grounding_trace = read_jsonl(tmp_path / "grounding_trace.jsonl")[0]
+    summary = load_json_file(tmp_path / "summary.json")
+    assert overlay["writeback_allowed"] is True
+    assert overlay["review_required"] is False
+    assert grounding_trace["field_binding"] == "exact"
+    assert grounding_trace["field_binding_details"]["expected_scope"] == "target"
+    assert summary["trace_summary"]["field_binding_distribution"] == {"exact": 1}
+    assert summary["field_binding_distribution"] == {"exact": 1}
+    assert captured == [1]
+
+
+def test_grounding_trace_includes_field_binding(tmp_path: Path) -> None:
+    runner = make_runner(
+        tmp_path,
+        answer_caller=built_cabinet_answer_caller,
+        retrieval_fn=fake_retrieval_built_cabinet_count,
+        grounding_enabled=True,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    runner.run(
+        [
+            make_item(
+                31,
+                question_text="已建设机柜数量是多少？",
+                instruction_text="填写已建设机柜数量",
+                category_path=["资源", "机柜"],
+            )
+        ]
+    )
+
+    trace = read_jsonl(tmp_path / "grounding_trace.jsonl")[0]
+    for key in [
+        "field_binding",
+        "field_binding_score",
+        "field_binding_reasons",
+        "field_binding_details",
+        "field_intent",
+        "evidence_field_path",
+        "expected_scope",
+        "evidence_scope",
+        "expected_status",
+        "evidence_status",
+        "expected_unit",
+        "evidence_unit",
+    ]:
+        assert key in trace
+
+
+def test_field_binding_never_turns_writeback_false_to_true(tmp_path: Path) -> None:
+    runner = make_runner(
+        tmp_path,
+        answer_caller=invalid_source_answer_caller,
+        retrieval_fn=fake_retrieval_built_cabinet_count,
+        grounding_enabled=True,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    runner.run(
+        [
+            make_item(
+                31,
+                question_text="已建设机柜数量是多少？",
+                instruction_text="填写已建设机柜数量",
+                category_path=["资源", "机柜"],
+            )
+        ]
+    )
+
+    overlay = read_jsonl(tmp_path / "agent_overlays.jsonl")[0]
+    assert "invalid_source_reference" in overlay["critic_flags"]
+    assert overlay["writeback_allowed"] is False
+
+
 def test_resume_skips_completed_rows(tmp_path: Path) -> None:
     completed = FieldPrediction(
         field_id="item_4",
@@ -600,16 +741,23 @@ def make_runner(
     )
 
 
-def make_item(row: int, *, include_heldout: bool = True, question_text: str = "市电进线情况") -> dict[str, Any]:
+def make_item(
+    row: int,
+    *,
+    include_heldout: bool = True,
+    question_text: str = "市电进线情况",
+    instruction_text: str = "填写市电路数及来源",
+    category_path: list[str] | None = None,
+) -> dict[str, Any]:
     item = {
         "form_item_id": f"item_{row}",
         "file_name": "基地云机房信息调研表.xlsx",
         "sheet_name": "Sheet1",
         "row_index": row,
         "target_cell": f"D{row}",
-        "category_path": ["电力", "市电"],
+        "category_path": category_path or ["电力", "市电"],
         "question_text": question_text,
-        "instruction_text": "填写市电路数及来源",
+        "instruction_text": instruction_text,
         "answer_example": "2路市电",
         "needs_evidence": True,
     }
@@ -663,6 +811,56 @@ def fake_retrieval_without_answer_value(query: str) -> Step15RetrievalResult:
             **make_hits()[0],
             "raw_text": "市电进线情况：2路市电，来自同一变电站。",
             "text_for_embedding": "市电进线情况 2路市电",
+        }
+    ]
+    return Step15RetrievalResult(reranked_hits=hits, vector_hits=hits, retrieval_mode="layered")
+
+
+def fake_retrieval_planned_cabinet_count(query: str) -> Step15RetrievalResult:
+    del query
+    hits = [
+        {
+            "chunk_id": "chunk_planned_cabinet",
+            "namespace": "xixian_4",
+            "source_type": "main_excel_capability",
+            "corpus_layer": "fact",
+            "retrieval_layer": "target_main_fact",
+            "layer_priority": 1,
+            "rerank_score": 0.93,
+            "file_name": "main.xlsx",
+            "sheet_name": "Sheet1",
+            "table_title": "规划资源",
+            "row_header": "机柜",
+            "column_header": "规划数量",
+            "unit": "台",
+            "anchor": "row 31",
+            "raw_text": "规划资源 / 机柜 / 规划数量：20台。",
+            "text_for_embedding": "规划资源 机柜 规划数量 20台",
+        }
+    ]
+    return Step15RetrievalResult(reranked_hits=hits, vector_hits=hits, retrieval_mode="layered")
+
+
+def fake_retrieval_built_cabinet_count(query: str) -> Step15RetrievalResult:
+    del query
+    hits = [
+        {
+            "chunk_id": "chunk_built_cabinet",
+            "namespace": "xixian_4",
+            "source_type": "main_excel_capability",
+            "corpus_layer": "fact",
+            "retrieval_layer": "target_main_fact",
+            "layer_priority": 1,
+            "rerank_score": 0.96,
+            "file_name": "main.xlsx",
+            "sheet_name": "Sheet1",
+            "table_title": "现网资源",
+            "row_header": "机柜",
+            "column_header": "已建设数量",
+            "unit": "台",
+            "anchor": "row 31",
+            "raw_text": "现网资源 / 机柜 / 已建设数量：12台。",
+            "text_for_embedding": "现网资源 机柜 已建设数量 12台",
         }
     ]
     return Step15RetrievalResult(reranked_hits=hits, vector_hits=hits, retrieval_mode="layered")
@@ -729,6 +927,28 @@ def unsupported_answer_caller(**kwargs: Any) -> dict[str, Any]:
         "answer_value": "500kVA",
         "answer_status": "answered",
         "confidence": 0.86,
+        "source_chunk_ids": [kwargs["hits"][0]["chunk_id"]],
+        "evidence_attachment_ids": [],
+        "reference_source_documents": [],
+    }
+
+
+def planned_cabinet_answer_caller(**kwargs: Any) -> dict[str, Any]:
+    return {
+        "answer_value": "20台",
+        "answer_status": "answered",
+        "confidence": 0.86,
+        "source_chunk_ids": [kwargs["hits"][0]["chunk_id"]],
+        "evidence_attachment_ids": [],
+        "reference_source_documents": [],
+    }
+
+
+def built_cabinet_answer_caller(**kwargs: Any) -> dict[str, Any]:
+    return {
+        "answer_value": "12台",
+        "answer_status": "answered",
+        "confidence": 0.9,
         "source_chunk_ids": [kwargs["hits"][0]["chunk_id"]],
         "evidence_attachment_ids": [],
         "reference_source_documents": [],
