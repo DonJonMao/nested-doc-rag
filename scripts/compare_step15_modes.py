@@ -8,14 +8,15 @@ from pathlib import Path
 from typing import Any
 
 MODES = [
-    ("dense_baseline", ["--retrieval-mode", "dense", "--no-grounding-enabled"]),
-    ("hybrid_rrf", ["--retrieval-mode", "hybrid", "--no-grounding-enabled"]),
-    ("hybrid_rrf_grounding", ["--retrieval-mode", "hybrid", "--grounding-enabled"]),
+    ("prompt1_baseline", ["--grounding-enabled", "--no-field-binding-enabled", "--no-parent-payload-enabled"]),
+    ("prompt1_prompt2_field_binding", ["--grounding-enabled", "--field-binding-enabled", "--no-parent-payload-enabled"]),
+    ("prompt1_prompt3_parent_payload", ["--grounding-enabled", "--no-field-binding-enabled", "--parent-payload-enabled"]),
+    ("prompt1_prompt2_prompt3", ["--grounding-enabled", "--field-binding-enabled", "--parent-payload-enabled"]),
 ]
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run and compare Step15 dense/hybrid/grounding closed-book eval modes.")
+    parser = argparse.ArgumentParser(description="Run and compare Step15 Prompt1/Prompt2/Prompt3 ablation modes.")
     parser.add_argument("--out-root", type=Path, required=True)
     parser.add_argument("--rows", default="all")
     parser.add_argument("--config", type=Path, default=None)
@@ -23,8 +24,6 @@ def main() -> None:
     parser.add_argument("--global-namespace", default=None)
     parser.add_argument("--room-context", default=None)
     parser.add_argument("--form-items", type=Path, default=None)
-    parser.add_argument("--lexical-index-path", type=Path, default=None)
-    parser.add_argument("--rrf-k", type=int, default=60)
     parser.add_argument("--judge", action="store_true")
     parser.add_argument("--use-judge-cache", action="store_true")
     parser.add_argument("--extra-arg", action="append", default=[], help="Extra argument forwarded to run-step15-agent. Repeat as needed.")
@@ -51,10 +50,10 @@ def build_command(args: argparse.Namespace, out_dir: Path, mode_args: list[str])
         "run-step15-agent",
         "--rows",
         args.rows,
+        "--retrieval-plan",
+        "layered",
         "--out-dir",
         str(out_dir),
-        "--rrf-k",
-        str(args.rrf_k),
     ]
     if args.config:
         command.extend(["--config", str(args.config)])
@@ -66,8 +65,6 @@ def build_command(args: argparse.Namespace, out_dir: Path, mode_args: list[str])
         command.extend(["--room-context", args.room_context])
     if args.form_items:
         command.extend(["--form-items", str(args.form_items)])
-    if args.lexical_index_path:
-        command.extend(["--lexical-index-path", str(args.lexical_index_path)])
     command.append("--judge" if args.judge else "--no-judge")
     if args.use_judge_cache:
         command.append("--use-judge-cache")
@@ -92,7 +89,7 @@ def load_metrics(out_dir: Path) -> dict[str, Any]:
         "writeback_allowed_count": counts.get("writeback_allowed", 0),
         "review_required_count": counts.get("review_required", 0),
         "evidence_strength_distribution": trace_summary.get("evidence_strength_distribution", {}),
-        "hybrid_fallback_count": trace_summary.get("hybrid_fallback_count", 0),
+        "field_binding_distribution": trace_summary.get("field_binding_distribution", {}),
         "manifest_status": manifest.get("status"),
         "out_dir": str(out_dir),
     }
@@ -114,7 +111,6 @@ def print_table(rows: list[dict[str, Any]]) -> None:
         "not_found_count",
         "writeback_allowed_count",
         "review_required_count",
-        "hybrid_fallback_count",
         "manifest_status",
     ]
     print("\t".join(headers))
