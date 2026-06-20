@@ -58,6 +58,18 @@ func (f *fakeKnowledgeBaseRepo) ListOptionsByWorkspace(ctx context.Context, work
 	return f.ListByWorkspace(ctx, workspaceID, limit, offset)
 }
 
+func (f *fakeKnowledgeBaseRepo) ListReadyOptionsByWorkspace(ctx context.Context, workspaceID uuid.UUID, limit int, offset int) ([]knowledgepkg.KnowledgeBase, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []knowledgepkg.KnowledgeBase
+	for _, kb := range f.bases {
+		if kb.WorkspaceID == workspaceID && kb.Status == knowledgepkg.KnowledgeBaseStatusReady {
+			out = append(out, kb)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeKnowledgeBaseRepo) UpdateCurrentIndexVersion(ctx context.Context, kbID uuid.UUID, versionID uuid.UUID) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

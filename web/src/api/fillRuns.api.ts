@@ -11,9 +11,9 @@ export async function createSimpleFillRun(payload: {
   return unwrap<FillRun>(await http.post('/api/v1/fill-runs/simple', payload))
 }
 
-export async function listFillRuns(workspaceId: string, status?: string, mine = true) {
+export async function listFillRuns(status?: string) {
   const data = unwrap<{ fill_runs: FillRunListItem[] }>(
-    await http.get('/api/v1/fill-runs', { params: { workspace_id: workspaceId, status, mine } }),
+    await http.get('/api/v1/fill-runs', { params: { status } }),
   )
   return data.fill_runs
 }

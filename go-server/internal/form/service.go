@@ -157,12 +157,15 @@ func (s *FillRunService) SetKnowledgeBaseReader(reader KnowledgeBaseReader) {
 }
 
 func (s *FillRunService) CreateFillRun(ctx context.Context, req CreateFillRunRequest, actor auth.Principal) (*FillRun, error) {
-	if err := s.authorizer.CanWriteWorkspace(ctx, req.WorkspaceID, actor); err != nil {
-		return nil, err
-	}
 	formFile, err := s.forms.GetByID(ctx, req.FormFileID)
 	if err != nil {
 		return nil, err
+	}
+	if formFile.CreatedBy != actor.UserID {
+		return nil, fillRunNotFound()
+	}
+	if req.WorkspaceID == uuid.Nil {
+		req.WorkspaceID = formFile.WorkspaceID
 	}
 	if formFile.WorkspaceID != req.WorkspaceID {
 		return nil, httpx.NewAppError(httpx.CodeForbidden, "form file workspace mismatch", http.StatusForbidden, nil, nil)
@@ -287,9 +290,6 @@ func (s *FillRunService) CreateSimpleFillRun(ctx context.Context, req CreateSimp
 	if kb.WorkspaceID != req.WorkspaceID {
 		return nil, httpx.NewAppError(httpx.CodeForbidden, "knowledge base workspace mismatch", http.StatusForbidden, nil, nil)
 	}
-	if err := s.authorizer.CanReadWorkspace(ctx, kb.WorkspaceID, actor); err != nil {
-		return nil, err
-	}
 	if kb.Status != knowledgepkg.KnowledgeBaseStatusReady {
 		return nil, httpx.NewAppError(httpx.CodeConflict, "knowledge base is not ready", http.StatusConflict, map[string]string{"status": kb.Status}, nil)
 	}
@@ -323,35 +323,25 @@ func (s *FillRunService) GetFillRun(ctx context.Context, runID uuid.UUID, actor 
 	if err != nil {
 		return nil, err
 	}
-	if err := s.authorizer.CanReadWorkspace(ctx, run.WorkspaceID, actor); err != nil {
+	if err := ensureFillRunOwner(run, actor); err != nil {
 		return nil, err
-	}
-	if !auth.IsAdminRoles(actor.Roles) && run.CreatedBy != actor.UserID {
-		return nil, httpx.NewAppError(httpx.CodeForbidden, "fill run is not owned by current user", http.StatusForbidden, nil, nil)
 	}
 	return run, nil
 }
 
 func (s *FillRunService) ListFillRuns(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int, mine bool, actor auth.Principal) ([]FillRun, error) {
-	if err := s.authorizer.CanReadWorkspace(ctx, workspaceID, actor); err != nil {
-		return nil, err
+	// Workspace is no longer a sharing boundary for fill run visibility.
+	// Fill run visibility is owner-only by created_by; workspace_id only narrows legacy queries.
+	if workspaceID != uuid.Nil {
+		return s.repo.ListByCreatorInWorkspace(ctx, actor.UserID, workspaceID, status, limit, offset)
 	}
-	if mine || !auth.IsAdminRoles(actor.Roles) {
-		return s.repo.ListByWorkspaceAndCreator(ctx, workspaceID, actor.UserID, status, limit, offset)
-	}
-	return s.repo.ListByWorkspace(ctx, workspaceID, status, limit, offset)
+	return s.repo.ListByCreator(ctx, actor.UserID, status, limit, offset)
 }
 
 func (s *FillRunService) CancelFillRun(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*FillRun, error) {
-	run, err := s.repo.GetByID(ctx, runID)
+	run, err := s.GetFillRun(ctx, runID, actor)
 	if err != nil {
 		return nil, err
-	}
-	if err := s.authorizer.CanWriteWorkspace(ctx, run.WorkspaceID, actor); err != nil {
-		return nil, err
-	}
-	if !auth.IsAdminRoles(actor.Roles) && run.CreatedBy != actor.UserID {
-		return nil, httpx.NewAppError(httpx.CodeForbidden, "fill run is not owned by current user", http.StatusForbidden, nil, nil)
 	}
 	if run.JobID == nil {
 		return nil, httpx.NewAppError(httpx.CodeConflict, "fill run has no job", http.StatusConflict, nil, nil)
@@ -422,4 +412,15 @@ func normalizeFillRunName(value string, fallbackFilename string) (string, error)
 		return "", httpx.NewAppError(httpx.CodeInvalidArgument, "fill run name is too long", http.StatusBadRequest, map[string]int{"max_length": 120}, nil)
 	}
 	return name, nil
+}
+
+func ensureFillRunOwner(run *FillRun, actor auth.Principal) error {
+	if run == nil || run.CreatedBy != actor.UserID {
+		return fillRunNotFound()
+	}
+	return nil
+}
+
+func fillRunNotFound() error {
+	return httpx.NewAppError(httpx.CodeNotFound, "fill run not found", http.StatusNotFound, nil, nil)
 }

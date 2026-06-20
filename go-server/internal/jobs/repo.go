@@ -17,7 +17,9 @@ import (
 type Repo interface {
 	Create(ctx context.Context, job Job) error
 	GetByID(ctx context.Context, id uuid.UUID) (*Job, error)
+	ListByCreator(ctx context.Context, createdBy uuid.UUID, status string, limit int, offset int) ([]Job, error)
 	ListByWorkspace(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int) ([]Job, error)
+	ListByWorkspaceAndCreator(ctx context.Context, workspaceID uuid.UUID, createdBy uuid.UUID, status string, limit int, offset int) ([]Job, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, fromStatus string, toStatus string, fields UpdateStatusFields) error
 	MarkQueued(ctx context.Context, id uuid.UUID, queuedAt time.Time) error
 	MarkRunning(ctx context.Context, id uuid.UUID, startedAt time.Time) error
@@ -74,6 +76,44 @@ func (r *PGXRepo) GetByID(ctx context.Context, id uuid.UUID) (*Job, error) {
 	`, id))
 }
 
+func (r *PGXRepo) ListByCreator(ctx context.Context, createdBy uuid.UUID, status string, limit int, offset int) ([]Job, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	var rows pgx.Rows
+	var err error
+	if status != "" {
+		rows, err = r.pool.Query(ctx, `
+			SELECT id, workspace_id, job_type, resource_type, resource_id, status, priority, attempt,
+				max_attempts, payload_json, COALESCE(error_message, ''), cancel_requested_at,
+				queued_at, started_at, heartbeat_at, finished_at, created_by, created_at, updated_at
+			FROM jobs WHERE created_by = $1 AND status = $2
+			ORDER BY created_at DESC LIMIT $3 OFFSET $4
+		`, createdBy, status, limit, offset)
+	} else {
+		rows, err = r.pool.Query(ctx, `
+			SELECT id, workspace_id, job_type, resource_type, resource_id, status, priority, attempt,
+				max_attempts, payload_json, COALESCE(error_message, ''), cancel_requested_at,
+				queued_at, started_at, heartbeat_at, finished_at, created_by, created_at, updated_at
+			FROM jobs WHERE created_by = $1
+			ORDER BY created_at DESC LIMIT $2 OFFSET $3
+		`, createdBy, limit, offset)
+	}
+	if err != nil {
+		return nil, mapDBError(err, "list jobs conflict", "jobs not found")
+	}
+	defer rows.Close()
+	var jobs []Job
+	for rows.Next() {
+		job, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, *job)
+	}
+	return jobs, mapDBError(rows.Err(), "list jobs conflict", "jobs not found")
+}
+
 func (r *PGXRepo) ListByWorkspace(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int) ([]Job, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -96,6 +136,44 @@ func (r *PGXRepo) ListByWorkspace(ctx context.Context, workspaceID uuid.UUID, st
 			FROM jobs WHERE workspace_id = $1
 			ORDER BY created_at DESC LIMIT $2 OFFSET $3
 		`, workspaceID, limit, offset)
+	}
+	if err != nil {
+		return nil, mapDBError(err, "list jobs conflict", "jobs not found")
+	}
+	defer rows.Close()
+	var jobs []Job
+	for rows.Next() {
+		job, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, *job)
+	}
+	return jobs, mapDBError(rows.Err(), "list jobs conflict", "jobs not found")
+}
+
+func (r *PGXRepo) ListByWorkspaceAndCreator(ctx context.Context, workspaceID uuid.UUID, createdBy uuid.UUID, status string, limit int, offset int) ([]Job, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	var rows pgx.Rows
+	var err error
+	if status != "" {
+		rows, err = r.pool.Query(ctx, `
+			SELECT id, workspace_id, job_type, resource_type, resource_id, status, priority, attempt,
+				max_attempts, payload_json, COALESCE(error_message, ''), cancel_requested_at,
+				queued_at, started_at, heartbeat_at, finished_at, created_by, created_at, updated_at
+			FROM jobs WHERE workspace_id = $1 AND created_by = $2 AND status = $3
+			ORDER BY created_at DESC LIMIT $4 OFFSET $5
+		`, workspaceID, createdBy, status, limit, offset)
+	} else {
+		rows, err = r.pool.Query(ctx, `
+			SELECT id, workspace_id, job_type, resource_type, resource_id, status, priority, attempt,
+				max_attempts, payload_json, COALESCE(error_message, ''), cancel_requested_at,
+				queued_at, started_at, heartbeat_at, finished_at, created_by, created_at, updated_at
+			FROM jobs WHERE workspace_id = $1 AND created_by = $2
+			ORDER BY created_at DESC LIMIT $3 OFFSET $4
+		`, workspaceID, createdBy, limit, offset)
 	}
 	if err != nil {
 		return nil, mapDBError(err, "list jobs conflict", "jobs not found")

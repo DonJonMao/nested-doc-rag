@@ -89,9 +89,6 @@ func (s *KnowledgeBaseService) CreateKnowledgeBase(ctx context.Context, req Crea
 }
 
 func (s *KnowledgeBaseService) GetKnowledgeBase(ctx context.Context, id uuid.UUID, actor auth.Principal) (*KnowledgeBase, error) {
-	if err := requireAdmin(actor); err != nil {
-		return nil, err
-	}
 	kb, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -99,15 +96,18 @@ func (s *KnowledgeBaseService) GetKnowledgeBase(ctx context.Context, id uuid.UUI
 	if err := s.authorizer.CanReadWorkspace(ctx, kb.WorkspaceID, actor); err != nil {
 		return nil, err
 	}
+	if !auth.IsAdminRoles(actor.Roles) && kb.Status != KnowledgeBaseStatusReady {
+		return nil, httpx.NewAppError(httpx.CodeNotFound, "knowledge base not found", http.StatusNotFound, nil, nil)
+	}
 	return kb, nil
 }
 
 func (s *KnowledgeBaseService) ListKnowledgeBases(ctx context.Context, workspaceID uuid.UUID, limit int, offset int, actor auth.Principal) ([]KnowledgeBase, error) {
-	if err := requireAdmin(actor); err != nil {
-		return nil, err
-	}
 	if err := s.authorizer.CanReadWorkspace(ctx, workspaceID, actor); err != nil {
 		return nil, err
+	}
+	if !auth.IsAdminRoles(actor.Roles) {
+		return s.repo.ListReadyOptionsByWorkspace(ctx, workspaceID, limit, offset)
 	}
 	return s.repo.ListByWorkspace(ctx, workspaceID, limit, offset)
 }
@@ -115,6 +115,9 @@ func (s *KnowledgeBaseService) ListKnowledgeBases(ctx context.Context, workspace
 func (s *KnowledgeBaseService) ListKnowledgeBaseOptions(ctx context.Context, workspaceID uuid.UUID, limit int, offset int, actor auth.Principal) ([]KnowledgeBase, error) {
 	if err := s.authorizer.CanReadWorkspace(ctx, workspaceID, actor); err != nil {
 		return nil, err
+	}
+	if !auth.IsAdminRoles(actor.Roles) {
+		return s.repo.ListReadyOptionsByWorkspace(ctx, workspaceID, limit, offset)
 	}
 	return s.repo.ListOptionsByWorkspace(ctx, workspaceID, limit, offset)
 }

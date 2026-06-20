@@ -8,14 +8,13 @@ import ArtifactDownloadPanel from '@/components/fill/ArtifactDownloadPanel.vue'
 import RunEventTimeline from '@/components/fill/RunEventTimeline.vue'
 import { subscribeRunEvents } from '@/api/events.api'
 import { useFillRunStore } from '@/stores/fillRun.store'
-import { useWorkspaceStore } from '@/stores/workspace.store'
 import type { RunEvent } from '@/api/types'
 
 const route = useRoute()
 const fill = useFillRunStore()
-const workspace = useWorkspaceStore()
 const events = ref<RunEvent[]>([])
 const controller = ref<AbortController | null>(null)
+const loadError = ref('')
 const terminalStatuses = ['completed', 'succeeded', 'completed_with_failures', 'failed', 'cancelled', 'canceled']
 
 const runId = computed(() => String(route.params.runId))
@@ -31,12 +30,12 @@ const artifactInvalid = computed(() => run.value?.artifact_validation_status ===
 const canCancel = computed(() => ['queued', 'running'].includes(run.value?.raw_status || run.value?.status || ''))
 
 function connectEvents() {
-  if (!run.value || !workspace.currentWorkspaceId) return
+  if (!run.value?.workspace_id) return
   controller.value?.abort()
   controller.value = new AbortController()
   subscribeRunEvents({
     runId: run.value.id,
-    workspaceId: workspace.currentWorkspaceId,
+    workspaceId: run.value.workspace_id,
     afterSequence: events.value.at(-1)?.sequence,
     signal: controller.value.signal,
     onEvent(event) {
@@ -69,9 +68,13 @@ function shouldRefreshRun(eventType: string) {
 }
 
 async function load() {
-  if (!workspace.workspaces.length) await workspace.load()
-  await fill.loadRun(runId.value)
-  connectEvents()
+  try {
+    loadError.value = ''
+    await fill.loadRun(runId.value)
+    connectEvents()
+  } catch {
+    loadError.value = '任务不存在或无权限访问'
+  }
 }
 
 async function cancel() {
@@ -88,6 +91,10 @@ onBeforeUnmount(() => controller.value?.abort())
 <template>
   <SubNav title="任务详情" subtitle="查看任务状态，下载安全自动填写版结果" />
   <main class="gk-shell gk-main detail">
+    <section v-if="loadError" class="detail__error-card gk-card">
+      {{ loadError }}
+    </section>
+
     <section v-if="run" class="detail__summary gk-card">
       <div>
         <h1 class="gk-card-title">{{ run.name || run.template_file_name || run.id }}</h1>
@@ -151,7 +158,7 @@ onBeforeUnmount(() => controller.value?.abort())
       </section>
     </div>
 
-    <RunEventTimeline :events="events" />
+    <RunEventTimeline v-if="run" :events="events" />
   </main>
 </template>
 
@@ -164,8 +171,13 @@ onBeforeUnmount(() => controller.value?.abort())
 .detail__summary,
 .detail__metrics,
 .detail__notice,
-.detail__metric {
+.detail__metric,
+.detail__error-card {
   padding: 24px;
+}
+
+.detail__error-card {
+  color: var(--gk-danger);
 }
 
 .detail__summary {

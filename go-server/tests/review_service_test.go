@@ -2,7 +2,6 @@ package tests
 
 import (
 	"context"
-	"net/http"
 	"testing"
 
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/audit"
@@ -15,7 +14,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestReviewServiceListByRunChecksWorkspaceRead(t *testing.T) {
+func TestReviewServiceListByRunIsOwnerOnly(t *testing.T) {
 	service, repo, runs, authorizer, _, actor, workspaceID, runID := newReviewServiceFixture(t)
 	require.NoError(t, repo.Create(context.Background(), reviewpkg.ReviewItem{ID: uuid.New(), WorkspaceID: workspaceID, RunID: runID, Status: reviewpkg.ReviewStatusPending, ReviewRequired: true}))
 
@@ -24,12 +23,12 @@ func TestReviewServiceListByRunChecksWorkspaceRead(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	require.Equal(t, 1, counts.Total)
-	require.Equal(t, 1, authorizer.reads)
+	require.Equal(t, 0, authorizer.reads)
 	_, err = runs.GetByID(context.Background(), runID)
 	require.NoError(t, err)
 }
 
-func TestReviewServiceGetChecksWorkspaceRead(t *testing.T) {
+func TestReviewServiceGetIsOwnerOnly(t *testing.T) {
 	service, repo, _, authorizer, _, actor, workspaceID, runID := newReviewServiceFixture(t)
 	itemID := uuid.New()
 	require.NoError(t, repo.Create(context.Background(), reviewpkg.ReviewItem{ID: itemID, WorkspaceID: workspaceID, RunID: runID, Status: reviewpkg.ReviewStatusPending}))
@@ -38,10 +37,20 @@ func TestReviewServiceGetChecksWorkspaceRead(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, itemID, item.ID)
-	require.Equal(t, 1, authorizer.reads)
+	require.Equal(t, 0, authorizer.reads)
 }
 
-func TestReviewServiceApproveChecksReviewPermissionAndAudits(t *testing.T) {
+func TestReviewServiceOtherUserCannotListReviewItems(t *testing.T) {
+	service, repo, _, _, _, _, workspaceID, runID := newReviewServiceFixture(t)
+	require.NoError(t, repo.Create(context.Background(), reviewpkg.ReviewItem{ID: uuid.New(), WorkspaceID: workspaceID, RunID: runID, Status: reviewpkg.ReviewStatusPending, ReviewRequired: true}))
+
+	_, _, err := service.ListByRun(context.Background(), runID, reviewpkg.ReviewFilter{}, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleReviewer}})
+
+	require.Error(t, err)
+	require.Equal(t, httpx.CodeNotFound, httpx.ErrorFrom(err).Code)
+}
+
+func TestReviewServiceApproveChecksRunOwnerAndAudits(t *testing.T) {
 	service, repo, _, authorizer, audits, actor, workspaceID, runID := newReviewServiceFixture(t)
 	itemID := uuid.New()
 	require.NoError(t, repo.Create(context.Background(), reviewpkg.ReviewItem{ID: itemID, WorkspaceID: workspaceID, RunID: runID, Status: reviewpkg.ReviewStatusPending, ReviewRequired: true}))
@@ -51,7 +60,7 @@ func TestReviewServiceApproveChecksReviewPermissionAndAudits(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, reviewpkg.ReviewStatusApproved, item.Status)
 	require.Equal(t, "确认可用", item.ReviewComment)
-	require.Equal(t, 1, authorizer.reviews)
+	require.Equal(t, 0, authorizer.reviews)
 	require.Len(t, audits.logs, 1)
 	require.Equal(t, "review.approved", audits.logs[0].Action)
 }
@@ -107,16 +116,17 @@ func TestReviewServiceIgnoreAndReopen(t *testing.T) {
 	require.Len(t, audits.logs, 2)
 }
 
-func TestReviewServiceViewerCannotApprove(t *testing.T) {
+func TestReviewServiceOtherUserCannotApprove(t *testing.T) {
 	service, repo, _, authorizer, _, actor, workspaceID, runID := newReviewServiceFixture(t)
-	authorizer.reviewErr = httpx.NewAppError(httpx.CodeForbidden, "forbidden", http.StatusForbidden, nil, nil)
 	itemID := uuid.New()
 	require.NoError(t, repo.Create(context.Background(), reviewpkg.ReviewItem{ID: itemID, WorkspaceID: workspaceID, RunID: runID, Status: reviewpkg.ReviewStatusPending}))
 
-	_, err := service.Approve(context.Background(), itemID, "no", actor)
+	otherActor := auth.Principal{UserID: uuid.New(), Roles: actor.Roles}
+	_, err := service.Approve(context.Background(), itemID, "no", otherActor)
 
 	require.Error(t, err)
-	require.Equal(t, httpx.CodeForbidden, httpx.ErrorFrom(err).Code)
+	require.Equal(t, httpx.CodeNotFound, httpx.ErrorFrom(err).Code)
+	require.Equal(t, 0, authorizer.reviews)
 	require.Zero(t, repo.updates)
 }
 
@@ -138,10 +148,10 @@ func newReviewServiceFixture(t *testing.T) (*reviewpkg.Service, *fakeReviewRepo,
 	runs := newFakeFillRunRepo()
 	workspaceID := uuid.New()
 	runID := uuid.New()
-	require.NoError(t, runs.Create(context.Background(), formpkg.FillRun{ID: runID, WorkspaceID: workspaceID, Status: formpkg.FillRunStatusSucceeded}))
+	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleReviewer}}
+	require.NoError(t, runs.Create(context.Background(), formpkg.FillRun{ID: runID, WorkspaceID: workspaceID, Status: formpkg.FillRunStatusSucceeded, CreatedBy: actor.UserID}))
 	authorizer := &fakeReviewAuthorizer{}
 	audits := &fakeAuditRepo{}
 	service := reviewpkg.NewService(repo, runs, authorizer, audit.NewService(audits, zap.NewNop()), zap.NewNop())
-	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleReviewer}}
 	return service, repo, runs, authorizer, audits, actor, workspaceID, runID
 }

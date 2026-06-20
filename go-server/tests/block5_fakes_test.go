@@ -84,19 +84,19 @@ func (f *fakeFillRunRepo) GetByID(ctx context.Context, id uuid.UUID) (*formpkg.F
 	return &run, nil
 }
 
-func (f *fakeFillRunRepo) ListByWorkspace(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int) ([]formpkg.FillRun, error) {
+func (f *fakeFillRunRepo) ListByCreator(ctx context.Context, createdBy uuid.UUID, status string, limit int, offset int) ([]formpkg.FillRun, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []formpkg.FillRun
 	for _, run := range f.runs {
-		if run.WorkspaceID == workspaceID && (status == "" || run.Status == status) {
+		if run.CreatedBy == createdBy && (status == "" || run.Status == status) {
 			out = append(out, run)
 		}
 	}
 	return out, nil
 }
 
-func (f *fakeFillRunRepo) ListByWorkspaceAndCreator(ctx context.Context, workspaceID uuid.UUID, createdBy uuid.UUID, status string, limit int, offset int) ([]formpkg.FillRun, error) {
+func (f *fakeFillRunRepo) ListByCreatorInWorkspace(ctx context.Context, createdBy uuid.UUID, workspaceID uuid.UUID, status string, limit int, offset int) ([]formpkg.FillRun, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []formpkg.FillRun

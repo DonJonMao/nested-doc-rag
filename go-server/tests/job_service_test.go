@@ -49,14 +49,29 @@ func TestJobServiceCreateJobWriteForbidden(t *testing.T) {
 	requireAppError(t, err, httpx.CodeForbidden, http.StatusForbidden)
 }
 
+func TestJobServiceCreateFillFormJobDoesNotRequireWorkspaceWrite(t *testing.T) {
+	repo := newFakeJobRepo()
+	queue := &fakeQueue{}
+	authorizer := &fakeAuthorizer{writeErr: httpx.NewAppError(httpx.CodeForbidden, "forbidden", http.StatusForbidden, nil, nil)}
+	service := jobs.NewService(repo, nil, queue, authorizer, nil, zap.NewNop(), 3)
+	actor := auth.Principal{UserID: uuid.New()}
+
+	job, err := service.CreateJob(context.Background(), jobs.CreateJobRequest{WorkspaceID: uuid.New(), JobType: jobs.JobTypeFillForm, ResourceType: jobs.ResourceTypeFillRun, ResourceID: uuid.New()}, actor)
+
+	require.NoError(t, err)
+	require.Equal(t, actor.UserID, job.CreatedBy)
+	require.Equal(t, 0, authorizer.writes)
+	require.Len(t, queue.enqueued, 1)
+}
+
 func TestJobServiceCancelQueuedAndRunning(t *testing.T) {
 	repo := newFakeJobRepo()
 	eventRepo := &fakeRunEventRepo{}
 	service := jobs.NewService(repo, runevent.NewService(eventRepo, nil), &fakeQueue{}, &fakeAuthorizer{}, nil, zap.NewNop(), 3)
 	actor := auth.Principal{UserID: uuid.New()}
 	workspaceID := uuid.New()
-	queued := jobs.Job{ID: uuid.New(), WorkspaceID: workspaceID, JobType: jobs.JobTypeNoop, ResourceType: jobs.ResourceTypeNoop, ResourceID: uuid.New(), Status: jobs.JobStatusQueued, MaxAttempts: 3}
-	running := jobs.Job{ID: uuid.New(), WorkspaceID: workspaceID, JobType: jobs.JobTypeNoop, ResourceType: jobs.ResourceTypeNoop, ResourceID: uuid.New(), Status: jobs.JobStatusRunning, MaxAttempts: 3}
+	queued := jobs.Job{ID: uuid.New(), WorkspaceID: workspaceID, JobType: jobs.JobTypeNoop, ResourceType: jobs.ResourceTypeNoop, ResourceID: uuid.New(), Status: jobs.JobStatusQueued, MaxAttempts: 3, CreatedBy: actor.UserID}
+	running := jobs.Job{ID: uuid.New(), WorkspaceID: workspaceID, JobType: jobs.JobTypeNoop, ResourceType: jobs.ResourceTypeNoop, ResourceID: uuid.New(), Status: jobs.JobStatusRunning, MaxAttempts: 3, CreatedBy: actor.UserID}
 	repo.add(queued)
 	repo.add(running)
 
@@ -70,14 +85,16 @@ func TestJobServiceCancelQueuedAndRunning(t *testing.T) {
 	require.Len(t, eventRepo.events, 2)
 }
 
-func TestJobServiceGetAndListCheckWorkspaceRead(t *testing.T) {
+func TestJobServiceGetAndListAreOwnerOnly(t *testing.T) {
 	repo := newFakeJobRepo()
 	authorizer := &fakeAuthorizer{}
 	service := jobs.NewService(repo, nil, nil, authorizer, nil, zap.NewNop(), 3)
 	actor := auth.Principal{UserID: uuid.New()}
 	workspaceID := uuid.New()
-	job := jobs.Job{ID: uuid.New(), WorkspaceID: workspaceID, JobType: jobs.JobTypeNoop, ResourceType: jobs.ResourceTypeNoop, ResourceID: uuid.New(), Status: jobs.JobStatusQueued, MaxAttempts: 3}
+	job := jobs.Job{ID: uuid.New(), WorkspaceID: workspaceID, JobType: jobs.JobTypeNoop, ResourceType: jobs.ResourceTypeNoop, ResourceID: uuid.New(), Status: jobs.JobStatusQueued, MaxAttempts: 3, CreatedBy: actor.UserID}
+	other := jobs.Job{ID: uuid.New(), WorkspaceID: workspaceID, JobType: jobs.JobTypeNoop, ResourceType: jobs.ResourceTypeNoop, ResourceID: uuid.New(), Status: jobs.JobStatusQueued, MaxAttempts: 3, CreatedBy: uuid.New()}
 	repo.add(job)
+	repo.add(other)
 
 	got, err := service.GetJob(context.Background(), job.ID, actor)
 	require.NoError(t, err)
@@ -85,5 +102,9 @@ func TestJobServiceGetAndListCheckWorkspaceRead(t *testing.T) {
 	listed, err := service.ListJobs(context.Background(), workspaceID, "", 50, 0, actor)
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
-	require.Equal(t, 2, authorizer.reads)
+	require.Equal(t, job.ID, listed[0].ID)
+	require.Equal(t, 0, authorizer.reads)
+
+	_, err = service.GetJob(context.Background(), other.ID, actor)
+	requireAppError(t, err, httpx.CodeNotFound, http.StatusNotFound)
 }

@@ -27,16 +27,18 @@ export const useFillRunStore = defineStore('fillRun', () => {
     return current.value
   }
 
-  async function loadRuns(workspaceId: string, status?: string) {
+  async function loadRuns(status?: string) {
     loading.value = true
     try {
-      runs.value = await listFillRuns(workspaceId, status, true)
+      runs.value = await listFillRuns(status)
     } finally {
       loading.value = false
     }
   }
 
   async function loadRun(runId: string) {
+    detail.value = null
+    current.value = null
     detail.value = await getFillRun(runId)
     current.value = detail.value
     return detail.value

@@ -10,8 +10,8 @@ const auth = useAuthStore()
 
 const items = computed(() => [
   { label: '自动填表', name: 'fill-create', visible: true },
-  { label: '我的任务', name: 'fill-history', visible: true },
-  { label: '知识库', name: 'admin-knowledge', visible: auth.isAdmin },
+  { label: '我的填表任务', name: 'fill-history', visible: true },
+  { label: '知识库管理', name: 'admin-knowledge', visible: auth.isAdmin },
 ])
 
 async function signOut() {

@@ -35,6 +35,6 @@ router.beforeEach(async (to) => {
     return { name: 'fill-create' }
   }
   if (to.name === 'login' && auth.accessToken) {
-    return auth.isAdmin ? { name: 'admin-knowledge' } : { name: 'fill-create' }
+    return { name: 'fill-create' }
   }
 })

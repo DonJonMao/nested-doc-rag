@@ -49,12 +49,36 @@ func (f *fakeJobRepo) GetByID(ctx context.Context, id uuid.UUID) (*jobs.Job, err
 	return &copy, nil
 }
 
+func (f *fakeJobRepo) ListByCreator(ctx context.Context, createdBy uuid.UUID, status string, limit int, offset int) ([]jobs.Job, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []jobs.Job
+	for _, job := range f.jobs {
+		if job.CreatedBy == createdBy && (status == "" || job.Status == status) {
+			out = append(out, job)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeJobRepo) ListByWorkspace(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int) ([]jobs.Job, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []jobs.Job
 	for _, job := range f.jobs {
 		if job.WorkspaceID == workspaceID && (status == "" || job.Status == status) {
+			out = append(out, job)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeJobRepo) ListByWorkspaceAndCreator(ctx context.Context, workspaceID uuid.UUID, createdBy uuid.UUID, status string, limit int, offset int) ([]jobs.Job, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []jobs.Job
+	for _, job := range f.jobs {
+		if job.WorkspaceID == workspaceID && job.CreatedBy == createdBy && (status == "" || job.Status == status) {
 			out = append(out, job)
 		}
 	}

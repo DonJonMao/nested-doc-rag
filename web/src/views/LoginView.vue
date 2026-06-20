@@ -14,12 +14,12 @@ const password = ref('')
 
 async function submit() {
   try {
-    const user = await auth.login(username.value, password.value)
+    await auth.login(username.value, password.value)
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
     if (redirect) {
       router.push(redirect)
     } else {
-      router.push(user.roles.includes('admin') ? { name: 'admin-knowledge' } : { name: 'fill-create' })
+      router.push({ name: 'fill-create' })
     }
   } catch {
     ElMessage.error('账号或密码错误，或后端服务不可用')

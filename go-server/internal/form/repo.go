@@ -22,8 +22,8 @@ type FormFileRepo interface {
 type FillRunRepo interface {
 	Create(ctx context.Context, run FillRun) error
 	GetByID(ctx context.Context, id uuid.UUID) (*FillRun, error)
-	ListByWorkspace(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int) ([]FillRun, error)
-	ListByWorkspaceAndCreator(ctx context.Context, workspaceID uuid.UUID, createdBy uuid.UUID, status string, limit int, offset int) ([]FillRun, error)
+	ListByCreator(ctx context.Context, createdBy uuid.UUID, status string, limit int, offset int) ([]FillRun, error)
+	ListByCreatorInWorkspace(ctx context.Context, createdBy uuid.UUID, workspaceID uuid.UUID, status string, limit int, offset int) ([]FillRun, error)
 	AttachJob(ctx context.Context, runID uuid.UUID, jobID uuid.UUID, queuedAt time.Time) error
 	MarkRunning(ctx context.Context, runID uuid.UUID, startedAt time.Time) error
 	MarkSucceeded(ctx context.Context, runID uuid.UUID, finishedAt time.Time, update FillRunCompletionUpdate) error
@@ -139,16 +139,16 @@ func (r *PGXFillRunRepo) GetByID(ctx context.Context, id uuid.UUID) (*FillRun, e
 	return scanFillRun(r.pool.QueryRow(ctx, selectFillRunSQL()+` WHERE id = $1`, id))
 }
 
-func (r *PGXFillRunRepo) ListByWorkspace(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int) ([]FillRun, error) {
+func (r *PGXFillRunRepo) ListByCreator(ctx context.Context, createdBy uuid.UUID, status string, limit int, offset int) ([]FillRun, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	var rows pgx.Rows
 	var err error
 	if status != "" {
-		rows, err = r.pool.Query(ctx, selectFillRunSQL()+` WHERE workspace_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`, workspaceID, status, limit, offset)
+		rows, err = r.pool.Query(ctx, selectFillRunSQL()+` WHERE created_by = $1 AND status = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`, createdBy, status, limit, offset)
 	} else {
-		rows, err = r.pool.Query(ctx, selectFillRunSQL()+` WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, workspaceID, limit, offset)
+		rows, err = r.pool.Query(ctx, selectFillRunSQL()+` WHERE created_by = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, createdBy, limit, offset)
 	}
 	if err != nil {
 		return nil, mapDBError(err, "list fill runs conflict", "fill runs not found")
@@ -165,7 +165,7 @@ func (r *PGXFillRunRepo) ListByWorkspace(ctx context.Context, workspaceID uuid.U
 	return runs, mapDBError(rows.Err(), "list fill runs conflict", "fill runs not found")
 }
 
-func (r *PGXFillRunRepo) ListByWorkspaceAndCreator(ctx context.Context, workspaceID uuid.UUID, createdBy uuid.UUID, status string, limit int, offset int) ([]FillRun, error) {
+func (r *PGXFillRunRepo) ListByCreatorInWorkspace(ctx context.Context, createdBy uuid.UUID, workspaceID uuid.UUID, status string, limit int, offset int) ([]FillRun, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}

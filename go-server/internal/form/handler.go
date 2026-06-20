@@ -183,7 +183,7 @@ func (h *Handler) ListFillRuns(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, unauthorized())
 		return
 	}
-	workspaceID, err := workspaceIDFromQuery(r)
+	workspaceID, err := optionalWorkspaceIDFromQuery(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -382,6 +382,18 @@ func workspaceIDFromQuery(r *http.Request) (uuid.UUID, error) {
 	workspaceID, err := uuid.Parse(strings.TrimSpace(r.URL.Query().Get("workspace_id")))
 	if err != nil {
 		return uuid.Nil, httpx.NewAppError(httpx.CodeInvalidArgument, "workspace_id is required", http.StatusBadRequest, nil, err)
+	}
+	return workspaceID, nil
+}
+
+func optionalWorkspaceIDFromQuery(r *http.Request) (uuid.UUID, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get("workspace_id"))
+	if raw == "" {
+		return uuid.Nil, nil
+	}
+	workspaceID, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, httpx.NewAppError(httpx.CodeInvalidArgument, "invalid workspace_id", http.StatusBadRequest, nil, err)
 	}
 	return workspaceID, nil
 }

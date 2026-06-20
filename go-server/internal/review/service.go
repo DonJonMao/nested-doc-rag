@@ -48,11 +48,8 @@ func NewService(repo Repo, runs FillRunGetter, authorizer WorkspaceAuthorizer, a
 }
 
 func (s *Service) ListByRun(ctx context.Context, runID uuid.UUID, filter ReviewFilter, actor auth.Principal) ([]ReviewItem, ReviewCounts, error) {
-	run, err := s.runs.GetByID(ctx, runID)
+	run, err := s.getOwnedRun(ctx, runID, actor)
 	if err != nil {
-		return nil, ReviewCounts{}, err
-	}
-	if err := s.authorizer.CanReadWorkspace(ctx, run.WorkspaceID, actor); err != nil {
 		return nil, ReviewCounts{}, err
 	}
 	if err := validateFilter(filter); err != nil {
@@ -71,11 +68,8 @@ func (s *Service) ListByRun(ctx context.Context, runID uuid.UUID, filter ReviewF
 }
 
 func (s *Service) CountByRun(ctx context.Context, runID uuid.UUID, actor auth.Principal) (ReviewCounts, error) {
-	run, err := s.runs.GetByID(ctx, runID)
+	run, err := s.getOwnedRun(ctx, runID, actor)
 	if err != nil {
-		return ReviewCounts{}, err
-	}
-	if err := s.authorizer.CanReadWorkspace(ctx, run.WorkspaceID, actor); err != nil {
 		return ReviewCounts{}, err
 	}
 	return s.repo.CountByRun(ctx, run.ID)
@@ -86,7 +80,7 @@ func (s *Service) Get(ctx context.Context, itemID uuid.UUID, actor auth.Principa
 	if err != nil {
 		return nil, err
 	}
-	if err := s.authorizer.CanReadWorkspace(ctx, item.WorkspaceID, actor); err != nil {
+	if _, err := s.getOwnedRun(ctx, item.RunID, actor); err != nil {
 		return nil, err
 	}
 	return item, nil
@@ -175,10 +169,21 @@ func (s *Service) requireReview(ctx context.Context, itemID uuid.UUID, actor aut
 	if err != nil {
 		return nil, err
 	}
-	if err := s.authorizer.CanReviewWorkspace(ctx, item.WorkspaceID, actor); err != nil {
+	if _, err := s.getOwnedRun(ctx, item.RunID, actor); err != nil {
 		return nil, err
 	}
 	return item, nil
+}
+
+func (s *Service) getOwnedRun(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*form.FillRun, error) {
+	run, err := s.runs.GetByID(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if run.CreatedBy != actor.UserID {
+		return nil, httpx.NewAppError(httpx.CodeNotFound, "fill run not found", http.StatusNotFound, nil, nil)
+	}
+	return run, nil
 }
 
 func (s *Service) update(ctx context.Context, item *ReviewItem, status string, comment string, editedAnswer string, actor auth.Principal, auditAction string) error {

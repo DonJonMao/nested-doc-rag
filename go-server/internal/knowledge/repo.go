@@ -18,6 +18,7 @@ type KnowledgeBaseRepo interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*KnowledgeBase, error)
 	ListByWorkspace(ctx context.Context, workspaceID uuid.UUID, limit int, offset int) ([]KnowledgeBase, error)
 	ListOptionsByWorkspace(ctx context.Context, workspaceID uuid.UUID, limit int, offset int) ([]KnowledgeBase, error)
+	ListReadyOptionsByWorkspace(ctx context.Context, workspaceID uuid.UUID, limit int, offset int) ([]KnowledgeBase, error)
 	UpdateCurrentIndexVersion(ctx context.Context, kbID uuid.UUID, versionID uuid.UUID) error
 	UpdateStatus(ctx context.Context, kbID uuid.UUID, status string) error
 	Update(ctx context.Context, kb KnowledgeBase) error
@@ -125,6 +126,26 @@ func (r *PGXKnowledgeBaseRepo) ListOptionsByWorkspace(ctx context.Context, works
 		out = append(out, *item)
 	}
 	return out, mapDBError(rows.Err(), "list knowledge base options conflict", "knowledge bases not found")
+}
+
+func (r *PGXKnowledgeBaseRepo) ListReadyOptionsByWorkspace(ctx context.Context, workspaceID uuid.UUID, limit int, offset int) ([]KnowledgeBase, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := r.pool.Query(ctx, selectKnowledgeBaseSQL()+` WHERE workspace_id = $1 AND status = $2 ORDER BY name ASC LIMIT $3 OFFSET $4`, workspaceID, KnowledgeBaseStatusReady, limit, offset)
+	if err != nil {
+		return nil, mapDBError(err, "list ready knowledge base options conflict", "knowledge bases not found")
+	}
+	defer rows.Close()
+	var out []KnowledgeBase
+	for rows.Next() {
+		item, err := scanKnowledgeBase(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *item)
+	}
+	return out, mapDBError(rows.Err(), "list ready knowledge base options conflict", "knowledge bases not found")
 }
 
 func (r *PGXKnowledgeBaseRepo) UpdateCurrentIndexVersion(ctx context.Context, kbID uuid.UUID, versionID uuid.UUID) error {

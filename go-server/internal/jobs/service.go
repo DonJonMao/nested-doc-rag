@@ -59,14 +59,16 @@ func NewService(repo Repo, events RunEventWriter, queue Queue, authorizer Worksp
 }
 
 func (s *Service) CreateJob(ctx context.Context, req CreateJobRequest, actor auth.Principal) (*Job, error) {
-	if err := s.authorizer.CanWriteWorkspace(ctx, req.WorkspaceID, actor); err != nil {
-		return nil, err
-	}
 	if !ValidJobType(req.JobType) {
 		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "invalid job type", http.StatusBadRequest, map[string]string{"job_type": req.JobType}, nil)
 	}
 	if !ValidResourceType(req.ResourceType) {
 		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "invalid resource type", http.StatusBadRequest, map[string]string{"resource_type": req.ResourceType}, nil)
+	}
+	if requiresWorkspaceWrite(req.JobType, req.ResourceType) {
+		if err := s.authorizer.CanWriteWorkspace(ctx, req.WorkspaceID, actor); err != nil {
+			return nil, err
+		}
 	}
 	jobID := uuid.New()
 	resourceID := req.ResourceID
@@ -112,7 +114,11 @@ func (s *Service) EnqueueJob(ctx context.Context, jobID uuid.UUID, actor auth.Pr
 	if err != nil {
 		return err
 	}
-	if err := s.authorizer.CanWriteWorkspace(ctx, job.WorkspaceID, actor); err != nil {
+	if requiresWorkspaceWrite(job.JobType, job.ResourceType) {
+		if err := s.authorizer.CanWriteWorkspace(ctx, job.WorkspaceID, actor); err != nil {
+			return err
+		}
+	} else if err := ensureJobOwner(job, actor); err != nil {
 		return err
 	}
 	if job.Status != JobStatusCreated && job.Status != JobStatusFailed && job.Status != JobStatusCompletedWithFailures {
@@ -156,17 +162,17 @@ func (s *Service) GetJob(ctx context.Context, jobID uuid.UUID, actor auth.Princi
 	if err != nil {
 		return nil, err
 	}
-	if err := s.authorizer.CanReadWorkspace(ctx, job.WorkspaceID, actor); err != nil {
+	if err := ensureJobOwner(job, actor); err != nil {
 		return nil, err
 	}
 	return job, nil
 }
 
 func (s *Service) ListJobs(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int, actor auth.Principal) ([]Job, error) {
-	if err := s.authorizer.CanReadWorkspace(ctx, workspaceID, actor); err != nil {
-		return nil, err
+	if workspaceID != uuid.Nil {
+		return s.repo.ListByWorkspaceAndCreator(ctx, workspaceID, actor.UserID, status, limit, offset)
 	}
-	return s.repo.ListByWorkspace(ctx, workspaceID, status, limit, offset)
+	return s.repo.ListByCreator(ctx, actor.UserID, status, limit, offset)
 }
 
 func (s *Service) CancelJob(ctx context.Context, jobID uuid.UUID, actor auth.Principal) (*Job, error) {
@@ -174,7 +180,7 @@ func (s *Service) CancelJob(ctx context.Context, jobID uuid.UUID, actor auth.Pri
 	if err != nil {
 		return nil, err
 	}
-	if err := s.authorizer.CanWriteWorkspace(ctx, job.WorkspaceID, actor); err != nil {
+	if err := ensureJobOwner(job, actor); err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
@@ -314,4 +320,15 @@ func (s *Service) record(ctx context.Context, log audit.AuditLog) {
 	if s.audit != nil {
 		s.audit.Record(ctx, log)
 	}
+}
+
+func requiresWorkspaceWrite(jobType string, resourceType string) bool {
+	return !(jobType == JobTypeFillForm && resourceType == ResourceTypeFillRun)
+}
+
+func ensureJobOwner(job *Job, actor auth.Principal) error {
+	if job == nil || job.CreatedBy != actor.UserID {
+		return httpx.NewAppError(httpx.CodeNotFound, "job not found", http.StatusNotFound, nil, nil)
+	}
+	return nil
 }

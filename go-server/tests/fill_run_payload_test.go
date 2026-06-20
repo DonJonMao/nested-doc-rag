@@ -89,8 +89,9 @@ func TestParseFillFormJobPayloadMalformed(t *testing.T) {
 func TestCreateFillRunAppliesPythonDefaultsToPayload(t *testing.T) {
 	workspaceID := uuid.New()
 	formID := uuid.New()
+	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}}
 	formRepo := newFakeFormFileRepo()
-	require.NoError(t, formRepo.Create(context.Background(), formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, FileID: uuid.New(), Filename: "form.xlsx"}))
+	require.NoError(t, formRepo.Create(context.Background(), formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, FileID: uuid.New(), Filename: "form.xlsx", CreatedBy: actor.UserID}))
 	jobSvc := &fakeJobUseCase{}
 	cfg := *config.Default()
 	cfg.Python.ProjectDir = t.TempDir()
@@ -100,7 +101,7 @@ func TestCreateFillRunAppliesPythonDefaultsToPayload(t *testing.T) {
 	cfg.Python.Step15DefaultPromptVersion = "prompt_v2"
 	service := formpkg.NewFillRunService(newFakeFillRunRepo(), formRepo, jobSvc, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), cfg)
 
-	run, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "target"}, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}})
+	run, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "target"}, actor)
 
 	require.NoError(t, err)
 	require.Equal(t, "7-9", run.RowsSpec)

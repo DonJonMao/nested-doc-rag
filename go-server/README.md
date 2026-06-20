@@ -329,11 +329,15 @@ The platform now exposes frontend-oriented APIs described in `gongkan_full_syste
 
 - `GET /api/v1/knowledge-bases/options?workspace_id=...` returns selectable knowledge-base cards with `namespace`, `status`, `document_count`, and `last_ingested_at`.
 - `POST /api/v1/fill-runs/simple` creates a fill run from `knowledge_base_id`, `form_file_id`, and optional `room_context`; the server derives `target_namespace`, current index version, default rows, retrieval mode, prompt version, and writeback settings.
-- `GET /api/v1/fill-runs?...&mine=true` returns only the current user's runs; non-admin users are always restricted to their own fill runs for list/get/cancel/download operations.
+- `GET /api/v1/fill-runs` returns the current user's runs. `workspace_id` is accepted only as an optional legacy narrowing filter; it never expands visibility to other workspace members' runs.
 - `POST /api/v1/knowledge-bases/{kb_id}/documents?auto_ingest=true` uploads a document and immediately creates an ingestion run.
 - `DELETE /api/v1/documents/{doc_id}?reindex=true` soft-deletes a document, marks the knowledge base stale, and queues a namespace rebuild ingestion run.
 
-Knowledge-base write operations require the global `admin` role. Ordinary workspace users can read ready knowledge-base options and create their own fill runs.
+Permission model:
+
+- Knowledge-base write operations require the global `admin` role. Ordinary users can read ready knowledge-base options for fill-run creation but cannot create, upload, delete, ingest, cancel ingestion, or activate index versions.
+- Fill runs, progress, review-item compatibility APIs, artifacts, downloads, and SSE events are owner-only by `fill_runs.created_by`. Admin users do not get default read-all access to other users' fill-run results.
+- `workspace_id` remains for compatibility, grouping, and storage paths. It is not a sharing boundary for fill-run visibility.
 
 Migration `000008_productized_knowledge_fill.sql` adds product fields to `knowledge_bases`, `knowledge_documents`, and `fill_runs`, and seeds the default workspace plus the 9 fixed knowledge bases:
 
@@ -518,6 +522,8 @@ curl -X POST http://localhost:8080/api/v1/fill-runs/simple \
 ```
 
 The server derives `target_namespace`, `index_version_id`, `rows`, retrieval mode, prompt version, judge flags, and writeback defaults from the selected ready knowledge base and product configuration. The lower-level `POST /api/v1/fill-runs` endpoint remains for admin/debug use; non-admin callers must still bind it to a ready knowledge base and cannot override product runtime defaults.
+
+Each fill run is visible only to its creator. List, detail, cancel, SSE event subscription, and download endpoints check `created_by`; sharing a workspace does not grant access to another user's run. The `workspace_id` query on SSE URLs is retained for persisted event lookup compatibility, not for authorization.
 
 Watch events:
 

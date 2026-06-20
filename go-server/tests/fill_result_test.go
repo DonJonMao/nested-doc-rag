@@ -139,17 +139,18 @@ bad-json
 	require.Contains(t, csv, "item_2,,,,未找到,,,,not_found,c3,")
 }
 
-func TestPermissionDenied(t *testing.T) {
+func TestUserCannotDownloadOtherUsersFilledForm(t *testing.T) {
 	fixture := newFillResultFixture(t, formpkg.FillRunStatusSucceeded)
-	fixture.authorizer.readErr = httpx.NewAppError(httpx.CodeForbidden, "forbidden", http.StatusForbidden, nil, nil)
+	fixture.addManifest(map[string]any{artifact.TypeFilledForm: "filled_form.xlsx"})
+	fixture.addArtifact(artifact.TypeFilledForm, "filled_form.xlsx", "filled")
 	router := fixture.router()
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/fill-runs/"+fixture.run.ID.String()+"/downloads/filled-form", nil)
-	req = req.WithContext(auth.ContextWithPrincipal(req.Context(), fixture.actor))
+	req = req.WithContext(auth.ContextWithPrincipal(req.Context(), auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}}))
 	router.ServeHTTP(rec, req)
 
-	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 func TestArtifactValidationBlocksInvalidDownload(t *testing.T) {

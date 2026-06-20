@@ -27,7 +27,7 @@ func TestJobHandlerListGetCancel(t *testing.T) {
 	handler := jobs.NewHandler(service, true)
 	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}}
 	workspaceID := uuid.New()
-	job := jobs.Job{ID: uuid.New(), WorkspaceID: workspaceID, JobType: jobs.JobTypeNoop, ResourceType: jobs.ResourceTypeNoop, ResourceID: uuid.New(), Status: jobs.JobStatusQueued, MaxAttempts: 3}
+	job := jobs.Job{ID: uuid.New(), WorkspaceID: workspaceID, JobType: jobs.JobTypeNoop, ResourceType: jobs.ResourceTypeNoop, ResourceID: uuid.New(), Status: jobs.JobStatusQueued, MaxAttempts: 3, CreatedBy: actor.UserID}
 	repo.add(job)
 	router := authenticatedJobRouter(handler, actor, true)
 

@@ -66,37 +66,47 @@ func TestKnowledgeBaseServiceCreateRequiresAdmin(t *testing.T) {
 	require.Empty(t, repo.bases)
 }
 
-func TestKnowledgeBaseServiceGetListRequiresAdmin(t *testing.T) {
+func TestKnowledgeBaseServiceNormalUserReadsOnlyReadyKnowledgeBases(t *testing.T) {
 	repo := newFakeKnowledgeBaseRepo()
 	workspaceID := uuid.New()
-	kbID := uuid.New()
-	require.NoError(t, repo.Create(context.Background(), knowledgepkg.KnowledgeBase{ID: kbID, WorkspaceID: workspaceID, Name: "kb"}))
+	readyID := uuid.New()
+	failedID := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), knowledgepkg.KnowledgeBase{ID: readyID, WorkspaceID: workspaceID, Name: "ready", Status: knowledgepkg.KnowledgeBaseStatusReady}))
+	require.NoError(t, repo.Create(context.Background(), knowledgepkg.KnowledgeBase{ID: failedID, WorkspaceID: workspaceID, Name: "failed", Status: knowledgepkg.KnowledgeBaseStatusFailed}))
 	authorizer := &fakeAuthorizer{}
 	service := knowledgepkg.NewKnowledgeBaseService(repo, newFakeKnowledgeIndexVersionRepo(), authorizer, nil, zap.NewNop())
 	admin := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}}
+	normal := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}}
 
-	_, err := service.GetKnowledgeBase(context.Background(), kbID, admin)
+	_, err := service.GetKnowledgeBase(context.Background(), readyID, admin)
 	require.NoError(t, err)
 	items, err := service.ListKnowledgeBases(context.Background(), workspaceID, 50, 0, admin)
 
 	require.NoError(t, err)
-	require.Len(t, items, 1)
+	require.Len(t, items, 2)
 	require.Equal(t, 2, authorizer.reads)
 
-	_, err = service.GetKnowledgeBase(context.Background(), kbID, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}})
-	require.Error(t, err)
-	require.Equal(t, httpx.CodeForbidden, httpx.ErrorFrom(err).Code)
+	ready, err := service.GetKnowledgeBase(context.Background(), readyID, normal)
+	require.NoError(t, err)
+	require.Equal(t, readyID, ready.ID)
 
-	_, err = service.ListKnowledgeBases(context.Background(), workspaceID, 50, 0, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}})
+	_, err = service.GetKnowledgeBase(context.Background(), failedID, normal)
 	require.Error(t, err)
-	require.Equal(t, httpx.CodeForbidden, httpx.ErrorFrom(err).Code)
+	require.Equal(t, httpx.CodeNotFound, httpx.ErrorFrom(err).Code)
+
+	normalItems, err := service.ListKnowledgeBases(context.Background(), workspaceID, 50, 0, normal)
+	require.NoError(t, err)
+	require.Len(t, normalItems, 1)
+	require.Equal(t, readyID, normalItems[0].ID)
 }
 
 func TestKnowledgeBaseServiceOptionsAllowWorkspaceReaders(t *testing.T) {
 	repo := newFakeKnowledgeBaseRepo()
 	workspaceID := uuid.New()
 	kbID := uuid.New()
-	require.NoError(t, repo.Create(context.Background(), knowledgepkg.KnowledgeBase{ID: kbID, WorkspaceID: workspaceID, Name: "kb"}))
+	draftID := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), knowledgepkg.KnowledgeBase{ID: kbID, WorkspaceID: workspaceID, Name: "kb", Status: knowledgepkg.KnowledgeBaseStatusReady}))
+	require.NoError(t, repo.Create(context.Background(), knowledgepkg.KnowledgeBase{ID: draftID, WorkspaceID: workspaceID, Name: "draft", Status: knowledgepkg.KnowledgeBaseStatusEmpty}))
 	authorizer := &fakeAuthorizer{}
 	service := knowledgepkg.NewKnowledgeBaseService(repo, newFakeKnowledgeIndexVersionRepo(), authorizer, nil, zap.NewNop())
 
@@ -104,6 +114,7 @@ func TestKnowledgeBaseServiceOptionsAllowWorkspaceReaders(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, items, 1)
+	require.Equal(t, kbID, items[0].ID)
 	require.Equal(t, 1, authorizer.reads)
 }
 

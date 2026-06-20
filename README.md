@@ -111,6 +111,12 @@ User flow:
 
 The current MVP does not provide online field approval, online spreadsheet editing, human-review re-writeback, `reviewed_filled_form.xlsx`, or multi-level approval workflow.
 
+Current permission model:
+
+- Knowledge-base management is admin-only. Ordinary users can only read ready knowledge-base options for creating fill tasks.
+- Fill tasks, progress, result summaries, SSE events, and downloads are owner-only by `fill_runs.created_by`. Admin users also see only their own fill tasks by default.
+- `workspace_id` is retained for compatibility and resource grouping. It is not a sharing boundary for fill-run visibility; users in the same workspace cannot see each other's fill tasks or downloads.
+
 The web app calls the real Go API. Long-running ingestion and form-filling tasks are executed by the Go worker through Python Core CLI entry points; the frontend does not mock task success.
 
 Run platform tests and builds:

@@ -1,19 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import dayjs from 'dayjs'
 import SubNav from '@/components/nav/SubNav.vue'
 import StatusPill from '@/components/common/StatusPill.vue'
-import { useWorkspaceStore } from '@/stores/workspace.store'
 import { useFillRunStore } from '@/stores/fillRun.store'
 
-const workspace = useWorkspaceStore()
 const fill = useFillRunStore()
 const status = ref('')
-const workspaceId = computed(() => workspace.currentWorkspace?.id || workspace.currentWorkspaceId)
 
 async function load() {
-  if (!workspace.workspaces.length) await workspace.load()
-  if (workspaceId.value) await fill.loadRuns(workspaceId.value, status.value || undefined)
+  await fill.loadRuns(status.value || undefined)
 }
 
 function formatTime(value?: string) {

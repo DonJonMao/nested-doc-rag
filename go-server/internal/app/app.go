@@ -322,6 +322,8 @@ func (a runEventAccessAuthorizer) canReadRun(ctx context.Context, workspaceID uu
 	lookupConfigured := false
 	if a.fillRuns != nil {
 		lookupConfigured = true
+		// Workspace is no longer a sharing boundary for fill run visibility.
+		// Fill run event and artifact access is owner-only through GetFillRun.
 		run, err := a.fillRuns.GetFillRun(ctx, runID, actor)
 		if err == nil {
 			if run.WorkspaceID != workspaceID {
