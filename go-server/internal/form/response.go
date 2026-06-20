@@ -7,7 +7,7 @@ type FormListResponse struct {
 }
 
 type FillRunListResponse struct {
-	FillRuns []FillRun `json:"fill_runs"`
+	FillRuns []FillRunListItem `json:"fill_runs"`
 }
 
 type FillRunArtifactListResponse struct {

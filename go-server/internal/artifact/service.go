@@ -165,11 +165,33 @@ func (s *Service) DownloadArtifact(ctx context.Context, artifactID uuid.UUID, ac
 			return &DownloadResult{Filename: record.Filename, ContentType: record.ContentType, ContentLength: record.FileSize, PresignedURL: url}, nil
 		}
 	}
+	return s.downloadArtifactProxy(ctx, record, actor, true)
+}
+
+func (s *Service) DownloadArtifactProxy(ctx context.Context, artifactID uuid.UUID, actor auth.Principal) (*DownloadResult, error) {
+	record, err := s.GetArtifact(ctx, artifactID, actor)
+	if err != nil {
+		return nil, err
+	}
+	return s.downloadArtifactProxy(ctx, record, actor, true)
+}
+
+func (s *Service) OpenArtifact(ctx context.Context, artifactID uuid.UUID, actor auth.Principal) (*DownloadResult, error) {
+	record, err := s.GetArtifact(ctx, artifactID, actor)
+	if err != nil {
+		return nil, err
+	}
+	return s.downloadArtifactProxy(ctx, record, actor, false)
+}
+
+func (s *Service) downloadArtifactProxy(ctx context.Context, record *RunArtifact, actor auth.Principal, auditDownload bool) (*DownloadResult, error) {
 	reader, info, err := s.storage.Get(ctx, record.ObjectKey)
 	if err != nil {
 		return nil, httpx.NewAppError(httpx.CodeInternal, "read artifact failed", http.StatusInternalServerError, nil, err)
 	}
-	s.recordArtifactDownloaded(ctx, record, actor)
+	if auditDownload {
+		s.recordArtifactDownloaded(ctx, record, actor)
+	}
 	contentType := record.ContentType
 	if contentType == "" {
 		contentType = info.ContentType

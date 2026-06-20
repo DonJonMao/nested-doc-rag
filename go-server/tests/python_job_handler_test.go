@@ -35,8 +35,9 @@ func TestFillFormPythonHandlerSuccessCallsRunnerAndArchiver(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runner.Step15Calls, 1)
 	require.Equal(t, "target", runner.Step15Calls[0].TargetNamespace)
-	require.Len(t, registrar.requests, 1)
-	require.Len(t, registrar.actors, 1)
+	require.Len(t, registrar.requests, 2)
+	require.ElementsMatch(t, []string{"run_manifest", "predictions"}, artifactTypesFromRequests(registrar.requests))
+	require.Len(t, registrar.actors, 2)
 	require.Contains(t, registrar.actors[0].Roles, auth.RoleAdmin)
 	requireEventTypes(t, eventsRepo, runevent.EventPythonStarted, runevent.EventPythonFinished, runevent.EventArtifactValidationSucceeded, runevent.EventArtifactsRegistered)
 }

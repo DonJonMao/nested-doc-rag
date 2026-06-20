@@ -1,23 +1,20 @@
 <script setup lang="ts">
-import { Download } from 'lucide-vue-next'
+import { computed } from 'vue'
+import { Download, FileSpreadsheet, FileText } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
-import { downloadWithAuth } from '@/api/http'
-import type { FillRun } from '@/api/types'
+import { downloadFilledForm, downloadReviewItems, downloadSummary, downloadWritebackAudit } from '@/api/fillRuns.api'
+import type { FillRunDetail } from '@/api/types'
 
-const props = defineProps<{ run: FillRun }>()
+const props = defineProps<{ run: FillRunDetail }>()
 
-const links = [
-  { label: '填好的工勘单', kind: 'filled-form', filename: 'filled_form.xlsx', primary: true },
-  { label: '运行摘要', kind: 'run-summary', filename: 'run_summary.md' },
-  { label: '审核项', kind: 'review-items', filename: 'review_items.jsonl' },
-  { label: 'Trace', kind: 'trace', filename: 'trace.jsonl' },
-]
+const terminal = computed(() => ['completed', 'succeeded', 'completed_with_failures'].includes(props.run.status))
+const filledFormBlocked = computed(() => !terminal.value || props.run.artifact_validation_status !== 'valid' || !props.run.artifacts.filled_form.available)
 
-async function download(kind: string, filename: string) {
+async function runDownload(action: () => Promise<void>) {
   try {
-    await downloadWithAuth(`/api/v1/fill-runs/${props.run.id}/download/${kind}`, filename)
-  } catch {
-    ElMessage.error('下载失败')
+    await action()
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '下载失败')
   }
 }
 </script>
@@ -25,17 +22,36 @@ async function download(kind: string, filename: string) {
 <template>
   <section class="download-panel gk-card">
     <h2 class="gk-card-title">结果下载</h2>
-    <p class="gk-caption">任务完成后可下载回填 Excel 和审计产物。</p>
+    <p class="gk-caption">下载的是安全自动填写版；未写入字段需在表格下载后线下人工补充。</p>
     <div class="download-panel__actions">
       <el-button
-        v-for="link in links"
-        :key="link.kind"
-        :type="link.primary ? 'primary' : 'default'"
-        :disabled="!['succeeded', 'completed_with_failures'].includes(run.status)"
-        @click="download(link.kind, link.filename)"
+        type="primary"
+        :disabled="filledFormBlocked"
+        @click="runDownload(() => downloadFilledForm(run.id))"
+      >
+        <FileSpreadsheet :size="16" />
+        下载自动填写后的表格
+      </el-button>
+      <el-button
+        :disabled="!terminal || !run.artifacts.review_items_csv.available"
+        @click="runDownload(() => downloadReviewItems(run.id, 'csv'))"
       >
         <Download :size="16" />
-        {{ link.label }}
+        下载需人工补充字段清单
+      </el-button>
+      <el-button
+        :disabled="!terminal || !run.artifacts.writeback_audit.available"
+        @click="runDownload(() => downloadWritebackAudit(run.id))"
+      >
+        <FileText :size="16" />
+        下载写回审计
+      </el-button>
+      <el-button
+        :disabled="!terminal || !run.artifacts.summary.available"
+        @click="runDownload(() => downloadSummary(run.id))"
+      >
+        <FileText :size="16" />
+        下载摘要
       </el-button>
     </div>
   </section>

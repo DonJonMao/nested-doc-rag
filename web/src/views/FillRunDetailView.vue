@@ -16,22 +16,26 @@ const fill = useFillRunStore()
 const workspace = useWorkspaceStore()
 const events = ref<RunEvent[]>([])
 const controller = ref<AbortController | null>(null)
-const terminalStatuses = ['succeeded', 'completed_with_failures', 'failed', 'canceled']
+const terminalStatuses = ['completed', 'succeeded', 'completed_with_failures', 'failed', 'cancelled', 'canceled']
 
 const runId = computed(() => String(route.params.runId))
+const run = computed(() => fill.detail)
 const percent = computed(() => {
-  const run = fill.current
-  if (!run) return 0
-  if (run.progress_total > 0) return Math.round((run.progress_done / run.progress_total) * 100)
-  return ['succeeded', 'completed_with_failures'].includes(run.status) ? 100 : 0
+  if (!run.value) return 0
+  return terminalStatuses.includes(run.value.status) ? 100 : 35
 })
+const isProcessing = computed(() => ['created', 'queued', 'running', 'cancel_requested'].includes(run.value?.status || ''))
+const isCompletedWithFailures = computed(() => run.value?.status === 'completed_with_failures')
+const isFailed = computed(() => run.value?.status === 'failed')
+const artifactInvalid = computed(() => run.value?.artifact_validation_status === 'invalid' || run.value?.manifest_status === 'invalid')
+const canCancel = computed(() => ['queued', 'running'].includes(run.value?.raw_status || run.value?.status || ''))
 
 function connectEvents() {
-  if (!fill.current || !workspace.currentWorkspaceId) return
+  if (!run.value || !workspace.currentWorkspaceId) return
   controller.value?.abort()
   controller.value = new AbortController()
   subscribeRunEvents({
-    runId: fill.current.id,
+    runId: run.value.id,
     workspaceId: workspace.currentWorkspaceId,
     afterSequence: events.value.at(-1)?.sequence,
     signal: controller.value.signal,
@@ -39,15 +43,8 @@ function connectEvents() {
       if (!events.value.some((item) => item.sequence === event.sequence)) {
         events.value.push(event)
       }
-      const currentRunId = fill.current!.id
       if (shouldRefreshRun(event.event_type)) {
-        fill.loadRun(currentRunId)
-          .then((run) => {
-            if (terminalStatuses.includes(run.status)) {
-              fill.loadResult(currentRunId).catch(() => undefined)
-            }
-          })
-          .catch(() => undefined)
+        fill.loadRun(runId.value).catch(() => undefined)
       }
     },
     onError() {
@@ -74,15 +71,13 @@ function shouldRefreshRun(eventType: string) {
 async function load() {
   if (!workspace.workspaces.length) await workspace.load()
   await fill.loadRun(runId.value)
-  if (terminalStatuses.includes(fill.current?.status || '')) {
-    await fill.loadResult(runId.value).catch(() => undefined)
-  }
   connectEvents()
 }
 
 async function cancel() {
-  if (!fill.current) return
-  await fill.cancel(fill.current.id)
+  if (!run.value) return
+  await fill.cancel(run.value.id)
+  await fill.loadRun(run.value.id).catch(() => undefined)
   ElMessage.success('已请求取消')
 }
 
@@ -91,32 +86,67 @@ onBeforeUnmount(() => controller.value?.abort())
 </script>
 
 <template>
-  <SubNav title="任务详情" subtitle="实时进度、事件和结果下载" />
+  <SubNav title="任务详情" subtitle="查看任务状态，下载安全自动填写版结果" />
   <main class="gk-shell gk-main detail">
-    <section v-if="fill.current" class="detail__summary gk-card">
+    <section v-if="run" class="detail__summary gk-card">
       <div>
-        <h1 class="gk-card-title">{{ fill.current.name || fill.current.target_namespace }}</h1>
-        <div class="gk-caption">Run ID: {{ fill.current.id }}</div>
+        <h1 class="gk-card-title">{{ run.name || run.template_file_name || run.id }}</h1>
+        <div class="gk-caption">Run ID: {{ run.id }}</div>
+        <div class="gk-caption">{{ run.template_file_name || '未记录模板文件' }} · {{ run.kb_name || '未关联知识库' }}</div>
       </div>
-      <StatusPill :status="fill.current.status" />
+      <StatusPill :status="run.status" />
       <el-progress :percentage="percent" />
-      <el-button v-if="['queued', 'running'].includes(fill.current.status)" @click="cancel">取消任务</el-button>
-      <p v-if="fill.current.error_message" class="detail__error">{{ fill.current.error_message }}</p>
+      <el-button v-if="canCancel" @click="cancel">取消任务</el-button>
+      <p v-if="isProcessing" class="detail__info">任务处理中</p>
+      <p v-if="isCompletedWithFailures" class="detail__warning">任务已完成，但部分字段处理失败，请查看需人工补充字段清单。</p>
+      <p v-if="isFailed" class="detail__error">{{ run.error_message || '任务失败，无法下载结果。' }}</p>
+      <p v-if="artifactInvalid" class="detail__error">结果文件校验失败，请重新运行任务或联系管理员。</p>
     </section>
 
-    <div v-if="fill.current" class="gk-grid-two">
-      <ArtifactDownloadPanel :run="fill.current" />
+    <section v-if="run" class="detail__notice gk-card">
+      {{ run.message || '该表格仅自动写入系统判定为安全的字段；未写入或需复核字段请人工补充。' }}
+    </section>
+
+    <section v-if="run" class="detail__cards">
+      <div class="detail__metric gk-card">
+        <span>总字段数</span>
+        <strong>{{ run.summary.total_fields }}</strong>
+      </div>
+      <div class="detail__metric gk-card">
+        <span>已回答字段</span>
+        <strong>{{ run.summary.answered }}</strong>
+      </div>
+      <div class="detail__metric gk-card">
+        <span>自动写入字段</span>
+        <strong>{{ run.summary.writeback_allowed }}</strong>
+      </div>
+      <div class="detail__metric gk-card">
+        <span>需人工补充/复核字段</span>
+        <strong>{{ run.summary.review_required }}</strong>
+      </div>
+      <div class="detail__metric gk-card">
+        <span>未找到字段</span>
+        <strong>{{ run.summary.not_found }}</strong>
+      </div>
+      <div class="detail__metric gk-card">
+        <span>失败字段</span>
+        <strong>{{ run.summary.failed_fields }}</strong>
+      </div>
+    </section>
+
+    <div v-if="run" class="gk-grid-two">
+      <ArtifactDownloadPanel :run="run" />
       <section class="gk-card detail__metrics">
-        <h2 class="gk-card-title">运行摘要</h2>
+        <h2 class="gk-card-title">结果状态</h2>
         <dl>
-          <dt>进度</dt>
-          <dd>{{ fill.current.progress_done }} / {{ fill.current.progress_total }}</dd>
-          <dt>行范围</dt>
-          <dd>{{ fill.current.rows }}</dd>
-          <dt>检索模式</dt>
-          <dd>{{ fill.current.retrieval_mode }}</dd>
-          <dt>Prompt</dt>
-          <dd>{{ fill.current.prompt_version }}</dd>
+          <dt>Manifest</dt>
+          <dd>{{ run.manifest_status }}</dd>
+          <dt>Artifact</dt>
+          <dd>{{ run.artifact_validation_status }}</dd>
+          <dt>创建时间</dt>
+          <dd>{{ new Date(run.created_at).toLocaleString() }}</dd>
+          <dt>完成时间</dt>
+          <dd>{{ run.completed_at ? new Date(run.completed_at).toLocaleString() : '-' }}</dd>
         </dl>
       </section>
     </div>
@@ -132,7 +162,9 @@ onBeforeUnmount(() => controller.value?.abort())
 }
 
 .detail__summary,
-.detail__metrics {
+.detail__metrics,
+.detail__notice,
+.detail__metric {
   padding: 24px;
 }
 
@@ -147,6 +179,43 @@ onBeforeUnmount(() => controller.value?.abort())
   color: var(--gk-danger);
 }
 
+.detail__warning {
+  grid-column: 1 / -1;
+  color: var(--gk-warning);
+}
+
+.detail__info {
+  grid-column: 1 / -1;
+  color: var(--gk-info);
+}
+
+.detail__notice {
+  color: var(--gk-ink-2);
+  line-height: 1.6;
+}
+
+.detail__cards {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.detail__metric {
+  min-height: 104px;
+  display: grid;
+  align-content: space-between;
+}
+
+.detail__metric span {
+  color: var(--gk-ink-3);
+  font-size: 13px;
+}
+
+.detail__metric strong {
+  font-size: 30px;
+  line-height: 1;
+}
+
 .detail__metrics dl {
   display: grid;
   grid-template-columns: 90px 1fr;
@@ -159,5 +228,21 @@ onBeforeUnmount(() => controller.value?.abort())
 
 .detail__metrics dd {
   margin: 0;
+}
+
+@media (max-width: 980px) {
+  .detail__cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .detail__summary {
+    grid-template-columns: 1fr;
+  }
+
+  .detail__cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>

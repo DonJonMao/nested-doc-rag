@@ -73,7 +73,8 @@ func TestFillFormWorkerIntegrationMaterializesTemplateAndUpdatesRun(t *testing.T
 	data, err := os.ReadFile(templatePath)
 	require.NoError(t, err)
 	require.Equal(t, []byte("template"), data)
-	require.Len(t, registrar.requests, 1)
+	require.Len(t, registrar.requests, 2)
+	require.ElementsMatch(t, []string{"run_manifest", "predictions"}, artifactTypesFromRequests(registrar.requests))
 	run, err := fillRepo.GetByID(context.Background(), runID)
 	require.NoError(t, err)
 	require.Equal(t, formpkg.FillRunStatusSucceeded, run.Status)
@@ -179,7 +180,8 @@ func TestFillFormWorkerIntegrationCompletedWithFailuresLifecycle(t *testing.T) {
 	require.Equal(t, []uuid.UUID{runID}, lifecycle.running)
 	require.Equal(t, []uuid.UUID{runID}, lifecycle.completedWithFailures)
 	require.Empty(t, lifecycle.succeeded)
-	require.Len(t, lifecycle.completedArtifacts[runID], 1)
+	require.Len(t, lifecycle.completedArtifacts[runID], 2)
+	require.ElementsMatch(t, []string{"run_manifest", "predictions"}, artifactTypesFromRunArtifacts(lifecycle.completedArtifacts[runID]))
 }
 
 func TestFillFormWorkerIntegrationContextCanceledMarksRunCanceled(t *testing.T) {

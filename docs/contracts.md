@@ -68,8 +68,8 @@ Purpose:
 
 Purpose:
 
-- human review queue
-- contains partial, not-found, conflict, failed, and risk-flagged answered fields
+- offline manual completion list
+- contains partial, not-found, conflict, failed, and risk-flagged answered fields that should not be written automatically
 
 ## `trace.jsonl`
 

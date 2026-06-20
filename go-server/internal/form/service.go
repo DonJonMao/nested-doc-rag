@@ -37,6 +37,8 @@ type JobService interface {
 type ArtifactService interface {
 	ListRunArtifacts(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, actor auth.Principal) ([]artifact.RunArtifact, error)
 	DownloadArtifact(ctx context.Context, artifactID uuid.UUID, actor auth.Principal) (*artifact.DownloadResult, error)
+	DownloadArtifactProxy(ctx context.Context, artifactID uuid.UUID, actor auth.Principal) (*artifact.DownloadResult, error)
+	OpenArtifact(ctx context.Context, artifactID uuid.UUID, actor auth.Principal) (*artifact.DownloadResult, error)
 }
 
 type KnowledgeBaseReader interface {

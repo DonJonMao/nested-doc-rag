@@ -108,6 +108,72 @@ export interface FillRun {
   updated_at: string
 }
 
+export interface FillRunSummaryCounts {
+  total_fields: number
+  answered: number
+  partial_clue: number
+  not_found: number
+  conflict_unresolved: number
+  writeback_allowed: number
+  review_required: number
+  failed_fields: number
+}
+
+export interface FillRunDownloads {
+  filled_form_available: boolean
+  review_items_available: boolean
+  writeback_audit_available: boolean
+}
+
+export interface FillRunArtifactInfo {
+  available: boolean
+  filename?: string
+  size?: number
+}
+
+export interface FillRunArtifactDownloads {
+  filled_form: FillRunArtifactInfo
+  review_items: FillRunArtifactInfo
+  review_items_csv: FillRunArtifactInfo
+  writeback_audit: FillRunArtifactInfo
+  summary: FillRunArtifactInfo
+}
+
+export interface FillRunListItem {
+  id: string
+  workspace_id: string
+  name?: string
+  raw_status?: string
+  status: string
+  created_at: string
+  updated_at: string
+  completed_at?: string
+  template_file_name?: string
+  kb_name?: string
+  summary: FillRunSummaryCounts
+  downloads: FillRunDownloads
+}
+
+export interface FillRunDetail {
+  id: string
+  workspace_id: string
+  name?: string
+  raw_status?: string
+  status: string
+  created_at: string
+  updated_at: string
+  completed_at?: string
+  template_file_name?: string
+  kb_name?: string
+  manifest_status: 'valid' | 'invalid' | 'missing'
+  artifact_validation_status: 'valid' | 'invalid' | 'missing'
+  message: string
+  error_message?: string
+  summary: FillRunSummaryCounts
+  artifacts: FillRunArtifactDownloads
+  artifact_validation_warnings?: string[]
+}
+
 export interface RunArtifact {
   id: string
   workspace_id: string

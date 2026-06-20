@@ -31,9 +31,9 @@ func TestPythonArtifactArchiverRegistersAllManifestArtifacts(t *testing.T) {
 	registered, err := archiver.ArchiveStep15Artifacts(context.Background(), workspaceID, runID, manifest, actor)
 
 	require.NoError(t, err)
-	require.Len(t, registered, 2)
-	require.Len(t, registrar.requests, 2)
-	require.ElementsMatch(t, []string{"predictions", "filled_form"}, []string{registrar.requests[0].ArtifactType, registrar.requests[1].ArtifactType})
+	require.Len(t, registered, 3)
+	require.Len(t, registrar.requests, 3)
+	require.ElementsMatch(t, []string{"run_manifest", "predictions", "filled_form"}, artifactTypesFromRequests(registrar.requests))
 	for _, req := range registrar.requests {
 		require.NotEmpty(t, req.LocalPath)
 		require.NotEmpty(t, req.SHA256)
@@ -65,9 +65,9 @@ func TestPythonArtifactArchiverSkipsEmptyOptionalArtifacts(t *testing.T) {
 	registered, err := archiver.ArchiveStep15Artifacts(context.Background(), uuid.New(), uuid.New(), manifest, auth.Principal{UserID: uuid.New()})
 
 	require.NoError(t, err)
-	require.Len(t, registered, 1)
-	require.Len(t, registrar.requests, 1)
-	require.Equal(t, "predictions", registrar.requests[0].ArtifactType)
+	require.Len(t, registered, 2)
+	require.Len(t, registrar.requests, 2)
+	require.ElementsMatch(t, []string{"run_manifest", "predictions"}, artifactTypesFromRequests(registrar.requests))
 }
 
 func TestPythonArtifactArchiverComputesSHA256(t *testing.T) {
@@ -83,7 +83,13 @@ func TestPythonArtifactArchiverComputesSHA256(t *testing.T) {
 
 	require.NoError(t, err)
 	sum := sha256.Sum256(data)
-	require.Equal(t, hex.EncodeToString(sum[:]), registrar.requests[0].SHA256)
+	var predictionsSHA string
+	for _, req := range registrar.requests {
+		if req.ArtifactType == "predictions" {
+			predictionsSHA = req.SHA256
+		}
+	}
+	require.Equal(t, hex.EncodeToString(sum[:]), predictionsSHA)
 }
 
 func TestPythonArtifactArchiverRegistrarError(t *testing.T) {
@@ -103,6 +109,22 @@ type fakeArtifactRegistrar struct {
 	requests []artifact.RegisterArtifactRequest
 	actors   []auth.Principal
 	err      error
+}
+
+func artifactTypesFromRequests(requests []artifact.RegisterArtifactRequest) []string {
+	out := make([]string, 0, len(requests))
+	for _, req := range requests {
+		out = append(out, req.ArtifactType)
+	}
+	return out
+}
+
+func artifactTypesFromRunArtifacts(items []artifact.RunArtifact) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.ArtifactType)
+	}
+	return out
 }
 
 func (f *fakeArtifactRegistrar) RegisterArtifact(ctx context.Context, req artifact.RegisterArtifactRequest, actor auth.Principal) (*artifact.RunArtifact, error) {

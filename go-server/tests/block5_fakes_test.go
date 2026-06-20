@@ -273,3 +273,11 @@ func (f *fakeFillArtifactService) DownloadArtifact(ctx context.Context, artifact
 	}
 	return f.download, nil
 }
+
+func (f *fakeFillArtifactService) DownloadArtifactProxy(ctx context.Context, artifactID uuid.UUID, actor auth.Principal) (*artifact.DownloadResult, error) {
+	return f.DownloadArtifact(ctx, artifactID, actor)
+}
+
+func (f *fakeFillArtifactService) OpenArtifact(ctx context.Context, artifactID uuid.UUID, actor auth.Principal) (*artifact.DownloadResult, error) {
+	return f.DownloadArtifact(ctx, artifactID, actor)
+}

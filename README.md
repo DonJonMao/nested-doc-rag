@@ -1,6 +1,6 @@
 # Nested Doc RAG for Gongkan Form Filling
 
-This project implements a Python core for datacenter gongkan form filling: it ingests complex nested Office knowledge files into a traceable Qdrant index, then uses Step15AgentRunner to fill survey forms with layered RAG, answer arbitration, review routing, and safe Excel writeback.
+This project implements a Python core for datacenter gongkan form filling: it ingests complex nested Office knowledge files into a traceable Qdrant index, then uses Step15AgentRunner to fill survey forms with layered RAG, answer arbitration, offline review item export, and safe Excel writeback.
 
 ## What This Project Does
 
@@ -23,7 +23,7 @@ The form-filling runtime uses `Step15AgentRunner` overlay mode:
 - Step 15 layered RAG is the effect engine
 - the LLM sees the full layered evidence pack and arbitrates `answered`, `partial_clue`, `not_found`, or `conflict_unresolved`
 - raw prediction is immutable and used for evaluation
-- Agent overlay is additive and provides trace, checkpoint/resume, critic flags, review routing, reference enrichment suggestions, and writeback gating
+- Agent overlay is additive and provides trace, checkpoint/resume, critic flags, review item generation, reference enrichment suggestions, and writeback gating
 
 ## Recommended Runtime
 
@@ -66,7 +66,7 @@ field
 -> Step 15 answer arbitration prompt
 -> raw prediction
 -> Agent overlay
--> review queue
+-> review_items artifact for offline manual completion
 -> optional safe Excel writeback
 ```
 
@@ -97,7 +97,19 @@ python -m nested_doc_rag.cli show-config --config config/local.example.yaml
 The productized Gongkan platform lives alongside the Python Core:
 
 - `go-server/` provides the API server, auth/RBAC, workspace/file/artifact services, jobs, worker orchestration, SSE, knowledge-base ingestion APIs, fill-run APIs, and OpenAPI.
-- `web/` provides the Vue 3 app for role-based login, admin knowledge management, user form upload, fill-run creation, SSE progress, history, and artifact downloads.
+- `web/` provides the Vue 3 app for role-based login, admin knowledge management, user form upload, fill-run creation, SSE progress, task history, result summaries, and artifact downloads.
+
+Current product MVP is a download-oriented automatic form-filling flow. The system only writes fields that pass grounding and the writeback gate (`writeback_allowed=true`) into `filled_form.xlsx`. Unsafe, evidence-insufficient, or review-needed fields are not written automatically; they are exported through `review_items`, and users complete those fields offline after downloading the workbook.
+
+User flow:
+
+1. Create a fill task from a ready knowledge base and an uploaded form template.
+2. Wait for the worker to finish Python Step15.
+3. Download `filled_form.xlsx`, the safe automatically filled workbook.
+4. Download `review_items.csv` to see fields that need offline manual completion.
+5. Complete the remaining fields manually outside the platform.
+
+The current MVP does not provide online field approval, online spreadsheet editing, human-review re-writeback, `reviewed_filled_form.xlsx`, or multi-level approval workflow.
 
 The web app calls the real Go API. Long-running ingestion and form-filling tasks are executed by the Go worker through Python Core CLI entry points; the frontend does not mock task success.
 

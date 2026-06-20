@@ -43,7 +43,8 @@ func TestWorkerFillFormHandlerUsesPythonRunnerNotPlaceholder(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, runner.Step15Calls, 1)
-	require.Len(t, registrar.requests, 1)
+	require.Len(t, registrar.requests, 2)
+	require.ElementsMatch(t, []string{"run_manifest", "predictions"}, artifactTypesFromRequests(registrar.requests))
 	updated, getErr := repo.GetByID(context.Background(), job.ID)
 	require.NoError(t, getErr)
 	require.Equal(t, jobs.JobStatusSucceeded, updated.Status)

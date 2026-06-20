@@ -3,6 +3,7 @@ const props = defineProps<{ status: string }>()
 
 const toneMap: Record<string, string> = {
   ready: 'success',
+  completed: 'success',
   succeeded: 'success',
   indexed: 'success',
   running: 'info',
@@ -10,9 +11,11 @@ const toneMap: Record<string, string> = {
   building: 'info',
   uploaded: 'info',
   stale: 'warning',
+  completed_with_failures: 'warning',
   cancel_requested: 'warning',
   failed: 'danger',
   canceled: 'muted',
+  cancelled: 'muted',
   empty: 'muted',
 }
 </script>

@@ -1,13 +1,13 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import { cancelFillRun, createSimpleFillRun, getFillRun, getFillRunResult, listFillRuns } from '@/api/fillRuns.api'
+import { cancelFillRun, createSimpleFillRun, getFillRun, listFillRuns } from '@/api/fillRuns.api'
 import { uploadForm } from '@/api/forms.api'
-import type { FillRun, FillRunResult, FormFile } from '@/api/types'
+import type { FillRun, FillRunDetail, FillRunListItem, FormFile } from '@/api/types'
 
 export const useFillRunStore = defineStore('fillRun', () => {
-  const runs = ref<FillRun[]>([])
-  const current = ref<FillRun | null>(null)
-  const result = ref<FillRunResult | null>(null)
+  const runs = ref<FillRunListItem[]>([])
+  const current = ref<FillRun | FillRunDetail | null>(null)
+  const detail = ref<FillRunDetail | null>(null)
   const uploadedForm = ref<FormFile | null>(null)
   const loading = ref(false)
 
@@ -37,13 +37,9 @@ export const useFillRunStore = defineStore('fillRun', () => {
   }
 
   async function loadRun(runId: string) {
-    current.value = await getFillRun(runId)
-    return current.value
-  }
-
-  async function loadResult(runId: string) {
-    result.value = await getFillRunResult(runId)
-    return result.value
+    detail.value = await getFillRun(runId)
+    current.value = detail.value
+    return detail.value
   }
 
   async function cancel(runId: string) {
@@ -52,5 +48,5 @@ export const useFillRunStore = defineStore('fillRun', () => {
     return data
   }
 
-  return { runs, current, result, uploadedForm, loading, upload, createSimple, loadRuns, loadRun, loadResult, cancel }
+  return { runs, current, detail, uploadedForm, loading, upload, createSimple, loadRuns, loadRun, cancel }
 })

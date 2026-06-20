@@ -29,9 +29,15 @@ type FillRunUseCase interface {
 	CreateSimpleFillRun(ctx context.Context, req CreateSimpleFillRunRequest, actor auth.Principal) (*FillRun, error)
 	GetFillRun(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*FillRun, error)
 	ListFillRuns(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int, mine bool, actor auth.Principal) ([]FillRun, error)
+	GetFillRunDetail(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*FillRunDetail, error)
+	ListFillRunSummaries(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int, mine bool, actor auth.Principal) ([]FillRunListItem, error)
 	CancelFillRun(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*FillRun, error)
 	GetFillRunArtifacts(ctx context.Context, runID uuid.UUID, actor auth.Principal) ([]artifact.RunArtifact, error)
 	GetDownloadArtifactByType(ctx context.Context, runID uuid.UUID, artifactType string, actor auth.Principal) (*artifact.DownloadResult, error)
+	DownloadFilledForm(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*artifact.DownloadResult, error)
+	DownloadReviewItems(ctx context.Context, runID uuid.UUID, format string, actor auth.Principal) (*artifact.DownloadResult, error)
+	DownloadWritebackAudit(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*artifact.DownloadResult, error)
+	DownloadSummary(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*artifact.DownloadResult, error)
 }
 
 type Handler struct {
@@ -54,6 +60,10 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/fill-runs/{run_id}/cancel", h.CancelFillRun)
 	r.Get("/fill-runs/{run_id}/artifacts", h.ListFillRunArtifacts)
 	r.Get("/fill-runs/{run_id}/download/{artifact_kind}", h.DownloadFillRunArtifact)
+	r.Get("/fill-runs/{run_id}/downloads/filled-form", h.DownloadFilledForm)
+	r.Get("/fill-runs/{run_id}/downloads/review-items", h.DownloadReviewItems)
+	r.Get("/fill-runs/{run_id}/downloads/writeback-audit", h.DownloadWritebackAudit)
+	r.Get("/fill-runs/{run_id}/downloads/summary", h.DownloadSummary)
 }
 
 func (h *Handler) UploadForm(w http.ResponseWriter, r *http.Request) {
@@ -183,13 +193,13 @@ func (h *Handler) ListFillRuns(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.NewAppError(httpx.CodeInvalidArgument, "invalid fill run status", http.StatusBadRequest, nil, nil))
 		return
 	}
-	runs, err := h.runs.ListFillRuns(r.Context(), workspaceID, status, limitFromQuery(r), offsetFromQuery(r), boolFromQuery(r, "mine"), actor)
+	runs, err := h.runs.ListFillRunSummaries(r.Context(), workspaceID, status, limitFromQuery(r), offsetFromQuery(r), boolFromQuery(r, "mine"), actor)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	if runs == nil {
-		runs = []FillRun{}
+		runs = []FillRunListItem{}
 	}
 	httpx.WriteOK(w, r, FillRunListResponse{FillRuns: runs})
 }
@@ -205,7 +215,7 @@ func (h *Handler) GetFillRun(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	run, err := h.runs.GetFillRun(r.Context(), runID, actor)
+	run, err := h.runs.GetFillRunDetail(r.Context(), runID, actor)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -272,6 +282,86 @@ func (h *Handler) DownloadFillRunArtifact(w http.ResponseWriter, r *http.Request
 		httpx.WriteError(w, r, err)
 		return
 	}
+	streamDownload(w, r, result)
+}
+
+func (h *Handler) DownloadFilledForm(w http.ResponseWriter, r *http.Request) {
+	actor, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, unauthorized())
+		return
+	}
+	runID, err := runIDFromRequest(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	result, err := h.runs.DownloadFilledForm(r.Context(), runID, actor)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	streamDownload(w, r, result)
+}
+
+func (h *Handler) DownloadReviewItems(w http.ResponseWriter, r *http.Request) {
+	actor, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, unauthorized())
+		return
+	}
+	runID, err := runIDFromRequest(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	result, err := h.runs.DownloadReviewItems(r.Context(), runID, r.URL.Query().Get("format"), actor)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	streamDownload(w, r, result)
+}
+
+func (h *Handler) DownloadWritebackAudit(w http.ResponseWriter, r *http.Request) {
+	actor, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, unauthorized())
+		return
+	}
+	runID, err := runIDFromRequest(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	result, err := h.runs.DownloadWritebackAudit(r.Context(), runID, actor)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	streamDownload(w, r, result)
+}
+
+func (h *Handler) DownloadSummary(w http.ResponseWriter, r *http.Request) {
+	actor, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, unauthorized())
+		return
+	}
+	runID, err := runIDFromRequest(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	result, err := h.runs.DownloadSummary(r.Context(), runID, actor)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	streamDownload(w, r, result)
+}
+
+func streamDownload(w http.ResponseWriter, r *http.Request, result *artifact.DownloadResult) {
 	if result.PresignedURL != "" {
 		httpx.WriteOK(w, r, map[string]string{"url": result.PresignedURL})
 		return

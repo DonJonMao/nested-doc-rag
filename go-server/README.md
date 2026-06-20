@@ -2,7 +2,7 @@
 
 This is the industrial platform service layer for `nested-doc-rag`.
 
-Python Core handles knowledge ingestion and form filling. Go handles API, auth, storage, jobs, orchestration, review, download, and observability.
+Python Core handles knowledge ingestion and form filling. Go handles API, auth, storage, jobs, orchestration, artifact-backed result summaries, downloads, and observability.
 
 ## Block 0 Scope
 
@@ -43,7 +43,7 @@ Not implemented in Block 1:
 - form filling APIs
 - task queues
 - PythonRunner
-- review queue
+- result download workflow
 - artifact management APIs
 
 ## Block 2 Scope
@@ -67,7 +67,7 @@ Not implemented in Block 2:
 - form filling business
 - job queue
 - PythonRunner
-- review queue
+- result download workflow
 
 ## Block 3 Scope
 
@@ -92,7 +92,7 @@ Not implemented in Block 3:
 
 - fill_runs business
 - knowledge_bases business
-- review queue business
+- result download business
 
 ## Block 4 Scope
 
@@ -132,7 +132,7 @@ Go reads:
 <out_dir>/run_manifest.json
 
 Go archives:
-manifest artifacts into ObjectStorage and run_artifacts table
+run_manifest.json plus manifest artifacts into ObjectStorage and run_artifacts table
 ```
 
 The worker registers both `ingest_knowledge` and `fill_form` with `SubprocessPythonRunner`. Ingestion parses uploaded knowledge documents, embeds real chunks, upserts the selected namespace into Qdrant, and archives the resulting manifest artifacts.
@@ -155,7 +155,7 @@ Implemented in this block:
 Not implemented in Block 5:
 
 - knowledge base management
-- review approve/reject/edit
+- online field approval/edit workflow
 - ingestion jobs API
 - human-edited re-writeback
 
@@ -178,7 +178,7 @@ Implemented in this block:
 
 Not implemented in Block 6:
 
-- review approve/reject/edit
+- online field approval/edit workflow
 - human-edited writeback
 - front-end
 - Go-native document parsing
@@ -233,7 +233,7 @@ curl -N "http://localhost:8080/api/v1/runs/<ingestion_job_id>/events?workspace_i
 
 Next Block:
 
-Block 7: Review queue and result download.
+Block 7: Result summary and download APIs.
 
 ## Block 7 Scope
 
@@ -241,56 +241,53 @@ Implemented:
 
 - review_items table
 - review item import from Python artifacts
-- review queue API
-- approve/reject/edit/ignore/reopen
-- review audit logs
-- review export JSON/CSV
-- result center API
+- artifact-backed fill-run detail API
+- safe filled_form.xlsx download API
+- review_items JSONL/CSV download API for offline manual completion
+- writeback audit and summary download APIs
+- compatibility review metadata import from Python artifacts
 - fill_form worker integration with review import
 
-Not implemented in Block 7:
+Current MVP does not implement:
 
-- human-edited re-writeback
+- online field-level approval/rejection/editing UI
+- online field approval/edit workflow
 - reviewed_filled_form.xlsx generation
 - multi-level approval workflow
-- front-end UI
+- complex field-level evidence UI
 
-List review items:
+Get result detail:
 
 ```bash
-curl "http://localhost:8080/api/v1/fill-runs/<run_id>/review-items?status=pending" \
+curl "http://localhost:8080/api/v1/fill-runs/<run_id>" \
   -H "Authorization: Bearer <token>"
 ```
 
-Approve:
+Download the safe automatically filled workbook:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/review-items/<item_id>/approve \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"comment":"确认可用"}'
-```
-
-Edit:
-
-```bash
-curl -X POST http://localhost:8080/api/v1/review-items/<item_id>/edit \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"edited_answer":"人工确认后的答案","comment":"现场确认"}'
-```
-
-Export:
-
-```bash
-curl -OJ "http://localhost:8080/api/v1/fill-runs/<run_id>/review-items/export?format=csv" \
+curl -OJ "http://localhost:8080/api/v1/fill-runs/<run_id>/downloads/filled-form" \
   -H "Authorization: Bearer <token>"
 ```
 
-Result center:
+Download fields that need offline manual completion:
 
 ```bash
-curl "http://localhost:8080/api/v1/fill-runs/<run_id>/result" \
+curl -OJ "http://localhost:8080/api/v1/fill-runs/<run_id>/downloads/review-items?format=csv" \
+  -H "Authorization: Bearer <token>"
+```
+
+Download writeback audit:
+
+```bash
+curl -OJ "http://localhost:8080/api/v1/fill-runs/<run_id>/downloads/writeback-audit" \
+  -H "Authorization: Bearer <token>"
+```
+
+Download summary:
+
+```bash
+curl -OJ "http://localhost:8080/api/v1/fill-runs/<run_id>/downloads/summary" \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -325,6 +322,8 @@ Not implemented in Block 8:
 - full OpenTelemetry exporter wiring
 
 ## Productized Gongkan Flow
+
+The current product shape is a download-oriented MVP. After a fill run completes, users download the safe automatically filled `filled_form.xlsx`; fields that were unsafe, evidence-insufficient, or review-needed remain unwritten and are listed in `review_items.csv` for offline manual completion.
 
 The platform now exposes frontend-oriented APIs described in `gongkan_full_system_design_apple.md`:
 
@@ -530,7 +529,14 @@ curl -N "http://localhost:8080/api/v1/runs/<fill_run_id>/events?workspace_id=<wo
 Download the filled form:
 
 ```bash
-curl -OJ http://localhost:8080/api/v1/fill-runs/<run_id>/download/filled-form \
+curl -OJ http://localhost:8080/api/v1/fill-runs/<run_id>/downloads/filled-form \
+  -H "Authorization: Bearer <token>"
+```
+
+Download the fields that need offline manual completion:
+
+```bash
+curl -OJ "http://localhost:8080/api/v1/fill-runs/<run_id>/downloads/review-items?format=csv" \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -600,8 +606,8 @@ This completes the initial industrial V1 backend blocks.
 
 Future work:
 
-- human-edited re-writeback
-- advanced review workflow
+- richer result download UX
+- distributed artifact retention policy
 - distributed Redis rate limit
 - OIDC/SSO
 - Kubernetes deployment

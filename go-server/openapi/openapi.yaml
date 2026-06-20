@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Gongkan Platform Go Backend
   version: 0.7.0
-  description: Industrial platform API for nested-doc-rag Block 0 through Block 7. Block 7 adds review queue, review actions, review exports, result center, and worker-side review item import from Python artifacts.
+  description: "Industrial platform API for nested-doc-rag. The current fill-run MVP is download-oriented: users download safe filled_form.xlsx and review_items.csv for offline manual completion."
 paths:
   /healthz:
     get:
@@ -662,8 +662,8 @@ paths:
                 $ref: "#/components/schemas/FillRunArtifactListResponse"
   /api/v1/fill-runs/{run_id}/download/{artifact_kind}:
     get:
-      summary: Download a fill run artifact by shortcut.
-      description: artifact_kind supports filled-form, run-summary, review-items, and trace. These are read-only artifact shortcuts; review actions are managed by the Block 7 review queue APIs.
+      summary: Legacy fill run artifact shortcut.
+      description: artifact_kind supports filled-form, run-summary, review-items, and trace. New clients should use the /downloads endpoints.
       security:
         - BearerAuth: []
       parameters:
@@ -685,9 +685,103 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
+  /api/v1/fill-runs/{run_id}/downloads/filled-form:
+    get:
+      summary: Download safe automatically filled workbook.
+      description: Only completed or completed_with_failures fill runs can download this artifact. The server requires a valid run_manifest and artifact validation, and only serves the whitelisted filled_form artifact.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+      responses:
+        "200":
+          description: filled_form.xlsx.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        "403":
+          description: Workspace or owner permission denied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+        "404":
+          description: filled_form artifact is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+        "409":
+          description: Fill run is not complete or artifacts are invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+  /api/v1/fill-runs/{run_id}/downloads/review-items:
+    get:
+      summary: Download review_items for offline manual completion.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [csv, jsonl]
+            default: csv
+      responses:
+        "200":
+          description: review_items.csv or review_items.jsonl.
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/x-ndjson:
+              schema:
+                type: string
+                format: binary
+  /api/v1/fill-runs/{run_id}/downloads/writeback-audit:
+    get:
+      summary: Download writeback audit JSONL.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+      responses:
+        "200":
+          description: writeback_audit.jsonl.
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                format: binary
+  /api/v1/fill-runs/{run_id}/downloads/summary:
+    get:
+      summary: Download summary JSON.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+      responses:
+        "200":
+          description: summary.json.
+          content:
+            application/json:
+              schema:
+                type: string
+                format: binary
   /api/v1/fill-runs/{run_id}/review-items:
     get:
-      summary: List review queue items for a fill run.
+      summary: "Compatibility API: list imported review metadata for a fill run."
+      description: The current download MVP does not use online field review; clients should download /downloads/review-items for offline manual completion.
       security:
         - BearerAuth: []
       parameters:
@@ -728,7 +822,8 @@ paths:
                 $ref: "#/components/schemas/ReviewItemListResponse"
   /api/v1/fill-runs/{run_id}/review-items/export:
     get:
-      summary: Export review items as JSON or CSV.
+      summary: "Compatibility API: export imported review metadata."
+      description: New download-MVP clients should use /api/v1/fill-runs/{run_id}/downloads/review-items.
       security:
         - BearerAuth: []
       parameters:
@@ -761,7 +856,8 @@ paths:
                 format: binary
   /api/v1/fill-runs/{run_id}/result:
     get:
-      summary: Get fill run result center data.
+      summary: "Compatibility API: get legacy fill run result center data."
+      description: New download-MVP clients should use GET /api/v1/fill-runs/{run_id}.
       security:
         - BearerAuth: []
       parameters:
@@ -775,7 +871,7 @@ paths:
                 $ref: "#/components/schemas/FillRunResultResponse"
   /api/v1/review-items/{item_id}:
     get:
-      summary: Get one review item.
+      summary: "Compatibility API: get one imported review item."
       security:
         - BearerAuth: []
       parameters:
@@ -794,7 +890,8 @@ paths:
                         $ref: "#/components/schemas/ReviewItem"
   /api/v1/review-items/{item_id}/approve:
     post:
-      summary: Approve a review item.
+      summary: "Compatibility API: approve a review item."
+      description: Not used by the current download-oriented MVP.
       security:
         - BearerAuth: []
       parameters:
@@ -813,7 +910,8 @@ paths:
                 $ref: "#/components/schemas/ReviewItemResponse"
   /api/v1/review-items/{item_id}/reject:
     post:
-      summary: Reject a review item.
+      summary: "Compatibility API: reject a review item."
+      description: Not used by the current download-oriented MVP.
       security:
         - BearerAuth: []
       parameters:
@@ -833,7 +931,8 @@ paths:
                 $ref: "#/components/schemas/ReviewItemResponse"
   /api/v1/review-items/{item_id}/edit:
     post:
-      summary: Save a human-edited answer in the review item.
+      summary: "Compatibility API: save an edited answer in the review item."
+      description: Not used by the current download-oriented MVP and does not generate reviewed_filled_form.xlsx.
       description: This does not generate a new Excel file or call Python writeback.
       security:
         - BearerAuth: []
@@ -854,7 +953,8 @@ paths:
                 $ref: "#/components/schemas/ReviewItemResponse"
   /api/v1/review-items/{item_id}/ignore:
     post:
-      summary: Ignore a review item.
+      summary: "Compatibility API: ignore a review item."
+      description: Not used by the current download-oriented MVP.
       security:
         - BearerAuth: []
       parameters:
@@ -873,7 +973,8 @@ paths:
                 $ref: "#/components/schemas/ReviewItemResponse"
   /api/v1/review-items/{item_id}/reopen:
     post:
-      summary: Reopen a review item.
+      summary: "Compatibility API: reopen a review item."
+      description: Not used by the current download-oriented MVP.
       security:
         - BearerAuth: []
       parameters:

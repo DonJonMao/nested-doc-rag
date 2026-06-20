@@ -41,31 +41,46 @@ func (a *ArtifactArchiver) ArchiveStep15Artifacts(ctx context.Context, workspace
 		return nil, fmt.Errorf("%w: manifest is nil", ErrArtifactArchiveFail)
 	}
 	artifacts := make([]artifact.RunArtifact, 0, len(manifest.Artifacts))
+	if strings.TrimSpace(manifest.runDir) != "" {
+		registered, err := a.archiveArtifact(ctx, workspaceID, runID, artifact.TypeRunManifest, filepath.Join(manifest.runDir, RunManifestFilename), actor)
+		if err != nil {
+			return nil, err
+		}
+		artifacts = append(artifacts, *registered)
+	}
 	for artifactType := range manifest.Artifacts {
 		path, ok := manifest.ArtifactPath(artifactType)
 		if !ok || strings.TrimSpace(path) == "" {
 			continue
 		}
-		meta, err := inspectArtifact(path)
+		registered, err := a.archiveArtifact(ctx, workspaceID, runID, artifactType, path, actor)
 		if err != nil {
-			return nil, fmt.Errorf("%w: inspect %s: %v", ErrArtifactArchiveFail, artifactType, err)
-		}
-		registered, err := a.Registrar.RegisterArtifact(ctx, artifact.RegisterArtifactRequest{
-			WorkspaceID:  workspaceID,
-			RunID:        runID,
-			ArtifactType: artifactType,
-			Filename:     filepath.Base(path),
-			LocalPath:    path,
-			ContentType:  meta.contentType,
-			FileSize:     meta.size,
-			SHA256:       meta.sha256,
-		}, actor)
-		if err != nil {
-			return nil, fmt.Errorf("%w: register %s: %v", ErrArtifactArchiveFail, artifactType, err)
+			return nil, err
 		}
 		artifacts = append(artifacts, *registered)
 	}
 	return artifacts, nil
+}
+
+func (a *ArtifactArchiver) archiveArtifact(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, artifactType string, path string, actor auth.Principal) (*artifact.RunArtifact, error) {
+	meta, err := inspectArtifact(path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: inspect %s: %v", ErrArtifactArchiveFail, artifactType, err)
+	}
+	registered, err := a.Registrar.RegisterArtifact(ctx, artifact.RegisterArtifactRequest{
+		WorkspaceID:  workspaceID,
+		RunID:        runID,
+		ArtifactType: artifactType,
+		Filename:     filepath.Base(path),
+		LocalPath:    path,
+		ContentType:  meta.contentType,
+		FileSize:     meta.size,
+		SHA256:       meta.sha256,
+	}, actor)
+	if err != nil {
+		return nil, fmt.Errorf("%w: register %s: %v", ErrArtifactArchiveFail, artifactType, err)
+	}
+	return registered, nil
 }
 
 type artifactMeta struct {

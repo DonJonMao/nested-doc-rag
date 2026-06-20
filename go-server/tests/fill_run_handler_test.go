@@ -220,6 +220,29 @@ func (f *fakeFillRunUseCase) ListFillRuns(ctx context.Context, workspaceID uuid.
 	return f.runs, f.err
 }
 
+func (f *fakeFillRunUseCase) GetFillRunDetail(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*formpkg.FillRunDetail, error) {
+	if f.run == nil {
+		return nil, f.err
+	}
+	return &formpkg.FillRunDetail{
+		ID:                       f.run.ID,
+		WorkspaceID:              f.run.WorkspaceID,
+		Status:                   f.run.Status,
+		ArtifactValidationStatus: formpkg.ArtifactValidationStatusValid,
+		ManifestStatus:           formpkg.ManifestStatusValid,
+		Summary:                  formpkg.FillRunSummaryCounts{TotalFields: f.run.ProgressTotal},
+		Message:                  formpkg.SafeWritebackMessage,
+	}, f.err
+}
+
+func (f *fakeFillRunUseCase) ListFillRunSummaries(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int, mine bool, actor auth.Principal) ([]formpkg.FillRunListItem, error) {
+	out := make([]formpkg.FillRunListItem, 0, len(f.runs))
+	for _, run := range f.runs {
+		out = append(out, formpkg.FillRunListItem{ID: run.ID, WorkspaceID: run.WorkspaceID, Status: run.Status})
+	}
+	return out, f.err
+}
+
 func (f *fakeFillRunUseCase) CancelFillRun(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*formpkg.FillRun, error) {
 	f.canceled = append(f.canceled, runID)
 	return f.run, f.err
@@ -231,5 +254,25 @@ func (f *fakeFillRunUseCase) GetFillRunArtifacts(ctx context.Context, runID uuid
 
 func (f *fakeFillRunUseCase) GetDownloadArtifactByType(ctx context.Context, runID uuid.UUID, artifactType string, actor auth.Principal) (*artifact.DownloadResult, error) {
 	f.downloadTypes = append(f.downloadTypes, artifactType)
+	return f.download, f.err
+}
+
+func (f *fakeFillRunUseCase) DownloadFilledForm(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*artifact.DownloadResult, error) {
+	f.downloadTypes = append(f.downloadTypes, artifact.TypeFilledForm)
+	return f.download, f.err
+}
+
+func (f *fakeFillRunUseCase) DownloadReviewItems(ctx context.Context, runID uuid.UUID, format string, actor auth.Principal) (*artifact.DownloadResult, error) {
+	f.downloadTypes = append(f.downloadTypes, artifact.TypeReviewItems)
+	return f.download, f.err
+}
+
+func (f *fakeFillRunUseCase) DownloadWritebackAudit(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*artifact.DownloadResult, error) {
+	f.downloadTypes = append(f.downloadTypes, artifact.TypeWritebackAudit)
+	return f.download, f.err
+}
+
+func (f *fakeFillRunUseCase) DownloadSummary(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*artifact.DownloadResult, error) {
+	f.downloadTypes = append(f.downloadTypes, artifact.TypeSummary)
 	return f.download, f.err
 }

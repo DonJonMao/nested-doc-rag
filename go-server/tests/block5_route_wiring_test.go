@@ -24,6 +24,8 @@ func TestBlock5RoutesRequireAuthAndAreWired(t *testing.T) {
 		{http.MethodPost, "/api/v1/forms"},
 		{http.MethodPost, "/api/v1/fill-runs"},
 		{http.MethodGet, "/api/v1/fill-runs/" + uuid.NewString() + "/download/filled-form"},
+		{http.MethodGet, "/api/v1/fill-runs/" + uuid.NewString() + "/downloads/filled-form"},
+		{http.MethodGet, "/api/v1/fill-runs/" + uuid.NewString() + "/downloads/review-items?format=csv"},
 	}
 
 	for _, tc := range cases {
