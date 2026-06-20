@@ -96,7 +96,7 @@ func isOfficeZipMIME(mimeType string, filename string) bool {
 		return false
 	}
 	switch strings.ToLower(filepath.Ext(filename)) {
-	case ".xlsx", ".docx":
+	case ".xlsx", ".xlsm", ".docx":
 		return true
 	default:
 		return false

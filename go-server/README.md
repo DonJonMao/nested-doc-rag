@@ -124,6 +124,7 @@ Go/Python boundary:
 
 ```text
 Go calls:
+python -m nested_doc_rag.cli ingest-knowledge ...
 python -m nested_doc_rag.cli run-step15-agent ...
 python -m nested_doc_rag.cli validate-artifacts --run-dir <out_dir>
 
@@ -134,7 +135,7 @@ Go archives:
 manifest artifacts into ObjectStorage and run_artifacts table
 ```
 
-The worker registers the `fill_form` handler with `SubprocessPythonRunner` and `ArtifactArchiver`. `ingest_knowledge` keeps a full runner interface, but the command remains disabled unless `python.ingest_command_enabled=true`.
+The worker registers both `ingest_knowledge` and `fill_form` with `SubprocessPythonRunner`. Ingestion parses uploaded knowledge documents, embeds real chunks, upserts the selected namespace into Qdrant, and archives the resulting manifest artifacts.
 
 ## Block 5 Scope
 
@@ -183,7 +184,7 @@ Not implemented in Block 6:
 - Go-native document parsing
 - Go-native embedding/Qdrant indexing
 
-If `python.ingest_command_enabled=false`, knowledge bases and documents can still be managed, but creating an ingestion run returns `FEATURE_DISABLED`.
+`python.ingest_command_enabled` defaults to `true` for the product flow. Set it to `false` only when the deployment intentionally wants to manage knowledge metadata without allowing Python-backed indexing; in that mode creating an ingestion run returns `FEATURE_DISABLED`.
 
 Create a knowledge base:
 
@@ -323,6 +324,33 @@ Not implemented in Block 8:
 - distributed Redis rate limiting
 - full OpenTelemetry exporter wiring
 
+## Productized Gongkan Flow
+
+The platform now exposes frontend-oriented APIs described in `gongkan_full_system_design_apple.md`:
+
+- `GET /api/v1/knowledge-bases/options?workspace_id=...` returns selectable knowledge-base cards with `namespace`, `status`, `document_count`, and `last_ingested_at`.
+- `POST /api/v1/fill-runs/simple` creates a fill run from `knowledge_base_id`, `form_file_id`, and optional `room_context`; the server derives `target_namespace`, current index version, default rows, retrieval mode, prompt version, and writeback settings.
+- `GET /api/v1/fill-runs?...&mine=true` returns only the current user's runs; non-admin users are always restricted to their own fill runs for list/get/cancel/download operations.
+- `POST /api/v1/knowledge-bases/{kb_id}/documents?auto_ingest=true` uploads a document and immediately creates an ingestion run.
+- `DELETE /api/v1/documents/{doc_id}?reindex=true` soft-deletes a document, marks the knowledge base stale, and queues a namespace rebuild ingestion run.
+
+Knowledge-base write operations require the global `admin` role. Ordinary workspace users can read ready knowledge-base options and create their own fill runs.
+
+Migration `000008_productized_knowledge_fill.sql` adds product fields to `knowledge_bases`, `knowledge_documents`, and `fill_runs`, and seeds the default workspace plus the 9 fixed knowledge bases:
+
+```text
+西咸1号楼, 西咸2号楼, 西咸3号楼, 西咸4号楼, 西咸5号楼, 西咸6号楼, 城东浐灞, 西安, 咸阳
+```
+
+Default Python resource limits are conservative for production safety:
+
+```yaml
+jobs:
+  fill_concurrency: 1
+  ingestion_concurrency: 1
+  max_python_processes: 1
+```
+
 ## Production Notes
 
 - pprof is disabled by default. If enabled, bind it to localhost or an internal network only.
@@ -330,6 +358,7 @@ Not implemented in Block 8:
 - Authorization headers, passwords, refresh tokens, DB passwords, and provider API keys are redacted from config summaries and logs.
 - Prometheus metrics are exposed at `/metrics` and avoid high-cardinality IDs as labels.
 - API and worker should run as separate processes.
+- On worker startup, stale `running` jobs whose heartbeat has expired are marked `failed`; stale `cancel_requested` jobs are marked `canceled`. The fill-run or ingestion lifecycle is updated through the registered Python job handler recovery hook.
 - Python Core remains a separate CLI engine; Go does not call LLMs directly.
 
 ## Operational Commands
@@ -345,8 +374,14 @@ make smoke-api
 make smoke-auth
 make smoke-files
 make smoke-jobs
+make smoke-product-flow
 make loadtest-smoke
 ```
+
+`make docker-up` starts the local infrastructure declared in
+`deployments/docker-compose.yaml`: PostgreSQL, Redis, MinIO, and Qdrant. Use
+`COMPOSE_PROFILES=app make docker-up` when you also want the compose-managed API
+and worker containers.
 
 Detailed operations docs:
 
@@ -469,23 +504,21 @@ curl -X POST http://localhost:8080/api/v1/forms \
   -F "file=@./基地云机房信息调研表.xlsx"
 ```
 
-Create a fill run:
+Create a product fill run:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/fill-runs \
+curl -X POST http://localhost:8080/api/v1/fill-runs/simple \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
     "workspace_id":"<workspace_id>",
+    "knowledge_base_id":"<ready_knowledge_base_id>",
     "form_file_id":"<form_file_id>",
-    "target_namespace":"xixian_4",
-    "global_namespace":"global",
-    "room_context":"西咸4号楼 301机房",
-    "rows":"4-144",
-    "judge":false,
-    "writeback":true
+    "room_context":"西咸4号楼 301机房"
   }'
 ```
+
+The server derives `target_namespace`, `index_version_id`, `rows`, retrieval mode, prompt version, judge flags, and writeback defaults from the selected ready knowledge base and product configuration. The lower-level `POST /api/v1/fill-runs` endpoint remains for admin/debug use; non-admin callers must still bind it to a ready knowledge base and cannot override product runtime defaults.
 
 Watch events:
 
@@ -501,6 +534,17 @@ curl -OJ http://localhost:8080/api/v1/fill-runs/<run_id>/download/filled-form \
   -H "Authorization: Bearer <token>"
 ```
 
+Run a product smoke flow that uses a real ready knowledge base and creates a real fill run:
+
+```bash
+FORM_FILE_PATH="../data/工勘单/基地云机房信息调研表.xlsx" \
+TOKEN="<token>" \
+WORKSPACE_ID="<workspace_id>" \
+make smoke-product-flow
+```
+
+If `TOKEN` is omitted, set `USERNAME` and `PASSWORD`. If `WORKSPACE_ID` or `READY_KB_ID` is omitted, the script discovers the first accessible workspace and first ready knowledge base. The script stops when no ready knowledge base exists; it does not simulate ingestion or fill success.
+
 ## Block 3 Event Delivery
 
 `run_events` is the source of truth. SSE delivery uses database replay plus Redis-backed realtime fanout:
@@ -509,9 +553,16 @@ curl -OJ http://localhost:8080/api/v1/fill-runs/<run_id>/download/filled-form \
 Worker -> run_events table -> Redis Pub/Sub -> API SSE Broker -> Frontend SSE
 ```
 
-When an SSE client connects, the API first replays persisted `run_events` after `after_sequence`, then subscribes to the in-process broker for live events. Worker events are written to PostgreSQL and published to Redis so a separate API process can forward them to its local SSE broker.
+When an SSE client connects, the API first replays persisted `run_events` after `after_sequence` or the `Last-Event-ID` header, then subscribes to the in-process broker for live events. Worker events are written to PostgreSQL and published to Redis so a separate API process can forward them to its local SSE broker.
 
 This supports separate API and worker processes. Future API replicas can subscribe to the same `jobs.event_channel`.
+
+## Product Permission Notes
+
+- Ordinary users use `GET /api/v1/knowledge-bases/options`; full knowledge-base metadata, index versions, document lists, ingestion runs, and `knowledge_document` files are admin-only.
+- Knowledge document upload should go through `POST /api/v1/knowledge-bases/{kb_id}/documents?auto_ingest=true`; generic `/files` rejects `file_category=knowledge_document` for non-admin users.
+- Fill-run event streams and artifact downloads are owner-scoped for non-admin users. Ingestion event streams and ingestion artifacts are admin-only.
+- `run_events.sequence` is strictly increasing within each `run_id`; clients should reconnect SSE with `after_sequence=<last_seen_sequence>` or the standard `Last-Event-ID` header.
 
 ## Python Core Integration
 
@@ -530,8 +581,10 @@ python:
   step15_default_retrieval_mode: "layered"
   step15_default_prompt_version: "step15_compat"
   step15_default_rows: "4-144"
-  ingest_command_enabled: false
+  ingest_command_enabled: true
 ```
+
+Python Core reads Qdrant settings from `config/local.yaml`. Leave `qdrant.url` empty to use the local embedded `paths.qdrant_path`, or set `qdrant.url: "http://localhost:6333"` to use the Docker Compose Qdrant service. `qdrant.api_key_env` names the environment variable for secured Qdrant deployments.
 
 The Go worker does not import Python code or inspect RAG/agent internals. Job payloads carry only lightweight paths and options. Python writes all execution outputs under `out_dir`; Go validates artifacts through the Python CLI, reads `run_manifest.json`, and registers manifest artifacts.
 

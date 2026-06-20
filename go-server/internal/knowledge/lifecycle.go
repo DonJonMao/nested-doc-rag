@@ -33,8 +33,11 @@ func (l *IngestionLifecycleAdapter) MarkIngestionRunning(ctx context.Context, in
 	if err := l.Ingestions.MarkRunning(ctx, ingestionJobID, startedAt); err != nil {
 		return err
 	}
-	if l.Documents != nil {
-		if ingestion, err := l.Ingestions.GetByID(ctx, ingestionJobID); err == nil {
+	if ingestion, err := l.Ingestions.GetByID(ctx, ingestionJobID); err == nil {
+		if l.Bases != nil {
+			_ = l.Bases.UpdateStatus(ctx, ingestion.KnowledgeBaseID, KnowledgeBaseStatusBuilding)
+		}
+		if l.Documents != nil {
 			l.markDocuments(ctx, ingestion.KnowledgeBaseID, KnowledgeDocumentStatusIndexing, "")
 		}
 	}
@@ -99,6 +102,9 @@ func (l *IngestionLifecycleAdapter) MarkIngestionFailed(ctx context.Context, ing
 	if l.Versions != nil && ingestion.IndexVersionID != nil {
 		_ = l.Versions.MarkFailed(ctx, *ingestion.IndexVersionID, errMsg, failedAt)
 	}
+	if l.Bases != nil {
+		_ = l.Bases.UpdateStatus(ctx, ingestion.KnowledgeBaseID, KnowledgeBaseStatusFailed)
+	}
 	l.markDocuments(ctx, ingestion.KnowledgeBaseID, KnowledgeDocumentStatusUploaded, "")
 	return nil
 }
@@ -117,6 +123,9 @@ func (l *IngestionLifecycleAdapter) MarkIngestionCanceled(ctx context.Context, i
 	}
 	if l.Versions != nil && ingestion.IndexVersionID != nil {
 		_ = l.Versions.MarkFailed(ctx, *ingestion.IndexVersionID, "canceled", finishedAt)
+	}
+	if l.Bases != nil {
+		_ = l.Bases.UpdateStatus(ctx, ingestion.KnowledgeBaseID, KnowledgeBaseStatusStale)
 	}
 	l.markDocuments(ctx, ingestion.KnowledgeBaseID, KnowledgeDocumentStatusUploaded, "")
 	return nil

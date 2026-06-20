@@ -54,6 +54,10 @@ func (f *fakeKnowledgeBaseRepo) ListByWorkspace(ctx context.Context, workspaceID
 	return out, nil
 }
 
+func (f *fakeKnowledgeBaseRepo) ListOptionsByWorkspace(ctx context.Context, workspaceID uuid.UUID, limit int, offset int) ([]knowledgepkg.KnowledgeBase, error) {
+	return f.ListByWorkspace(ctx, workspaceID, limit, offset)
+}
+
 func (f *fakeKnowledgeBaseRepo) UpdateCurrentIndexVersion(ctx context.Context, kbID uuid.UUID, versionID uuid.UUID) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -62,6 +66,19 @@ func (f *fakeKnowledgeBaseRepo) UpdateCurrentIndexVersion(ctx context.Context, k
 		return httpx.NewAppError(httpx.CodeNotFound, "knowledge base not found", http.StatusNotFound, nil, nil)
 	}
 	kb.CurrentIndexVersionID = &versionID
+	kb.UpdatedAt = time.Now().UTC()
+	f.bases[kbID] = kb
+	return nil
+}
+
+func (f *fakeKnowledgeBaseRepo) UpdateStatus(ctx context.Context, kbID uuid.UUID, status string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	kb, ok := f.bases[kbID]
+	if !ok {
+		return httpx.NewAppError(httpx.CodeNotFound, "knowledge base not found", http.StatusNotFound, nil, nil)
+	}
+	kb.Status = status
 	kb.UpdatedAt = time.Now().UTC()
 	f.bases[kbID] = kb
 	return nil

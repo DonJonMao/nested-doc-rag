@@ -62,6 +62,9 @@ func (s *Service) Upload(ctx context.Context, req UploadFileRequest, actor auth.
 	if !ValidCategory(req.Category) {
 		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "invalid file category", http.StatusBadRequest, map[string]string{"file_category": req.Category}, nil)
 	}
+	if err := requireAdminForKnowledgeDocument(req.Category, actor); err != nil {
+		return nil, err
+	}
 	if err := s.validator.ValidateUpload(req.OriginalFilename, req.Size, req.MIMEType); err != nil {
 		return nil, err
 	}
@@ -153,6 +156,9 @@ func (s *Service) Get(ctx context.Context, fileID uuid.UUID, actor auth.Principa
 	if err != nil {
 		return nil, err
 	}
+	if err := requireAdminForKnowledgeDocument(record.FileCategory, actor); err != nil {
+		return nil, err
+	}
 	if err := s.authorizer.CanReadWorkspace(ctx, record.WorkspaceID, actor); err != nil {
 		return nil, err
 	}
@@ -165,6 +171,9 @@ func (s *Service) List(ctx context.Context, workspaceID uuid.UUID, category stri
 	}
 	if category != "" && !ValidCategory(category) {
 		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "invalid file category", http.StatusBadRequest, map[string]string{"file_category": category}, nil)
+	}
+	if !auth.IsAdminRoles(actor.Roles) && (category == "" || category == FileCategoryKnowledgeDocument) {
+		return nil, httpx.NewAppError(httpx.CodeForbidden, "admin role required for knowledge documents", http.StatusForbidden, nil, nil)
 	}
 	return s.repo.ListByWorkspace(ctx, workspaceID, category, limit, offset)
 }
@@ -201,6 +210,9 @@ func (s *Service) Delete(ctx context.Context, fileID uuid.UUID, actor auth.Princ
 	if err != nil {
 		return err
 	}
+	if err := requireAdminForKnowledgeDocument(record.FileCategory, actor); err != nil {
+		return err
+	}
 	if err := s.authorizer.CanWriteWorkspace(ctx, record.WorkspaceID, actor); err != nil {
 		return err
 	}
@@ -226,6 +238,13 @@ func (s *Service) record(ctx context.Context, log audit.AuditLog) {
 	if s.audit != nil {
 		s.audit.Record(ctx, log)
 	}
+}
+
+func requireAdminForKnowledgeDocument(category string, actor auth.Principal) error {
+	if category == FileCategoryKnowledgeDocument && !auth.IsAdminRoles(actor.Roles) {
+		return httpx.NewAppError(httpx.CodeForbidden, "admin role required for knowledge documents", http.StatusForbidden, nil, nil)
+	}
+	return nil
 }
 
 func detectMIME(reader io.ReadSeeker) string {

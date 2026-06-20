@@ -14,7 +14,12 @@ func TestFileValidatorAcceptsAllowedTypes(t *testing.T) {
 		mime string
 	}{
 		{"test.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		{"test.xlsm", "application/vnd.ms-excel.sheet.macroEnabled.12"},
+		{"test.xlsm", "application/zip"},
 		{"test.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+		{"test.txt", "text/plain"},
+		{"test.md", "text/markdown"},
+		{"test.csv", "text/csv"},
 		{"test.png", "image/png"},
 		{"test.jpeg", "image/jpeg"},
 	} {
@@ -50,11 +55,14 @@ func TestFileValidatorRejectsBadMIME(t *testing.T) {
 func testFileValidator() *filepkg.Validator {
 	return filepkg.NewValidator(
 		1024,
-		[]string{".xlsx", ".xls", ".docx", ".png", ".jpg", ".jpeg"},
+		[]string{".xlsx", ".xlsm", ".docx", ".txt", ".md", ".csv", ".png", ".jpg", ".jpeg"},
 		[]string{
 			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-			"application/vnd.ms-excel",
+			"application/vnd.ms-excel.sheet.macroEnabled.12",
 			"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			"text/plain",
+			"text/markdown",
+			"text/csv",
 			"image/png",
 			"image/jpeg",
 			"application/octet-stream",

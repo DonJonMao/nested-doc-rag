@@ -23,10 +23,15 @@ type WorkspaceAuthorizer interface {
 	CanWriteWorkspace(ctx context.Context, workspaceID uuid.UUID, actor auth.Principal) error
 }
 
+type RunAccessAuthorizer interface {
+	CanReadRunArtifact(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, actor auth.Principal) error
+}
+
 type Service struct {
 	repo       Repo
 	storage    storage.ObjectStorage
 	authorizer WorkspaceAuthorizer
+	runAuth    RunAccessAuthorizer
 	audit      *audit.Service
 	options    ServiceOptions
 }
@@ -49,6 +54,10 @@ func NewService(repo Repo, objectStorage storage.ObjectStorage, authorizer Works
 		resolved.DefaultPresignTTL = 15 * time.Minute
 	}
 	return &Service{repo: repo, storage: objectStorage, authorizer: authorizer, audit: auditSvc, options: resolved}
+}
+
+func (s *Service) SetRunAccessAuthorizer(authorizer RunAccessAuthorizer) {
+	s.runAuth = authorizer
 }
 
 func (s *Service) RegisterArtifact(ctx context.Context, req RegisterArtifactRequest, actor auth.Principal) (*RunArtifact, error) {
@@ -125,17 +134,24 @@ func (s *Service) GetArtifact(ctx context.Context, artifactID uuid.UUID, actor a
 	if err != nil {
 		return nil, err
 	}
-	if err := s.authorizer.CanReadWorkspace(ctx, record.WorkspaceID, actor); err != nil {
+	if err := s.canReadRunArtifact(ctx, record.WorkspaceID, record.RunID, actor); err != nil {
 		return nil, err
 	}
 	return record, nil
 }
 
 func (s *Service) ListRunArtifacts(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, actor auth.Principal) ([]RunArtifact, error) {
-	if err := s.authorizer.CanReadWorkspace(ctx, workspaceID, actor); err != nil {
+	if err := s.canReadRunArtifact(ctx, workspaceID, runID, actor); err != nil {
 		return nil, err
 	}
 	return s.repo.ListByRun(ctx, workspaceID, runID)
+}
+
+func (s *Service) canReadRunArtifact(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, actor auth.Principal) error {
+	if s.runAuth != nil {
+		return s.runAuth.CanReadRunArtifact(ctx, workspaceID, runID, actor)
+	}
+	return s.authorizer.CanReadWorkspace(ctx, workspaceID, actor)
 }
 
 func (s *Service) DownloadArtifact(ctx context.Context, artifactID uuid.UUID, actor auth.Principal) (*DownloadResult, error) {

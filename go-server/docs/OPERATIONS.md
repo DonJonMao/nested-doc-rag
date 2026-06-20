@@ -11,6 +11,10 @@ make run-api CONFIG=configs/config.local.yaml
 make run-worker CONFIG=configs/config.local.yaml
 ```
 
+`make docker-up` starts PostgreSQL, Redis, MinIO, and Qdrant. The API and
+worker are still intended to run as separate local processes unless you enable
+the compose `app` profile.
+
 Run API and worker as separate processes. The API serves HTTP, auth, upload/download, SSE, and metrics. The worker consumes Redis/Asynq jobs and calls Python Core through the configured CLI.
 
 To run the compose-managed API and worker as well as dependencies:
@@ -24,7 +28,34 @@ COMPOSE_PROFILES=app make docker-up
 - PostgreSQL stores auth, workspace, file, artifact, job, fill, ingestion, and review metadata.
 - Redis backs Asynq queues and run event pub/sub.
 - MinIO or local storage stores uploaded files and archived artifacts.
+- Qdrant stores Python Core vector indexes for knowledge retrieval.
 - Python Core remains a separate CLI engine and owns Office parsing, RAG, embedding, Qdrant, and LLM orchestration.
+
+Python Core defaults to an embedded local Qdrant path from `paths.qdrant_path`. To use the Compose-managed Qdrant service, set this in `config/local.yaml`:
+
+```yaml
+qdrant:
+  url: "http://localhost:6333"
+  collection_name: datacenter_chunks_v1
+```
+
+## Worker Recovery
+
+The worker writes heartbeat timestamps while jobs are running. On startup it scans for `running` and `cancel_requested` jobs whose latest heartbeat is older than three heartbeat intervals:
+
+- stale `running` jobs are marked `failed`
+- stale `cancel_requested` jobs are marked `canceled`
+- fill-run and ingestion lifecycle tables are updated through the registered Python job handlers
+- fresh running jobs with recent heartbeats are left alone, which allows multiple worker processes as long as they share the same database and Redis queue
+
+Keep these defaults for the product flow unless you intentionally want more parallel Python processes:
+
+```yaml
+jobs:
+  fill_concurrency: 1
+  ingestion_concurrency: 1
+  max_python_processes: 1
+```
 
 ## Configuration
 
@@ -77,4 +108,6 @@ curl http://localhost:8080/metrics
 curl -i http://localhost:8080/api/v1/ping
 ```
 
-`/readyz` checks database, Redis, and storage. `/metrics` exposes Prometheus metrics without high-cardinality IDs.
+`/readyz` checks the Go API's direct dependencies: database, Redis, and storage.
+Python Core owns Qdrant access during ingestion and fill execution. `/metrics`
+exposes Prometheus metrics without high-cardinality IDs.

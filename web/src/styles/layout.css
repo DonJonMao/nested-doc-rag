@@ -1,0 +1,70 @@
+.gk-page {
+  min-height: 100vh;
+  background: var(--gk-page);
+}
+
+.gk-shell {
+  width: min(var(--gk-content-max), calc(100vw - 48px));
+  margin: 0 auto;
+}
+
+.gk-main {
+  padding: 40px 0 64px;
+}
+
+.gk-page-title {
+  margin: 0;
+  font-size: clamp(32px, 3vw, 48px);
+  line-height: 1.08;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.gk-section-title {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.18;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.gk-card-title {
+  margin: 0;
+  font-size: 21px;
+  line-height: 1.28;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.gk-body {
+  font-size: 17px;
+  line-height: 1.47;
+}
+
+.gk-caption {
+  font-size: 13px;
+  line-height: 1.38;
+  color: var(--gk-ink-3);
+}
+
+.gk-card {
+  border: 1px solid var(--gk-hairline-soft);
+  border-radius: var(--gk-radius-lg);
+  background: var(--gk-white);
+}
+
+.gk-grid-two {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px;
+}
+
+@media (max-width: 860px) {
+  .gk-shell {
+    width: min(100% - 32px, var(--gk-content-max));
+  }
+
+  .gk-grid-two {
+    grid-template-columns: 1fr;
+  }
+}

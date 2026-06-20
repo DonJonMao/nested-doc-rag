@@ -59,6 +59,17 @@ func TestArtifactServiceDownloadChecksWorkspaceRead(t *testing.T) {
 	require.Equal(t, 1, authorizer.reads)
 }
 
+func TestArtifactServiceDownloadChecksRunAccess(t *testing.T) {
+	service, repo, storage, _, authorizer, actor, workspaceID, runID := newArtifactServiceFixture()
+	item := seedArtifact(repo, storage, workspaceID, runID, actor.UserID)
+	service.SetRunAccessAuthorizer(denyingRunArtifactAuthorizer{})
+
+	_, err := service.DownloadArtifact(context.Background(), item.ID, actor)
+
+	requireAppError(t, err, httpx.CodeForbidden, http.StatusForbidden)
+	require.Equal(t, 0, authorizer.reads)
+}
+
 func TestArtifactServiceAuditOnDownload(t *testing.T) {
 	service, repo, storage, audits, _, actor, workspaceID, runID := newArtifactServiceFixture()
 	item := seedArtifact(repo, storage, workspaceID, runID, actor.UserID)
@@ -125,4 +136,10 @@ func seedArtifact(repo *fakeArtifactRepo, objectStorage *fakeObjectStorage, work
 		objectStorage.objects[item.ObjectKey] = []byte("{}")
 	}
 	return item
+}
+
+type denyingRunArtifactAuthorizer struct{}
+
+func (denyingRunArtifactAuthorizer) CanReadRunArtifact(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, actor auth.Principal) error {
+	return httpx.NewAppError(httpx.CodeForbidden, "forbidden", http.StatusForbidden, nil, nil)
 }

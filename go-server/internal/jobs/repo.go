@@ -112,6 +112,35 @@ func (r *PGXRepo) ListByWorkspace(ctx context.Context, workspaceID uuid.UUID, st
 	return jobs, mapDBError(rows.Err(), "list jobs conflict", "jobs not found")
 }
 
+func (r *PGXRepo) ListInterrupted(ctx context.Context, staleBefore time.Time, limit int) ([]Job, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 500
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, workspace_id, job_type, resource_type, resource_id, status, priority, attempt,
+			max_attempts, payload_json, COALESCE(error_message, ''), cancel_requested_at,
+			queued_at, started_at, heartbeat_at, finished_at, created_by, created_at, updated_at
+		FROM jobs
+		WHERE status IN ('running', 'cancel_requested')
+			AND COALESCE(heartbeat_at, started_at, updated_at, created_at) < $1
+		ORDER BY COALESCE(heartbeat_at, started_at, updated_at, created_at) ASC
+		LIMIT $2
+	`, staleBefore, limit)
+	if err != nil {
+		return nil, mapDBError(err, "list interrupted jobs conflict", "jobs not found")
+	}
+	defer rows.Close()
+	var jobs []Job
+	for rows.Next() {
+		job, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, *job)
+	}
+	return jobs, mapDBError(rows.Err(), "list interrupted jobs conflict", "jobs not found")
+}
+
 func (r *PGXRepo) UpdateStatus(ctx context.Context, id uuid.UUID, fromStatus string, toStatus string, fields UpdateStatusFields) error {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE jobs

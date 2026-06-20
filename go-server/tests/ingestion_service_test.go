@@ -18,7 +18,7 @@ import (
 func TestIngestionServiceCreateRunSuccess(t *testing.T) {
 	bases, docs, versions, ingestions, jobSvc, service, kbID, workspaceID := newIngestionServiceFixture(t, true)
 
-	ingestion, err := service.CreateIngestionRun(context.Background(), knowledgepkg.CreateIngestionRunRequest{KnowledgeBaseID: kbID, Namespace: "xixian_4", QdrantNamespace: "xixian_4", Resume: true}, auth.Principal{UserID: uuid.New()})
+	ingestion, err := service.CreateIngestionRun(context.Background(), knowledgepkg.CreateIngestionRunRequest{KnowledgeBaseID: kbID, Namespace: "xixian_4", QdrantNamespace: "xixian_4", Resume: true}, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}})
 
 	require.NoError(t, err)
 	require.Equal(t, knowledgepkg.IngestionJobStatusQueued, ingestion.Status)
@@ -44,7 +44,7 @@ func TestIngestionServiceRequiresActiveDocuments(t *testing.T) {
 		docs.docs[id] = doc
 	}
 
-	_, err := service.CreateIngestionRun(context.Background(), knowledgepkg.CreateIngestionRunRequest{KnowledgeBaseID: kbID, Namespace: "ns"}, auth.Principal{UserID: uuid.New()})
+	_, err := service.CreateIngestionRun(context.Background(), knowledgepkg.CreateIngestionRunRequest{KnowledgeBaseID: kbID, Namespace: "ns"}, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}})
 
 	require.Error(t, err)
 	require.Equal(t, httpx.CodeInvalidArgument, httpx.ErrorFrom(err).Code)
@@ -53,7 +53,7 @@ func TestIngestionServiceRequiresActiveDocuments(t *testing.T) {
 func TestIngestionServiceDisabledReturnsFeatureDisabled(t *testing.T) {
 	_, _, _, _, jobSvc, service, kbID, _ := newIngestionServiceFixture(t, false)
 
-	_, err := service.CreateIngestionRun(context.Background(), knowledgepkg.CreateIngestionRunRequest{KnowledgeBaseID: kbID, Namespace: "ns"}, auth.Principal{UserID: uuid.New()})
+	_, err := service.CreateIngestionRun(context.Background(), knowledgepkg.CreateIngestionRunRequest{KnowledgeBaseID: kbID, Namespace: "ns"}, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}})
 
 	require.Error(t, err)
 	require.Equal(t, httpx.CodeFeatureDisabled, httpx.ErrorFrom(err).Code)
@@ -67,7 +67,7 @@ func TestIngestionServiceCancelCallsJobService(t *testing.T) {
 	require.NoError(t, ingestions.Create(context.Background(), knowledgepkg.IngestionJob{ID: ingestionID, WorkspaceID: workspaceID, KnowledgeBaseID: uuid.New(), JobID: &jobID, Status: knowledgepkg.IngestionJobStatusRunning}))
 	jobSvc.cancel = &jobs.Job{ID: jobID, Status: jobs.JobStatusCancelRequested}
 
-	ingestion, err := service.CancelIngestionJob(context.Background(), ingestionID, auth.Principal{UserID: uuid.New()})
+	ingestion, err := service.CancelIngestionJob(context.Background(), ingestionID, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}})
 
 	require.NoError(t, err)
 	require.Equal(t, knowledgepkg.IngestionJobStatusCancelRequested, ingestion.Status)
@@ -78,10 +78,34 @@ func TestIngestionServiceCreateRequiresWorkspaceWrite(t *testing.T) {
 	bases, docs, versions, ingestions, jobSvc, _, kbID, _ := newIngestionServiceFixture(t, true)
 	service := knowledgepkg.NewIngestionService(bases, docs, versions, ingestions, jobSvc, &fakeAuthorizer{writeErr: httpx.NewAppError(httpx.CodeForbidden, "forbidden", http.StatusForbidden, nil, nil)}, nil, zap.NewNop(), serviceConfig(true))
 
-	_, err := service.CreateIngestionRun(context.Background(), knowledgepkg.CreateIngestionRunRequest{KnowledgeBaseID: kbID, Namespace: "ns"}, auth.Principal{UserID: uuid.New()})
+	_, err := service.CreateIngestionRun(context.Background(), knowledgepkg.CreateIngestionRunRequest{KnowledgeBaseID: kbID, Namespace: "ns"}, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}})
 
 	require.Error(t, err)
 	require.Empty(t, jobSvc.created)
+}
+
+func TestIngestionServiceCreateRequiresAdmin(t *testing.T) {
+	_, _, _, _, jobSvc, service, kbID, _ := newIngestionServiceFixture(t, true)
+
+	_, err := service.CreateIngestionRun(context.Background(), knowledgepkg.CreateIngestionRunRequest{KnowledgeBaseID: kbID, Namespace: "ns"}, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}})
+
+	require.Error(t, err)
+	require.Equal(t, httpx.CodeForbidden, httpx.ErrorFrom(err).Code)
+	require.Empty(t, jobSvc.created)
+}
+
+func TestIngestionServiceReadRequiresAdmin(t *testing.T) {
+	_, _, _, ingestions, _, service, kbID, workspaceID := newIngestionServiceFixture(t, true)
+	ingestionID := uuid.New()
+	require.NoError(t, ingestions.Create(context.Background(), knowledgepkg.IngestionJob{ID: ingestionID, WorkspaceID: workspaceID, KnowledgeBaseID: kbID, Status: knowledgepkg.IngestionJobStatusQueued}))
+
+	_, err := service.GetIngestionJob(context.Background(), ingestionID, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}})
+	require.Error(t, err)
+	require.Equal(t, httpx.CodeForbidden, httpx.ErrorFrom(err).Code)
+
+	_, err = service.ListIngestionJobs(context.Background(), kbID, "", 50, 0, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}})
+	require.Error(t, err)
+	require.Equal(t, httpx.CodeForbidden, httpx.ErrorFrom(err).Code)
 }
 
 func newIngestionServiceFixture(t *testing.T, enabled bool) (*fakeKnowledgeBaseRepo, *fakeKnowledgeDocumentRepo, *fakeKnowledgeIndexVersionRepo, *fakeIngestionJobRepo, *fakeJobUseCase, *knowledgepkg.IngestionService, uuid.UUID, uuid.UUID) {

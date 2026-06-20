@@ -18,6 +18,7 @@ type KnowledgeBaseUseCase interface {
 	CreateKnowledgeBase(ctx context.Context, req CreateKnowledgeBaseRequest, actor auth.Principal) (*KnowledgeBase, error)
 	GetKnowledgeBase(ctx context.Context, id uuid.UUID, actor auth.Principal) (*KnowledgeBase, error)
 	ListKnowledgeBases(ctx context.Context, workspaceID uuid.UUID, limit int, offset int, actor auth.Principal) ([]KnowledgeBase, error)
+	ListKnowledgeBaseOptions(ctx context.Context, workspaceID uuid.UUID, limit int, offset int, actor auth.Principal) ([]KnowledgeBase, error)
 	ListIndexVersions(ctx context.Context, kbID uuid.UUID, limit int, offset int, actor auth.Principal) ([]KnowledgeIndexVersion, error)
 	SetCurrentIndexVersion(ctx context.Context, kbID uuid.UUID, versionID uuid.UUID, actor auth.Principal) (*KnowledgeBase, error)
 }
@@ -25,7 +26,7 @@ type KnowledgeBaseUseCase interface {
 type KnowledgeDocumentUseCase interface {
 	UploadDocument(ctx context.Context, req UploadDocumentRequest, actor auth.Principal) (*KnowledgeDocument, error)
 	ListDocuments(ctx context.Context, kbID uuid.UUID, status string, limit int, offset int, actor auth.Principal) ([]KnowledgeDocument, error)
-	DeleteDocument(ctx context.Context, docID uuid.UUID, actor auth.Principal) error
+	DeleteDocument(ctx context.Context, docID uuid.UUID, actor auth.Principal) (*KnowledgeDocument, error)
 }
 
 type IngestionUseCase interface {
@@ -47,6 +48,7 @@ func NewHandler(bases KnowledgeBaseUseCase, documents KnowledgeDocumentUseCase, 
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/knowledge-bases", h.CreateKnowledgeBase)
+	r.Get("/knowledge-bases/options", h.ListKnowledgeBaseOptions)
 	r.Get("/knowledge-bases", h.ListKnowledgeBases)
 	r.Get("/knowledge-bases/{kb_id}", h.GetKnowledgeBase)
 	r.Get("/knowledge-bases/{kb_id}/index-versions", h.ListIndexVersions)
@@ -97,6 +99,25 @@ func (h *Handler) ListKnowledgeBases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteOK(w, r, KnowledgeBaseListResponse{KnowledgeBases: kbs})
+}
+
+func (h *Handler) ListKnowledgeBaseOptions(w http.ResponseWriter, r *http.Request) {
+	actor, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, unauthorized())
+		return
+	}
+	workspaceID, err := workspaceIDFromQuery(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	kbs, err := h.bases.ListKnowledgeBaseOptions(r.Context(), workspaceID, limitFromQuery(r), offsetFromQuery(r), actor)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteOK(w, r, KnowledgeBaseOptionsResponse{KnowledgeBases: kbs})
 }
 
 func (h *Handler) GetKnowledgeBase(w http.ResponseWriter, r *http.Request) {
@@ -197,6 +218,19 @@ func (h *Handler) UploadDocument(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	if queryBool(r, "auto_ingest") {
+		ingestion, err := h.ingestions.CreateIngestionRun(r.Context(), CreateIngestionRunRequest{
+			KnowledgeBaseID: kbID,
+			Namespace:       doc.Namespace,
+			Resume:          true,
+		}, actor)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.WriteOK(w, r, UploadDocumentResponse{Document: doc, IngestionJob: ingestion})
+		return
+	}
 	httpx.WriteOK(w, r, doc)
 }
 
@@ -230,11 +264,31 @@ func (h *Handler) DeleteDocument(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.NewAppError(httpx.CodeInvalidArgument, "invalid document id", http.StatusBadRequest, nil, err))
 		return
 	}
-	if err := h.documents.DeleteDocument(r.Context(), docID, actor); err != nil {
+	doc, err := h.documents.DeleteDocument(r.Context(), docID, actor)
+	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteOK(w, r, map[string]bool{"deleted": true})
+	if queryBool(r, "reindex") {
+		if kb, err := h.bases.GetKnowledgeBase(r.Context(), doc.KnowledgeBaseID, actor); err == nil && kb.Status == KnowledgeBaseStatusEmpty {
+			httpx.WriteOK(w, r, DeleteDocumentResponse{Document: doc, Deleted: true})
+			return
+		}
+		ingestion, err := h.ingestions.CreateIngestionRun(r.Context(), CreateIngestionRunRequest{
+			KnowledgeBaseID: doc.KnowledgeBaseID,
+			Namespace:       doc.Namespace,
+			Mode:            "rebuild_namespace",
+			Rebuild:         true,
+			Resume:          true,
+		}, actor)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.WriteOK(w, r, DeleteDocumentResponse{Document: doc, IngestionJob: ingestion, Deleted: true})
+		return
+	}
+	httpx.WriteOK(w, r, DeleteDocumentResponse{Document: doc, Deleted: true})
 }
 
 func (h *Handler) CreateIngestionRun(w http.ResponseWriter, r *http.Request) {
@@ -385,6 +439,11 @@ func intFromQuery(r *http.Request, name string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func queryBool(r *http.Request, name string) bool {
+	value := strings.ToLower(strings.TrimSpace(r.URL.Query().Get(name)))
+	return value == "true" || value == "1" || value == "yes"
 }
 
 func unauthorized() error {

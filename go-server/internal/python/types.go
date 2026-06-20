@@ -46,14 +46,16 @@ type IngestionRequest struct {
 	JobID       uuid.UUID
 	IngestionID uuid.UUID
 
-	ConfigPath      string
-	InputDir        string
-	Namespace       string
-	KnowledgeBaseID string
-	OutDir          string
-	Resume          bool
-	Timeout         time.Duration
-	Env             map[string]string
+	ConfigPath       string
+	InputDir         string
+	Namespace        string
+	KnowledgeBaseID  string
+	QdrantCollection string
+	QdrantNamespace  string
+	OutDir           string
+	Resume           bool
+	Timeout          time.Duration
+	Env              map[string]string
 }
 
 type IngestionResult struct {

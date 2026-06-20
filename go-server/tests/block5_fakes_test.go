@@ -96,6 +96,18 @@ func (f *fakeFillRunRepo) ListByWorkspace(ctx context.Context, workspaceID uuid.
 	return out, nil
 }
 
+func (f *fakeFillRunRepo) ListByWorkspaceAndCreator(ctx context.Context, workspaceID uuid.UUID, createdBy uuid.UUID, status string, limit int, offset int) ([]formpkg.FillRun, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []formpkg.FillRun
+	for _, run := range f.runs {
+		if run.WorkspaceID == workspaceID && run.CreatedBy == createdBy && (status == "" || run.Status == status) {
+			out = append(out, run)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeFillRunRepo) AttachJob(ctx context.Context, runID uuid.UUID, jobID uuid.UUID, queuedAt time.Time) error {
 	return f.update(runID, func(run *formpkg.FillRun) {
 		run.JobID = &jobID

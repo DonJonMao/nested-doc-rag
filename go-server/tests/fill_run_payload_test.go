@@ -100,7 +100,7 @@ func TestCreateFillRunAppliesPythonDefaultsToPayload(t *testing.T) {
 	cfg.Python.Step15DefaultPromptVersion = "prompt_v2"
 	service := formpkg.NewFillRunService(newFakeFillRunRepo(), formRepo, jobSvc, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), cfg)
 
-	run, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "target"}, auth.Principal{UserID: uuid.New()})
+	run, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "target"}, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}})
 
 	require.NoError(t, err)
 	require.Equal(t, "7-9", run.RowsSpec)

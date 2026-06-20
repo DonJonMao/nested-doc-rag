@@ -28,6 +28,14 @@ type Worker struct {
 	mu                sync.RWMutex
 }
 
+type interruptedJobLister interface {
+	ListInterrupted(ctx context.Context, staleBefore time.Time, limit int) ([]Job, error)
+}
+
+type interruptedJobHandler interface {
+	RecoverInterruptedJob(ctx context.Context, job *Job, terminalStatus string, err error)
+}
+
 func NewWorker(redisCfg config.RedisConfig, jobsCfg config.JobsConfig, repo Repo, service *Service, limiter *ResourceLimiter, logger *zap.Logger) *Worker {
 	if logger == nil {
 		logger = zap.NewNop()
@@ -97,10 +105,12 @@ func (w *Worker) RegisterDefaultHandlers(events RunEventWriter) {
 }
 
 func (w *Worker) Run() error {
+	w.recoverInterruptedBeforeStart(context.Background())
 	return w.server.Run(w.mux)
 }
 
 func (w *Worker) Start() error {
+	w.recoverInterruptedBeforeStart(context.Background())
 	return w.server.Start(w.mux)
 }
 
@@ -114,6 +124,77 @@ func (w *Worker) Shutdown() {
 
 func (w *Worker) ProcessTask(ctx context.Context, task *asynq.Task) error {
 	return w.processTask(ctx, task)
+}
+
+func (w *Worker) RecoverInterruptedJobs(ctx context.Context, staleAfter time.Duration) (int, error) {
+	if w == nil || w.repo == nil || w.service == nil {
+		return 0, nil
+	}
+	lister, ok := w.repo.(interruptedJobLister)
+	if !ok {
+		return 0, nil
+	}
+	if staleAfter <= 0 {
+		staleAfter = w.heartbeatInterval * 3
+	}
+	if staleAfter <= 0 {
+		staleAfter = 30 * time.Second
+	}
+	staleBefore := time.Now().UTC().Add(-staleAfter)
+	candidates, err := lister.ListInterrupted(ctx, staleBefore, 500)
+	if err != nil {
+		return 0, err
+	}
+	recovered := 0
+	var recoveryErrs []error
+	for i := range candidates {
+		job := candidates[i]
+		var terminalStatus string
+		var interruptedErr error
+		var markErr error
+		switch job.Status {
+		case JobStatusCancelRequested:
+			terminalStatus = JobStatusCanceled
+			interruptedErr = ErrJobCanceled
+			markErr = w.service.MarkCanceled(ctx, job)
+		case JobStatusRunning:
+			terminalStatus = JobStatusFailed
+			interruptedErr = fmt.Errorf("worker interrupted while job was running; heartbeat stale before %s", staleBefore.Format(time.RFC3339))
+			markErr = w.service.MarkFailed(ctx, job, interruptedErr.Error())
+		default:
+			continue
+		}
+		if markErr != nil {
+			recoveryErrs = append(recoveryErrs, markErr)
+			continue
+		}
+		w.recoverInterruptedResource(ctx, &job, terminalStatus, interruptedErr)
+		recovered++
+	}
+	return recovered, errors.Join(recoveryErrs...)
+}
+
+func (w *Worker) recoverInterruptedBeforeStart(ctx context.Context) {
+	recovered, err := w.RecoverInterruptedJobs(ctx, 0)
+	if err != nil {
+		w.logger.Warn("recover interrupted jobs failed", zap.Error(err))
+		return
+	}
+	if recovered > 0 {
+		w.logger.Info("recovered interrupted jobs", zap.Int("count", recovered))
+	}
+}
+
+func (w *Worker) recoverInterruptedResource(ctx context.Context, job *Job, terminalStatus string, err error) {
+	if job == nil {
+		return
+	}
+	handler := w.handlerFor(job.JobType)
+	recoverer, ok := handler.(interruptedJobHandler)
+	if !ok {
+		return
+	}
+	recoverer.RecoverInterruptedJob(ctx, job, terminalStatus, err)
 }
 
 func (w *Worker) processTask(ctx context.Context, task *asynq.Task) error {

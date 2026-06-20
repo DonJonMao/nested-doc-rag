@@ -1,4 +1,4 @@
-.PHONY: test test-race fmt fmt-check vet build build-api build-worker run-api run-worker docker-up docker-down docker-logs migrate-up migrate-down smoke-api smoke-auth smoke-files smoke-jobs loadtest-smoke ci tidy-check
+.PHONY: test test-race fmt fmt-check vet build build-api build-worker run-api run-worker docker-up docker-down docker-logs migrate-up migrate-down smoke-api smoke-auth smoke-files smoke-jobs smoke-product-flow loadtest-smoke ci tidy-check
 
 CONFIG ?= configs/config.example.yaml
 COMPOSE ?= docker compose -f deployments/docker-compose.yaml
@@ -58,6 +58,9 @@ smoke-files:
 
 smoke-jobs:
 	./scripts/smoke_jobs.sh
+
+smoke-product-flow:
+	./scripts/smoke_product_flow.sh
 
 loadtest-smoke:
 	k6 run loadtest/k6/smoke.js

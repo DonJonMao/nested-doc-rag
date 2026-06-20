@@ -87,6 +87,8 @@ class ServicesConfig:
 @dataclass(frozen=True)
 class QdrantConfig:
     collection_name: str = "datacenter_chunks_v1"
+    url: str = ""
+    api_key_env: str = "QDRANT_API_KEY"
     prefer_grpc: bool = False
     timeout: int = 60
 
@@ -302,10 +304,13 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         chat_api_key_env=str(services_data.get("chat_api_key_env", "DEEPSEEK_API_KEY")),
         timeout_seconds=_as_int(services_data.get("timeout_seconds", 120)),
     )
+    qdrant_data = _section(data, "qdrant", QdrantConfig())
     qdrant = QdrantConfig(
-        collection_name=str(_section(data, "qdrant", QdrantConfig()).get("collection_name", "datacenter_chunks_v1")),
-        prefer_grpc=_as_bool(_section(data, "qdrant", QdrantConfig()).get("prefer_grpc", False)),
-        timeout=_as_int(_section(data, "qdrant", QdrantConfig()).get("timeout", 60)),
+        collection_name=str(qdrant_data.get("collection_name", "datacenter_chunks_v1")),
+        url=str(qdrant_data.get("url", "")),
+        api_key_env=str(qdrant_data.get("api_key_env", "QDRANT_API_KEY")),
+        prefer_grpc=_as_bool(qdrant_data.get("prefer_grpc", False)),
+        timeout=_as_int(qdrant_data.get("timeout", 60)),
     )
     retrieval_data = _section(data, "retrieval", RetrievalConfig())
     retrieval = RetrievalConfig(
@@ -458,9 +463,13 @@ def _env_aliases() -> dict[str, tuple[str, str]]:
         "DEEPSEEK_BASE_URL": ("services", "chat_endpoint"),
         "DEEPSEEK_MODEL": ("services", "chat_model"),
         "QDRANT_COLLECTION": ("qdrant", "collection_name"),
+        "QDRANT_URL": ("qdrant", "url"),
+        "QDRANT_API_KEY_ENV": ("qdrant", "api_key_env"),
         "QDRANT_PATH": ("paths", "qdrant_path"),
         "NDR_QDRANT_PATH": ("paths", "qdrant_path"),
         "NDR_QDRANT_COLLECTION": ("qdrant", "collection_name"),
+        "NDR_QDRANT_URL": ("qdrant", "url"),
+        "NDR_QDRANT_API_KEY_ENV": ("qdrant", "api_key_env"),
         "TARGET_NAMESPACE": ("retrieval", "target_namespace"),
         "RETRIEVAL_MODE": ("retrieval", "plan"),
         "NDR_RETRIEVAL_MODE": ("retrieval", "plan"),

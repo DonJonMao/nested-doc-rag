@@ -12,6 +12,13 @@ const (
 	KnowledgeDocumentStatusFailed   = "failed"
 	KnowledgeDocumentStatusDeleted  = "deleted"
 
+	KnowledgeBaseStatusEmpty    = "empty"
+	KnowledgeBaseStatusBuilding = "building"
+	KnowledgeBaseStatusReady    = "ready"
+	KnowledgeBaseStatusStale    = "stale"
+	KnowledgeBaseStatusFailed   = "failed"
+	KnowledgeBaseStatusArchived = "archived"
+
 	IndexVersionStatusBuilding = "building"
 	IndexVersionStatusReady    = "ready"
 	IndexVersionStatusFailed   = "failed"
@@ -30,6 +37,15 @@ const (
 func ValidDocumentRole(role string) bool {
 	switch role {
 	case DocumentRoleKnowledgeBase, DocumentRoleIntroDoc, DocumentRoleProofAttachment, DocumentRoleMisc:
+		return true
+	default:
+		return false
+	}
+}
+
+func ValidKnowledgeBaseStatus(status string) bool {
+	switch status {
+	case KnowledgeBaseStatusEmpty, KnowledgeBaseStatusBuilding, KnowledgeBaseStatusReady, KnowledgeBaseStatusStale, KnowledgeBaseStatusFailed, KnowledgeBaseStatusArchived:
 		return true
 	default:
 		return false

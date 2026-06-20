@@ -1,0 +1,65 @@
+:root {
+  --gk-blue: #0066cc;
+  --gk-blue-hover: #0071e3;
+  --gk-blue-on-dark: #2997ff;
+  --gk-ink: #1d1d1f;
+  --gk-ink-2: #333333;
+  --gk-ink-3: #6e6e73;
+  --gk-ink-4: #86868b;
+  --gk-white: #ffffff;
+  --gk-page: #f5f5f7;
+  --gk-page-soft: #fafafc;
+  --gk-black: #000000;
+  --gk-surface-dark: #1d1d1f;
+  --gk-surface-dark-2: #272729;
+  --gk-hairline: #d2d2d7;
+  --gk-hairline-soft: #e8e8ed;
+  --gk-success: #1d7f43;
+  --gk-warning: #b36b00;
+  --gk-danger: #c9342b;
+  --gk-info: #0066cc;
+  --gk-radius-xs: 6px;
+  --gk-radius-sm: 8px;
+  --gk-radius-md: 11px;
+  --gk-radius-lg: 18px;
+  --gk-radius-xl: 28px;
+  --gk-radius-pill: 9999px;
+  --gk-nav-height: 44px;
+  --gk-subnav-height: 52px;
+  --gk-content-max: 1440px;
+  --gk-space-1: 4px;
+  --gk-space-2: 8px;
+  --gk-space-3: 12px;
+  --gk-space-4: 16px;
+  --gk-space-5: 20px;
+  --gk-space-6: 24px;
+  --gk-space-8: 32px;
+  --gk-space-10: 40px;
+  --gk-space-12: 48px;
+  --gk-space-16: 64px;
+  --gk-ease: cubic-bezier(0.28, 0.11, 0.32, 1);
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+  margin: 0;
+}
+
+html {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
+  color: var(--gk-ink);
+  background: var(--gk-page);
+}
+
+body {
+  min-width: 320px;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}

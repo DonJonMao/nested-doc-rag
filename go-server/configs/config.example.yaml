@@ -40,15 +40,21 @@ files:
   temp_dir: "./runtime/tmp/uploads"
   allowed_extensions:
     - ".xlsx"
-    - ".xls"
+    - ".xlsm"
     - ".docx"
+    - ".txt"
+    - ".md"
+    - ".csv"
     - ".png"
     - ".jpg"
     - ".jpeg"
   allowed_mime_types:
     - "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    - "application/vnd.ms-excel"
+    - "application/vnd.ms-excel.sheet.macroEnabled.12"
     - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    - "text/plain"
+    - "text/markdown"
+    - "text/csv"
     - "image/png"
     - "image/jpeg"
     - "application/octet-stream"
@@ -71,12 +77,12 @@ python:
   step15_default_retrieval_mode: "layered"
   step15_default_prompt_version: "step15_compat"
   step15_default_rows: "4-144"
-  ingest_command_enabled: false
+  ingest_command_enabled: true
 
 jobs:
-  fill_concurrency: 2
-  ingestion_concurrency: 2
-  max_python_processes: 3
+  fill_concurrency: 1
+  ingestion_concurrency: 1
+  max_python_processes: 1
   redis_namespace: "gongkan"
   worker_concurrency: 4
   default_timeout: "2h"
@@ -91,6 +97,7 @@ jobs:
 cors:
   allowed_origins:
     - "http://localhost:3000"
+    - "http://localhost:5173"
   allowed_methods:
     - "GET"
     - "POST"

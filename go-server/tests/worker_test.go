@@ -98,10 +98,59 @@ func TestWorkerCanceledJobSkippedAndFailureDoesNotKillNextJob(t *testing.T) {
 	require.Equal(t, jobs.JobStatusSucceeded, updated.Status)
 }
 
+func TestWorkerRecoverInterruptedJobsMarksStaleJobs(t *testing.T) {
+	repo := newFakeJobRepo()
+	eventRepo := &fakeRunEventRepo{}
+	service := jobs.NewService(repo, runevent.NewService(eventRepo, nil), nil, &fakeAuthorizer{}, nil, zap.NewNop(), 1)
+	cfg := workerTestConfig()
+	worker := jobs.NewWorker(config.RedisConfig{Addr: "localhost:6379"}, cfg, repo, service, jobs.NewResourceLimiter(cfg), zap.NewNop())
+	handler := &recordingRecoveryHandler{}
+	worker.RegisterHandler(jobs.JobTypeFillForm, handler)
+	now := time.Now().UTC()
+	stale := now.Add(-5 * time.Minute)
+	fresh := now
+	staleRunning := jobs.Job{ID: uuid.New(), WorkspaceID: uuid.New(), JobType: jobs.JobTypeFillForm, ResourceType: jobs.ResourceTypeFillRun, ResourceID: uuid.New(), Status: jobs.JobStatusRunning, MaxAttempts: 1, Payload: map[string]any{}, HeartbeatAt: &stale}
+	staleCancel := jobs.Job{ID: uuid.New(), WorkspaceID: uuid.New(), JobType: jobs.JobTypeFillForm, ResourceType: jobs.ResourceTypeFillRun, ResourceID: uuid.New(), Status: jobs.JobStatusCancelRequested, MaxAttempts: 1, Payload: map[string]any{}, HeartbeatAt: &stale}
+	freshRunning := jobs.Job{ID: uuid.New(), WorkspaceID: uuid.New(), JobType: jobs.JobTypeFillForm, ResourceType: jobs.ResourceTypeFillRun, ResourceID: uuid.New(), Status: jobs.JobStatusRunning, MaxAttempts: 1, Payload: map[string]any{}, HeartbeatAt: &fresh}
+	repo.add(staleRunning)
+	repo.add(staleCancel)
+	repo.add(freshRunning)
+
+	recovered, err := worker.RecoverInterruptedJobs(context.Background(), time.Minute)
+
+	require.NoError(t, err)
+	require.Equal(t, 2, recovered)
+	updatedRunning, err := repo.GetByID(context.Background(), staleRunning.ID)
+	require.NoError(t, err)
+	require.Equal(t, jobs.JobStatusFailed, updatedRunning.Status)
+	require.Contains(t, updatedRunning.ErrorMessage, "worker interrupted")
+	updatedCancel, err := repo.GetByID(context.Background(), staleCancel.ID)
+	require.NoError(t, err)
+	require.Equal(t, jobs.JobStatusCanceled, updatedCancel.Status)
+	updatedFresh, err := repo.GetByID(context.Background(), freshRunning.ID)
+	require.NoError(t, err)
+	require.Equal(t, jobs.JobStatusRunning, updatedFresh.Status)
+	require.ElementsMatch(t, []string{jobs.JobStatusFailed, jobs.JobStatusCanceled}, handler.statuses)
+	require.Contains(t, eventTypes(eventRepo.events), runevent.EventFailed)
+	require.Contains(t, eventTypes(eventRepo.events), runevent.EventCanceled)
+}
+
 type failingTaskHandler struct{}
 
 func (failingTaskHandler) Handle(ctx context.Context, job *jobs.Job) error {
 	return errors.New("transient failure")
+}
+
+type recordingRecoveryHandler struct {
+	statuses []string
+}
+
+func (h *recordingRecoveryHandler) Handle(ctx context.Context, job *jobs.Job) error {
+	return nil
+}
+
+func (h *recordingRecoveryHandler) RecoverInterruptedJob(ctx context.Context, job *jobs.Job, terminalStatus string, err error) {
+	h.statuses = append(h.statuses, terminalStatus)
 }
 
 func workerTestConfig() config.JobsConfig {

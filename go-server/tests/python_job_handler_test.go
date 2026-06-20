@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/auth"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/jobs"
 	pythonpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/python"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/runevent"
@@ -35,6 +36,8 @@ func TestFillFormPythonHandlerSuccessCallsRunnerAndArchiver(t *testing.T) {
 	require.Len(t, runner.Step15Calls, 1)
 	require.Equal(t, "target", runner.Step15Calls[0].TargetNamespace)
 	require.Len(t, registrar.requests, 1)
+	require.Len(t, registrar.actors, 1)
+	require.Contains(t, registrar.actors[0].Roles, auth.RoleAdmin)
 	requireEventTypes(t, eventsRepo, runevent.EventPythonStarted, runevent.EventPythonFinished, runevent.EventArtifactValidationSucceeded, runevent.EventArtifactsRegistered)
 }
 
@@ -111,6 +114,40 @@ func TestIngestKnowledgePythonHandlerEnabledCallsRunner(t *testing.T) {
 	require.Len(t, runner.IngestCalls, 1)
 	require.Equal(t, "kb", runner.IngestCalls[0].Namespace)
 	requireEventTypes(t, eventsRepo, runevent.EventPythonStarted, runevent.EventPythonFinished)
+}
+
+func TestPythonHandlersRecoverInterruptedJobsSyncLifecycle(t *testing.T) {
+	fillRunID := uuid.New()
+	fillLifecycle := &recordingFillRunLifecycle{}
+	fillHandler := jobs.NewFillFormPythonHandler(
+		&pythonpkg.FakeRunner{},
+		nil,
+		nil,
+		zap.NewNop(),
+		jobs.WithFillRunLifecycle(fillLifecycle),
+	)
+
+	fillHandler.RecoverInterruptedJob(context.Background(), &jobs.Job{ResourceID: fillRunID}, jobs.JobStatusFailed, errors.New("stale heartbeat"))
+	fillHandler.RecoverInterruptedJob(context.Background(), &jobs.Job{ResourceID: fillRunID}, jobs.JobStatusCanceled, jobs.ErrJobCanceled)
+
+	require.Equal(t, []uuid.UUID{fillRunID}, fillLifecycle.failed)
+	require.Equal(t, []uuid.UUID{fillRunID}, fillLifecycle.canceled)
+
+	ingestionID := uuid.New()
+	ingestionLifecycle := &recordingIngestionLifecycle{}
+	ingestionHandler := jobs.NewIngestKnowledgePythonHandler(
+		&pythonpkg.FakeRunner{},
+		nil,
+		zap.NewNop(),
+		true,
+		jobs.WithIngestionLifecycle(ingestionLifecycle),
+	)
+
+	ingestionHandler.RecoverInterruptedJob(context.Background(), &jobs.Job{ResourceID: ingestionID}, jobs.JobStatusFailed, errors.New("stale heartbeat"))
+	ingestionHandler.RecoverInterruptedJob(context.Background(), &jobs.Job{ResourceID: ingestionID}, jobs.JobStatusCanceled, jobs.ErrJobCanceled)
+
+	require.Equal(t, []uuid.UUID{ingestionID}, ingestionLifecycle.failed)
+	require.Equal(t, []uuid.UUID{ingestionID}, ingestionLifecycle.canceled)
 }
 
 func fillFormJob(runDir string) jobs.Job {

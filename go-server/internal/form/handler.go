@@ -26,8 +26,9 @@ type FormUseCase interface {
 
 type FillRunUseCase interface {
 	CreateFillRun(ctx context.Context, req CreateFillRunRequest, actor auth.Principal) (*FillRun, error)
+	CreateSimpleFillRun(ctx context.Context, req CreateSimpleFillRunRequest, actor auth.Principal) (*FillRun, error)
 	GetFillRun(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*FillRun, error)
-	ListFillRuns(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int, actor auth.Principal) ([]FillRun, error)
+	ListFillRuns(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int, mine bool, actor auth.Principal) ([]FillRun, error)
 	CancelFillRun(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*FillRun, error)
 	GetFillRunArtifacts(ctx context.Context, runID uuid.UUID, actor auth.Principal) ([]artifact.RunArtifact, error)
 	GetDownloadArtifactByType(ctx context.Context, runID uuid.UUID, artifactType string, actor auth.Principal) (*artifact.DownloadResult, error)
@@ -46,6 +47,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/forms", h.UploadForm)
 	r.Get("/forms", h.ListForms)
 	r.Get("/forms/{form_id}", h.GetForm)
+	r.Post("/fill-runs/simple", h.CreateSimpleFillRun)
 	r.Post("/fill-runs", h.CreateFillRun)
 	r.Get("/fill-runs", h.ListFillRuns)
 	r.Get("/fill-runs/{run_id}", h.GetFillRun)
@@ -146,6 +148,25 @@ func (h *Handler) CreateFillRun(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteOK(w, r, run)
 }
 
+func (h *Handler) CreateSimpleFillRun(w http.ResponseWriter, r *http.Request) {
+	actor, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, unauthorized())
+		return
+	}
+	var req CreateSimpleFillRunRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, r, httpx.NewAppError(httpx.CodeInvalidArgument, "invalid JSON body", http.StatusBadRequest, nil, err))
+		return
+	}
+	run, err := h.runs.CreateSimpleFillRun(r.Context(), req, actor)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteOK(w, r, run)
+}
+
 func (h *Handler) ListFillRuns(w http.ResponseWriter, r *http.Request) {
 	actor, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
@@ -162,10 +183,13 @@ func (h *Handler) ListFillRuns(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.NewAppError(httpx.CodeInvalidArgument, "invalid fill run status", http.StatusBadRequest, nil, nil))
 		return
 	}
-	runs, err := h.runs.ListFillRuns(r.Context(), workspaceID, status, limitFromQuery(r), offsetFromQuery(r), actor)
+	runs, err := h.runs.ListFillRuns(r.Context(), workspaceID, status, limitFromQuery(r), offsetFromQuery(r), boolFromQuery(r, "mine"), actor)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
+	}
+	if runs == nil {
+		runs = []FillRun{}
 	}
 	httpx.WriteOK(w, r, FillRunListResponse{FillRuns: runs})
 }
@@ -302,6 +326,11 @@ func intFromQuery(r *http.Request, name string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func boolFromQuery(r *http.Request, name string) bool {
+	value := strings.ToLower(strings.TrimSpace(r.URL.Query().Get(name)))
+	return value == "true" || value == "1" || value == "yes"
 }
 
 func artifactTypeFromKind(kind string) (string, error) {

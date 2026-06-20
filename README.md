@@ -92,6 +92,22 @@ Inspect configuration:
 python -m nested_doc_rag.cli show-config --config config/local.example.yaml
 ```
 
+## Gongkan Platform App
+
+The productized Gongkan platform lives alongside the Python Core:
+
+- `go-server/` provides the API server, auth/RBAC, workspace/file/artifact services, jobs, worker orchestration, SSE, knowledge-base ingestion APIs, fill-run APIs, and OpenAPI.
+- `web/` provides the Vue 3 app for role-based login, admin knowledge management, user form upload, fill-run creation, SSE progress, history, and artifact downloads.
+
+The web app calls the real Go API. Long-running ingestion and form-filling tasks are executed by the Go worker through Python Core CLI entry points; the frontend does not mock task success.
+
+Run platform tests and builds:
+
+```bash
+cd go-server && go test ./...
+cd ../web && npm install && npm run build
+```
+
 Run mini baseline smoke tests:
 
 ```bash
@@ -170,6 +186,6 @@ Real runs require locally configured services:
 - embedding endpoint
 - rerank endpoint
 - DeepSeek/OpenAI-compatible chat completion endpoint
-- Qdrant local path or server configuration
+- Qdrant local path or server configuration. Leave `qdrant.url` empty to use the embedded local path under `paths.qdrant_path`; set `qdrant.url` such as `http://localhost:6333` to use a Qdrant service.
 
 Service URLs belong in `config/local.yaml`, environment variables, or CLI flags. API keys are read through environment variables such as `DEEPSEEK_API_KEY`. Do not commit `config/local.yaml`, `.env`, generated artifacts, vector stores, source data, or secrets.

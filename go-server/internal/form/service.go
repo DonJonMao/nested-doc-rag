@@ -14,6 +14,7 @@ import (
 	filepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/file"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/httpx"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/jobs"
+	knowledgepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/knowledge"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -36,6 +37,10 @@ type JobService interface {
 type ArtifactService interface {
 	ListRunArtifacts(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, actor auth.Principal) ([]artifact.RunArtifact, error)
 	DownloadArtifact(ctx context.Context, artifactID uuid.UUID, actor auth.Principal) (*artifact.DownloadResult, error)
+}
+
+type KnowledgeBaseReader interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*knowledgepkg.KnowledgeBase, error)
 }
 
 type FormFileService struct {
@@ -135,6 +140,7 @@ type FillRunService struct {
 	audit      *audit.Service
 	logger     *zap.Logger
 	cfg        config.Config
+	kbs        KnowledgeBaseReader
 }
 
 func NewFillRunService(repo FillRunRepo, forms FormFileRepo, jobs JobService, artifacts ArtifactService, authorizer WorkspaceAuthorizer, auditSvc *audit.Service, logger *zap.Logger, cfg config.Config) *FillRunService {
@@ -142,6 +148,10 @@ func NewFillRunService(repo FillRunRepo, forms FormFileRepo, jobs JobService, ar
 		logger = zap.NewNop()
 	}
 	return &FillRunService{repo: repo, forms: forms, jobs: jobs, artifacts: artifacts, authorizer: authorizer, audit: auditSvc, logger: logger, cfg: cfg}
+}
+
+func (s *FillRunService) SetKnowledgeBaseReader(reader KnowledgeBaseReader) {
+	s.kbs = reader
 }
 
 func (s *FillRunService) CreateFillRun(ctx context.Context, req CreateFillRunRequest, actor auth.Principal) (*FillRun, error) {
@@ -155,8 +165,15 @@ func (s *FillRunService) CreateFillRun(ctx context.Context, req CreateFillRunReq
 	if formFile.WorkspaceID != req.WorkspaceID {
 		return nil, httpx.NewAppError(httpx.CodeForbidden, "form file workspace mismatch", http.StatusForbidden, nil, nil)
 	}
+	if err := s.productizeNonAdminFillRequest(ctx, &req, actor); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(req.TargetNamespace) == "" {
 		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "target_namespace is required", http.StatusBadRequest, nil, nil)
+	}
+	runName, err := normalizeFillRunName(req.Name, formFile.Filename)
+	if err != nil {
+		return nil, err
 	}
 	writeback := true
 	if req.Writeback != nil {
@@ -167,6 +184,7 @@ func (s *FillRunService) CreateFillRun(ctx context.Context, req CreateFillRunReq
 		ID:               runID,
 		WorkspaceID:      req.WorkspaceID,
 		FormFileID:       req.FormFileID,
+		Name:             runName,
 		KnowledgeBaseID:  req.KnowledgeBaseID,
 		IndexVersionID:   req.IndexVersionID,
 		TargetNamespace:  strings.TrimSpace(req.TargetNamespace),
@@ -203,8 +221,99 @@ func (s *FillRunService) CreateFillRun(ctx context.Context, req CreateFillRunReq
 	if err := s.repo.AttachJob(ctx, run.ID, job.ID, now); err != nil {
 		return nil, err
 	}
-	s.record(ctx, actor, run.WorkspaceID, "fill_run.created", "fill_run", run.ID.String(), map[string]any{"job_id": job.ID.String(), "form_file_id": run.FormFileID.String()})
+	s.record(ctx, actor, run.WorkspaceID, "fill_run.created", "fill_run", run.ID.String(), map[string]any{"job_id": job.ID.String(), "form_file_id": run.FormFileID.String(), "name": run.Name})
 	return s.repo.GetByID(ctx, run.ID)
+}
+
+func (s *FillRunService) productizeNonAdminFillRequest(ctx context.Context, req *CreateFillRunRequest, actor auth.Principal) error {
+	if auth.IsAdminRoles(actor.Roles) {
+		return nil
+	}
+	if req.KnowledgeBaseID == nil || *req.KnowledgeBaseID == uuid.Nil {
+		return httpx.NewAppError(httpx.CodeInvalidArgument, "knowledge_base_id is required for non-admin fill runs", http.StatusBadRequest, nil, nil)
+	}
+	if s.kbs == nil {
+		return httpx.NewAppError(httpx.CodeInternal, "knowledge base reader is not configured", http.StatusInternalServerError, nil, nil)
+	}
+	kb, err := s.kbs.GetByID(ctx, *req.KnowledgeBaseID)
+	if err != nil {
+		return err
+	}
+	if kb.WorkspaceID != req.WorkspaceID {
+		return httpx.NewAppError(httpx.CodeForbidden, "knowledge base workspace mismatch", http.StatusForbidden, nil, nil)
+	}
+	if kb.Status != knowledgepkg.KnowledgeBaseStatusReady {
+		return httpx.NewAppError(httpx.CodeConflict, "knowledge base is not ready", http.StatusConflict, map[string]string{"status": kb.Status}, nil)
+	}
+	if kb.CurrentIndexVersionID == nil {
+		return httpx.NewAppError(httpx.CodeConflict, "knowledge base has no current index version", http.StatusConflict, nil, nil)
+	}
+	if strings.TrimSpace(kb.Namespace) == "" {
+		return httpx.NewAppError(httpx.CodeConflict, "knowledge base namespace is empty", http.StatusConflict, nil, nil)
+	}
+	if req.IndexVersionID != nil && *req.IndexVersionID != *kb.CurrentIndexVersionID {
+		return httpx.NewAppError(httpx.CodeConflict, "index version is not current for knowledge base", http.StatusConflict, nil, nil)
+	}
+	if target := strings.TrimSpace(req.TargetNamespace); target != "" && target != kb.Namespace {
+		return httpx.NewAppError(httpx.CodeConflict, "target namespace does not match knowledge base", http.StatusConflict, nil, nil)
+	}
+	writeback := true
+	req.KnowledgeBaseID = &kb.ID
+	req.IndexVersionID = kb.CurrentIndexVersionID
+	req.TargetNamespace = kb.Namespace
+	req.GlobalNamespace = "global"
+	req.Rows = s.cfg.Python.Step15DefaultRows
+	req.RetrievalMode = s.cfg.Python.Step15DefaultRetrievalMode
+	req.PromptVersion = s.cfg.Python.Step15DefaultPromptVersion
+	req.Judge = false
+	req.UseJudgeCache = false
+	req.Writeback = &writeback
+	return nil
+}
+
+func (s *FillRunService) CreateSimpleFillRun(ctx context.Context, req CreateSimpleFillRunRequest, actor auth.Principal) (*FillRun, error) {
+	if req.KnowledgeBaseID == uuid.Nil {
+		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "knowledge_base_id is required", http.StatusBadRequest, nil, nil)
+	}
+	if s.kbs == nil {
+		return nil, httpx.NewAppError(httpx.CodeInternal, "knowledge base reader is not configured", http.StatusInternalServerError, nil, nil)
+	}
+	kb, err := s.kbs.GetByID(ctx, req.KnowledgeBaseID)
+	if err != nil {
+		return nil, err
+	}
+	if kb.WorkspaceID != req.WorkspaceID {
+		return nil, httpx.NewAppError(httpx.CodeForbidden, "knowledge base workspace mismatch", http.StatusForbidden, nil, nil)
+	}
+	if err := s.authorizer.CanReadWorkspace(ctx, kb.WorkspaceID, actor); err != nil {
+		return nil, err
+	}
+	if kb.Status != knowledgepkg.KnowledgeBaseStatusReady {
+		return nil, httpx.NewAppError(httpx.CodeConflict, "knowledge base is not ready", http.StatusConflict, map[string]string{"status": kb.Status}, nil)
+	}
+	if kb.CurrentIndexVersionID == nil {
+		return nil, httpx.NewAppError(httpx.CodeConflict, "knowledge base has no current index version", http.StatusConflict, nil, nil)
+	}
+	if strings.TrimSpace(kb.Namespace) == "" {
+		return nil, httpx.NewAppError(httpx.CodeConflict, "knowledge base namespace is empty", http.StatusConflict, nil, nil)
+	}
+	writeback := true
+	return s.CreateFillRun(ctx, CreateFillRunRequest{
+		WorkspaceID:     req.WorkspaceID,
+		FormFileID:      req.FormFileID,
+		KnowledgeBaseID: &kb.ID,
+		IndexVersionID:  kb.CurrentIndexVersionID,
+		Name:            req.Name,
+		TargetNamespace: kb.Namespace,
+		GlobalNamespace: "global",
+		RoomContext:     req.RoomContext,
+		Rows:            s.cfg.Python.Step15DefaultRows,
+		RetrievalMode:   s.cfg.Python.Step15DefaultRetrievalMode,
+		PromptVersion:   s.cfg.Python.Step15DefaultPromptVersion,
+		Judge:           false,
+		UseJudgeCache:   false,
+		Writeback:       &writeback,
+	}, actor)
 }
 
 func (s *FillRunService) GetFillRun(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*FillRun, error) {
@@ -215,12 +324,18 @@ func (s *FillRunService) GetFillRun(ctx context.Context, runID uuid.UUID, actor 
 	if err := s.authorizer.CanReadWorkspace(ctx, run.WorkspaceID, actor); err != nil {
 		return nil, err
 	}
+	if !auth.IsAdminRoles(actor.Roles) && run.CreatedBy != actor.UserID {
+		return nil, httpx.NewAppError(httpx.CodeForbidden, "fill run is not owned by current user", http.StatusForbidden, nil, nil)
+	}
 	return run, nil
 }
 
-func (s *FillRunService) ListFillRuns(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int, actor auth.Principal) ([]FillRun, error) {
+func (s *FillRunService) ListFillRuns(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int, mine bool, actor auth.Principal) ([]FillRun, error) {
 	if err := s.authorizer.CanReadWorkspace(ctx, workspaceID, actor); err != nil {
 		return nil, err
+	}
+	if mine || !auth.IsAdminRoles(actor.Roles) {
+		return s.repo.ListByWorkspaceAndCreator(ctx, workspaceID, actor.UserID, status, limit, offset)
 	}
 	return s.repo.ListByWorkspace(ctx, workspaceID, status, limit, offset)
 }
@@ -232,6 +347,9 @@ func (s *FillRunService) CancelFillRun(ctx context.Context, runID uuid.UUID, act
 	}
 	if err := s.authorizer.CanWriteWorkspace(ctx, run.WorkspaceID, actor); err != nil {
 		return nil, err
+	}
+	if !auth.IsAdminRoles(actor.Roles) && run.CreatedBy != actor.UserID {
+		return nil, httpx.NewAppError(httpx.CodeForbidden, "fill run is not owned by current user", http.StatusForbidden, nil, nil)
 	}
 	if run.JobID == nil {
 		return nil, httpx.NewAppError(httpx.CodeConflict, "fill run has no job", http.StatusConflict, nil, nil)
@@ -287,4 +405,19 @@ func defaultString(value string, fallback string) string {
 		return value
 	}
 	return strings.TrimSpace(fallback)
+}
+
+func normalizeFillRunName(value string, fallbackFilename string) (string, error) {
+	name := strings.TrimSpace(value)
+	if name == "" {
+		name = strings.TrimSuffix(filepath.Base(strings.TrimSpace(fallbackFilename)), filepath.Ext(fallbackFilename))
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "未命名任务"
+	}
+	if len([]rune(name)) > 120 {
+		return "", httpx.NewAppError(httpx.CodeInvalidArgument, "fill run name is too long", http.StatusBadRequest, map[string]int{"max_length": 120}, nil)
+	}
+	return name, nil
 }

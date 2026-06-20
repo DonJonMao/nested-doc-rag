@@ -27,6 +27,7 @@ import (
 	userpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/user"
 	workspacepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/workspace"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -151,9 +152,18 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	knowledgeDocumentRepo := knowledgepkg.NewPGXKnowledgeDocumentRepo(db)
 	knowledgeIndexVersionRepo := knowledgepkg.NewPGXKnowledgeIndexVersionRepo(db)
 	ingestionJobRepo := knowledgepkg.NewPGXIngestionJobRepo(db)
+	fillRunService.SetKnowledgeBaseReader(knowledgeBaseRepo)
 	knowledgeBaseService := knowledgepkg.NewKnowledgeBaseService(knowledgeBaseRepo, knowledgeIndexVersionRepo, workspaceAuthorizer, auditService, logger)
 	knowledgeDocumentService := knowledgepkg.NewKnowledgeDocumentService(knowledgeBaseRepo, knowledgeDocumentRepo, fileService, workspaceAuthorizer, auditService, logger)
 	ingestionService := knowledgepkg.NewIngestionService(knowledgeBaseRepo, knowledgeDocumentRepo, knowledgeIndexVersionRepo, ingestionJobRepo, jobService, workspaceAuthorizer, auditService, logger, *cfg)
+	runAccess := runEventAccessAuthorizer{
+		workspaceAuthorizer: workspaceAuthorizer,
+		fillRuns:            fillRunService,
+		ingestions:          ingestionService,
+	}
+	artifactService.SetRunAccessAuthorizer(runAccess)
+	sseHandler := ssepkg.NewHandler(runEventService, sseBroker, workspaceAuthorizer, metrics)
+	sseHandler.SetRunAuthorizer(runAccess)
 	routes := platformRoutes{
 		tokenManager:     tokenManager,
 		authHandler:      auth.NewHandler(authService),
@@ -162,7 +172,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		fileHandler:      filepkg.NewHandler(fileService),
 		artifactHandler:  artifactpkg.NewHandler(artifactService),
 		jobsHandler:      jobspkg.NewHandler(jobService, cfg.Jobs.EnableNoopJob),
-		sseHandler:       ssepkg.NewHandler(runEventService, sseBroker, workspaceAuthorizer, metrics),
+		sseHandler:       sseHandler,
 		formHandler:      formpkg.NewHandler(formFileService, fillRunService),
 		knowledgeHandler: knowledgepkg.NewHandler(knowledgeBaseService, knowledgeDocumentService, ingestionService),
 		reviewHandler:    reviewpkg.NewHandler(reviewService, fillRunService),
@@ -286,6 +296,74 @@ type platformRoutes struct {
 	knowledgeHandler *knowledgepkg.Handler
 	reviewHandler    *reviewpkg.Handler
 	enableNoopJob    bool
+}
+
+type runEventAccessAuthorizer struct {
+	workspaceAuthorizer interface {
+		CanReadWorkspace(ctx context.Context, workspaceID uuid.UUID, actor auth.Principal) error
+	}
+	fillRuns interface {
+		GetFillRun(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*formpkg.FillRun, error)
+	}
+	ingestions interface {
+		GetIngestionJob(ctx context.Context, id uuid.UUID, actor auth.Principal) (*knowledgepkg.IngestionJob, error)
+	}
+}
+
+func (a runEventAccessAuthorizer) CanReadRunEvents(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, actor auth.Principal) error {
+	return a.canReadRun(ctx, workspaceID, runID, actor)
+}
+
+func (a runEventAccessAuthorizer) CanReadRunArtifact(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, actor auth.Principal) error {
+	return a.canReadRun(ctx, workspaceID, runID, actor)
+}
+
+func (a runEventAccessAuthorizer) canReadRun(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, actor auth.Principal) error {
+	lookupConfigured := false
+	if a.fillRuns != nil {
+		lookupConfigured = true
+		run, err := a.fillRuns.GetFillRun(ctx, runID, actor)
+		if err == nil {
+			if run.WorkspaceID != workspaceID {
+				return httpx.NewAppError(httpx.CodeForbidden, "run workspace mismatch", http.StatusForbidden, nil, nil)
+			}
+			return nil
+		}
+		if !isNotFound(err) {
+			return err
+		}
+	}
+	if a.ingestions != nil {
+		lookupConfigured = true
+		lookupActor := actor
+		if !auth.IsAdminRoles(lookupActor.Roles) {
+			lookupActor.Roles = append(append([]string(nil), lookupActor.Roles...), auth.RoleAdmin)
+		}
+		ingestion, err := a.ingestions.GetIngestionJob(ctx, runID, lookupActor)
+		if err == nil {
+			if ingestion.WorkspaceID != workspaceID {
+				return httpx.NewAppError(httpx.CodeForbidden, "run workspace mismatch", http.StatusForbidden, nil, nil)
+			}
+			if !auth.IsAdminRoles(actor.Roles) {
+				return httpx.NewAppError(httpx.CodeForbidden, "admin role required", http.StatusForbidden, nil, nil)
+			}
+			return nil
+		}
+		if !isNotFound(err) {
+			return err
+		}
+	}
+	if lookupConfigured {
+		return httpx.NewAppError(httpx.CodeNotFound, "run not found", http.StatusNotFound, nil, nil)
+	}
+	return a.workspaceAuthorizer.CanReadWorkspace(ctx, workspaceID, actor)
+}
+
+func isNotFound(err error) bool {
+	if appErr, ok := err.(*httpx.AppError); ok && appErr.Code == httpx.CodeNotFound {
+		return true
+	}
+	return false
 }
 
 func registerPlatformRoutes(r chi.Router, routes platformRoutes) {

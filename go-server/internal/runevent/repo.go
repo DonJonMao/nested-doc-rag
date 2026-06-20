@@ -39,12 +39,39 @@ func (r *PGXRepo) Create(ctx context.Context, event RunEvent) (*RunEvent, error)
 	if err != nil {
 		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "invalid run event payload", http.StatusBadRequest, nil, err)
 	}
-	err = r.pool.QueryRow(ctx, `
-		INSERT INTO run_events (id, workspace_id, run_id, job_id, event_type, payload_json, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, mapDBError(err, "create run event conflict", "run event not found")
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, event.RunID.String()); err != nil {
+		return nil, mapDBError(err, "create run event conflict", "run event not found")
+	}
+	err = tx.QueryRow(ctx, `
+		WITH next_sequence AS (
+			SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence
+			FROM run_events
+			WHERE workspace_id = $2 AND run_id = $3
+		)
+		INSERT INTO run_events (id, workspace_id, run_id, job_id, event_type, sequence, payload_json, created_at)
+		SELECT $1, $2, $3, $4, $5, next_sequence.sequence, $6, $7
+		FROM next_sequence
 		RETURNING sequence, created_at
 	`, event.ID, event.WorkspaceID, event.RunID, event.JobID, event.EventType, payload, event.CreatedAt).Scan(&event.Sequence, &event.CreatedAt)
 	if err != nil {
+		return nil, mapDBError(err, "create run event conflict", "run event not found")
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE fill_runs
+		SET last_event_sequence = GREATEST(last_event_sequence, $2)
+		WHERE id = $1
+	`, event.RunID, event.Sequence)
+	if err != nil {
+		return nil, mapDBError(err, "create run event conflict", "run event not found")
+	}
+	if err = tx.Commit(ctx); err != nil {
 		return nil, mapDBError(err, "create run event conflict", "run event not found")
 	}
 	return &event, nil

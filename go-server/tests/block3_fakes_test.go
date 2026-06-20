@@ -61,6 +61,31 @@ func (f *fakeJobRepo) ListByWorkspace(ctx context.Context, workspaceID uuid.UUID
 	return out, nil
 }
 
+func (f *fakeJobRepo) ListInterrupted(ctx context.Context, staleBefore time.Time, limit int) ([]jobs.Job, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []jobs.Job
+	for _, job := range f.jobs {
+		if job.Status != jobs.JobStatusRunning && job.Status != jobs.JobStatusCancelRequested {
+			continue
+		}
+		stamp := job.UpdatedAt
+		if job.StartedAt != nil {
+			stamp = *job.StartedAt
+		}
+		if job.HeartbeatAt != nil {
+			stamp = *job.HeartbeatAt
+		}
+		if stamp.IsZero() {
+			stamp = job.CreatedAt
+		}
+		if stamp.Before(staleBefore) {
+			out = append(out, job)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeJobRepo) UpdateStatus(ctx context.Context, id uuid.UUID, fromStatus string, toStatus string, fields jobs.UpdateStatusFields) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -199,9 +224,9 @@ func (f *fakeQueue) Close() error {
 }
 
 type fakeRunEventRepo struct {
-	mu     sync.Mutex
-	seq    int64
-	events []runevent.RunEvent
+	mu        sync.Mutex
+	sequences map[string]int64
+	events    []runevent.RunEvent
 }
 
 func (f *fakeRunEventRepo) Create(ctx context.Context, event runevent.RunEvent) (*runevent.RunEvent, error) {
@@ -210,8 +235,12 @@ func (f *fakeRunEventRepo) Create(ctx context.Context, event runevent.RunEvent) 
 	if event.ID == uuid.Nil {
 		event.ID = uuid.New()
 	}
-	f.seq++
-	event.Sequence = f.seq
+	if f.sequences == nil {
+		f.sequences = make(map[string]int64)
+	}
+	key := event.WorkspaceID.String() + "/" + event.RunID.String()
+	f.sequences[key]++
+	event.Sequence = f.sequences[key]
 	if event.CreatedAt.IsZero() {
 		event.CreatedAt = time.Now().UTC()
 	}

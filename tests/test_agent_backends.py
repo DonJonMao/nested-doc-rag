@@ -126,7 +126,7 @@ def test_cli_requires_qdrant_config_when_qdrant_backend(tmp_path: Path) -> None:
     )
 
     assert completed.returncode != 0
-    assert "retrieval-backend=qdrant requires qdrant_path, collection_name, embedding_endpoint, embedding_model" in completed.stderr
+    assert "retrieval-backend=qdrant requires qdrant_path or qdrant.url, collection_name, embedding_endpoint, embedding_model" in completed.stderr
 
 
 def test_cli_requires_llm_config_when_llm_backend(tmp_path: Path) -> None:

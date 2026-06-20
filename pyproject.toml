@@ -12,6 +12,7 @@ dependencies = [
   "agentscope>=2.0,<3",
   "openpyxl>=3.1",
   "pydantic>=2,<3",
+  "python-docx>=1.1",
   "qdrant-client>=1.9",
 ]
 

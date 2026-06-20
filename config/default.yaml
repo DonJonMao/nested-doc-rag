@@ -16,6 +16,8 @@ services:
 
 qdrant:
   collection_name: datacenter_chunks_v1
+  url: ""
+  api_key_env: QDRANT_API_KEY
   prefer_grpc: false
   timeout: 60
 

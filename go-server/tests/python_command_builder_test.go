@@ -34,6 +34,8 @@ func TestPythonCommandBuilderStep15FullArgs(t *testing.T) {
 	require.Contains(t, spec.Args, "run-step15-agent")
 	require.Contains(t, spec.Args, "--target-namespace")
 	require.Contains(t, spec.Args, "target")
+	require.Contains(t, spec.Args, "--retrieval-plan")
+	require.NotContains(t, spec.Args, "--retrieval-mode")
 	require.Contains(t, spec.Args, "--judge")
 	require.Contains(t, spec.Args, "--use-judge-cache")
 	require.Contains(t, spec.Args, "--judge-cache")
@@ -75,11 +77,13 @@ func TestPythonCommandBuilderIngest(t *testing.T) {
 	builder := pythonpkg.CommandBuilder{PythonExecutable: "python", ProjectDir: "/repo", DefaultConfigPath: "config/local.yaml"}
 
 	spec := builder.BuildKnowledgeIngestionCommand(pythonpkg.IngestionRequest{
-		InputDir:        "/data/input",
-		Namespace:       "kb_ns",
-		KnowledgeBaseID: "kb-1",
-		OutDir:          "/tmp/ingest",
-		Resume:          true,
+		InputDir:         "/data/input",
+		Namespace:        "kb_ns",
+		KnowledgeBaseID:  "kb-1",
+		QdrantCollection: "datacenter_chunks_v1",
+		QdrantNamespace:  "kb_ns",
+		OutDir:           "/tmp/ingest",
+		Resume:           true,
 	})
 
 	require.Contains(t, spec.Args, "ingest-knowledge")
@@ -87,5 +91,8 @@ func TestPythonCommandBuilderIngest(t *testing.T) {
 	require.Contains(t, spec.Args, "/data/input")
 	require.Contains(t, spec.Args, "--knowledge-base-id")
 	require.Contains(t, spec.Args, "kb-1")
+	require.Contains(t, spec.Args, "--qdrant-collection")
+	require.Contains(t, spec.Args, "datacenter_chunks_v1")
+	require.Contains(t, spec.Args, "--qdrant-namespace")
 	require.Contains(t, spec.Args, "--resume")
 }

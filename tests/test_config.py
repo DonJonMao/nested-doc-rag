@@ -70,12 +70,16 @@ retrieval:
 def test_env_alias_and_path_resolution(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("EMBEDDING_ENDPOINT", "http://alias/embeddings")
     monkeypatch.setenv("QDRANT_COLLECTION", "alias_collection")
+    monkeypatch.setenv("QDRANT_URL", "http://localhost:6333")
+    monkeypatch.setenv("QDRANT_API_KEY_ENV", "LOCAL_QDRANT_API_KEY")
     monkeypatch.setenv("TARGET_NAMESPACE", "xixian_6")
 
     config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml")
 
     assert config.services.embedding_endpoint == "http://alias/embeddings"
     assert config.qdrant.collection_name == "alias_collection"
+    assert config.qdrant.url == "http://localhost:6333"
+    assert config.qdrant.api_key_env == "LOCAL_QDRANT_API_KEY"
     assert config.retrieval.target_namespace == "xixian_6"
     assert config.paths.artifacts_dir == (tmp_path / "artifacts").resolve()
     assert config.paths.qdrant_path == (tmp_path / "artifacts/15_vector_store/qdrant").resolve()
@@ -136,6 +140,7 @@ def test_show_config_command_outputs_merged_config() -> None:
     assert "retrieval_mode" not in value["retrieval"]
     assert "retrieval_plan" not in value["retrieval"]
     assert value["qdrant"]["collection_name"] == "datacenter_chunks_v1"
+    assert value["qdrant"]["url"] == ""
 
 
 def test_legacy_retrieval_config_normalizes_to_layered(tmp_path: Path) -> None:

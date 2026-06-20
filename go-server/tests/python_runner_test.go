@@ -33,9 +33,9 @@ func TestPythonRunnerRunStep15Success(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result.Manifest)
 	require.NotNil(t, result.Validation)
-	require.Equal(t, "layered", exec.specs[0].Args[argIndex(exec.specs[0].Args, "--retrieval-mode")+1])
-	require.Equal(t, "step15_compat", exec.specs[0].Args[argIndex(exec.specs[0].Args, "--prompt-version")+1])
-	require.Equal(t, "4-144", exec.specs[0].Args[argIndex(exec.specs[0].Args, "--rows")+1])
+	require.Equal(t, "layered", argValue(t, exec.specs[0].Args, "--retrieval-plan"))
+	require.Equal(t, "step15_compat", argValue(t, exec.specs[0].Args, "--prompt-version"))
+	require.Equal(t, "4-144", argValue(t, exec.specs[0].Args, "--rows"))
 	require.Contains(t, exec.specs[1].Args, "validate-artifacts")
 }
 
@@ -100,4 +100,12 @@ func argIndex(args []string, needle string) int {
 		}
 	}
 	return -1
+}
+
+func argValue(t *testing.T, args []string, needle string) string {
+	t.Helper()
+	idx := argIndex(args, needle)
+	require.NotEqual(t, -1, idx)
+	require.Less(t, idx+1, len(args))
+	return args[idx+1]
 }

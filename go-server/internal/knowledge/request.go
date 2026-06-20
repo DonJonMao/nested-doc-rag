@@ -9,6 +9,7 @@ import (
 type CreateKnowledgeBaseRequest struct {
 	WorkspaceID      uuid.UUID `json:"workspace_id"`
 	Name             string    `json:"name"`
+	Namespace        string    `json:"namespace"`
 	Description      string    `json:"description"`
 	QdrantCollection string    `json:"qdrant_collection"`
 }
@@ -31,6 +32,7 @@ type CreateIngestionRunRequest struct {
 	KnowledgeBaseID  uuid.UUID `json:"knowledge_base_id"`
 	Namespace        string    `json:"namespace"`
 	Rebuild          bool      `json:"rebuild"`
+	Mode             string    `json:"mode"`
 	QdrantCollection string    `json:"qdrant_collection"`
 	QdrantNamespace  string    `json:"qdrant_namespace"`
 	Resume           bool      `json:"resume"`

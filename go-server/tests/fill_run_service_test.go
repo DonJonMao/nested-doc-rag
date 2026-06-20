@@ -15,6 +15,7 @@ import (
 	formpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/form"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/httpx"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/jobs"
+	knowledgepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/knowledge"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -31,10 +32,12 @@ func TestFillRunServiceCreateCreatesJobAndQueues(t *testing.T) {
 	cfg := *config.Default()
 	cfg.Python.ProjectDir = t.TempDir()
 	service := formpkg.NewFillRunService(fillRepo, formRepo, jobSvc, &fakeFillArtifactService{}, &fakeAuthorizer{}, audit.NewService(audits, zap.NewNop()), zap.NewNop(), cfg)
+	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}}
 
-	run, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "target"}, auth.Principal{UserID: uuid.New()})
+	run, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, Name: "西咸四号楼巡检", TargetNamespace: "target"}, actor)
 
 	require.NoError(t, err)
+	require.Equal(t, "西咸四号楼巡检", run.Name)
 	require.Equal(t, formpkg.FillRunStatusQueued, run.Status)
 	require.NotNil(t, run.JobID)
 	require.Len(t, jobSvc.created, 1)
@@ -49,17 +52,46 @@ func TestFillRunServiceCreateCreatesJobAndQueues(t *testing.T) {
 	require.Equal(t, "fill_run.created", audits.logs[0].Action)
 }
 
+func TestFillRunServiceCreateDefaultsNameFromFormFilename(t *testing.T) {
+	workspaceID := uuid.New()
+	formRepo := newFakeFormFileRepo()
+	formID := uuid.New()
+	require.NoError(t, formRepo.Create(context.Background(), formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, FileID: uuid.New(), Filename: "基地云机房信息调研表.xlsx"}))
+	cfg := *config.Default()
+	cfg.Python.ProjectDir = t.TempDir()
+	service := formpkg.NewFillRunService(newFakeFillRunRepo(), formRepo, &fakeJobUseCase{}, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), cfg)
+
+	run, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "target"}, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}})
+
+	require.NoError(t, err)
+	require.Equal(t, "基地云机房信息调研表", run.Name)
+}
+
+func TestFillRunServiceCreateRejectsTooLongName(t *testing.T) {
+	workspaceID := uuid.New()
+	formRepo := newFakeFormFileRepo()
+	formID := uuid.New()
+	require.NoError(t, formRepo.Create(context.Background(), formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, FileID: uuid.New(), Filename: "form.xlsx"}))
+	service := formpkg.NewFillRunService(newFakeFillRunRepo(), formRepo, &fakeJobUseCase{}, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), *config.Default())
+
+	_, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, Name: strings.Repeat("测", 121), TargetNamespace: "target"}, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}})
+
+	require.Error(t, err)
+	require.Equal(t, httpx.CodeInvalidArgument, httpx.ErrorFrom(err).Code)
+}
+
 func TestFillRunServiceCancelCallsJobService(t *testing.T) {
 	workspaceID := uuid.New()
 	runID := uuid.New()
 	jobID := uuid.New()
+	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}}
 	fillRepo := newFakeFillRunRepo()
-	require.NoError(t, fillRepo.Create(context.Background(), formpkg.FillRun{ID: runID, WorkspaceID: workspaceID, FormFileID: uuid.New(), JobID: &jobID, Status: formpkg.FillRunStatusRunning}))
+	require.NoError(t, fillRepo.Create(context.Background(), formpkg.FillRun{ID: runID, WorkspaceID: workspaceID, FormFileID: uuid.New(), JobID: &jobID, Status: formpkg.FillRunStatusRunning, CreatedBy: actor.UserID}))
 	jobSvc := &fakeJobUseCase{cancel: &jobs.Job{ID: jobID, Status: jobs.JobStatusCancelRequested}}
 	audits := &fakeAuditRepo{}
 	service := formpkg.NewFillRunService(fillRepo, newFakeFormFileRepo(), jobSvc, &fakeFillArtifactService{}, &fakeAuthorizer{}, audit.NewService(audits, zap.NewNop()), zap.NewNop(), *config.Default())
 
-	run, err := service.CancelFillRun(context.Background(), runID, auth.Principal{UserID: uuid.New()})
+	run, err := service.CancelFillRun(context.Background(), runID, actor)
 
 	require.NoError(t, err)
 	require.Equal(t, formpkg.FillRunStatusCancelRequested, run.Status)
@@ -72,12 +104,13 @@ func TestFillRunServiceCancelMarksCanceledWhenJobCanceled(t *testing.T) {
 	workspaceID := uuid.New()
 	runID := uuid.New()
 	jobID := uuid.New()
+	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}}
 	fillRepo := newFakeFillRunRepo()
-	require.NoError(t, fillRepo.Create(context.Background(), formpkg.FillRun{ID: runID, WorkspaceID: workspaceID, FormFileID: uuid.New(), JobID: &jobID, Status: formpkg.FillRunStatusCancelRequested}))
+	require.NoError(t, fillRepo.Create(context.Background(), formpkg.FillRun{ID: runID, WorkspaceID: workspaceID, FormFileID: uuid.New(), JobID: &jobID, Status: formpkg.FillRunStatusCancelRequested, CreatedBy: actor.UserID}))
 	jobSvc := &fakeJobUseCase{cancel: &jobs.Job{ID: jobID, Status: jobs.JobStatusCanceled}}
 	service := formpkg.NewFillRunService(fillRepo, newFakeFormFileRepo(), jobSvc, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), *config.Default())
 
-	run, err := service.CancelFillRun(context.Background(), runID, auth.Principal{UserID: uuid.New()})
+	run, err := service.CancelFillRun(context.Background(), runID, actor)
 
 	require.NoError(t, err)
 	require.Equal(t, formpkg.FillRunStatusCanceled, run.Status)
@@ -87,17 +120,64 @@ func TestFillRunServiceGetListPermissions(t *testing.T) {
 	workspaceID := uuid.New()
 	fillRepo := newFakeFillRunRepo()
 	runID := uuid.New()
-	require.NoError(t, fillRepo.Create(context.Background(), formpkg.FillRun{ID: runID, WorkspaceID: workspaceID, FormFileID: uuid.New(), Status: formpkg.FillRunStatusQueued}))
+	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}}
+	require.NoError(t, fillRepo.Create(context.Background(), formpkg.FillRun{ID: runID, WorkspaceID: workspaceID, FormFileID: uuid.New(), Status: formpkg.FillRunStatusQueued, CreatedBy: actor.UserID}))
 	authorizer := &fakeAuthorizer{}
 	service := formpkg.NewFillRunService(fillRepo, newFakeFormFileRepo(), &fakeJobUseCase{}, &fakeFillArtifactService{}, authorizer, nil, zap.NewNop(), *config.Default())
 
-	_, err := service.GetFillRun(context.Background(), runID, auth.Principal{UserID: uuid.New()})
+	_, err := service.GetFillRun(context.Background(), runID, actor)
 	require.NoError(t, err)
-	runs, err := service.ListFillRuns(context.Background(), workspaceID, "", 50, 0, auth.Principal{UserID: uuid.New()})
+	runs, err := service.ListFillRuns(context.Background(), workspaceID, "", 50, 0, true, actor)
 
 	require.NoError(t, err)
 	require.Len(t, runs, 1)
 	require.Equal(t, 2, authorizer.reads)
+}
+
+func TestFillRunServiceOperatorCannotAccessOtherUsersRuns(t *testing.T) {
+	workspaceID := uuid.New()
+	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}}
+	otherUserID := uuid.New()
+	ownRunID := uuid.New()
+	otherRunID := uuid.New()
+	otherJobID := uuid.New()
+	fillRepo := newFakeFillRunRepo()
+	require.NoError(t, fillRepo.Create(context.Background(), formpkg.FillRun{ID: ownRunID, WorkspaceID: workspaceID, FormFileID: uuid.New(), Status: formpkg.FillRunStatusQueued, CreatedBy: actor.UserID}))
+	require.NoError(t, fillRepo.Create(context.Background(), formpkg.FillRun{ID: otherRunID, WorkspaceID: workspaceID, FormFileID: uuid.New(), JobID: &otherJobID, Status: formpkg.FillRunStatusRunning, CreatedBy: otherUserID}))
+	jobSvc := &fakeJobUseCase{}
+	artifacts := &fakeFillArtifactService{artifacts: []artifact.RunArtifact{{ID: uuid.New(), ArtifactType: artifact.TypeFilledForm}}}
+	service := formpkg.NewFillRunService(fillRepo, newFakeFormFileRepo(), jobSvc, artifacts, &fakeAuthorizer{}, nil, zap.NewNop(), *config.Default())
+
+	_, err := service.GetFillRun(context.Background(), otherRunID, actor)
+	requireAppError(t, err, httpx.CodeForbidden, http.StatusForbidden)
+
+	_, err = service.CancelFillRun(context.Background(), otherRunID, actor)
+	requireAppError(t, err, httpx.CodeForbidden, http.StatusForbidden)
+	require.Empty(t, jobSvc.canceled)
+
+	_, err = service.GetDownloadArtifactByType(context.Background(), otherRunID, artifact.TypeFilledForm, actor)
+	requireAppError(t, err, httpx.CodeForbidden, http.StatusForbidden)
+	require.Empty(t, artifacts.downloadCalls)
+
+	runs, err := service.ListFillRuns(context.Background(), workspaceID, "", 50, 0, false, actor)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	require.Equal(t, ownRunID, runs[0].ID)
+}
+
+func TestFillRunServiceAdminCanAccessWorkspaceRuns(t *testing.T) {
+	workspaceID := uuid.New()
+	fillRepo := newFakeFillRunRepo()
+	firstRunID := uuid.New()
+	secondRunID := uuid.New()
+	require.NoError(t, fillRepo.Create(context.Background(), formpkg.FillRun{ID: firstRunID, WorkspaceID: workspaceID, FormFileID: uuid.New(), Status: formpkg.FillRunStatusQueued, CreatedBy: uuid.New()}))
+	require.NoError(t, fillRepo.Create(context.Background(), formpkg.FillRun{ID: secondRunID, WorkspaceID: workspaceID, FormFileID: uuid.New(), Status: formpkg.FillRunStatusQueued, CreatedBy: uuid.New()}))
+	service := formpkg.NewFillRunService(fillRepo, newFakeFormFileRepo(), &fakeJobUseCase{}, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), *config.Default())
+
+	runs, err := service.ListFillRuns(context.Background(), workspaceID, "", 50, 0, false, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}})
+
+	require.NoError(t, err)
+	require.Len(t, runs, 2)
 }
 
 func TestFillRunServiceCreateRequiresWrite(t *testing.T) {
@@ -131,7 +211,7 @@ func TestFillRunServiceCreateRequiresTargetNamespace(t *testing.T) {
 	jobSvc := &fakeJobUseCase{}
 	service := formpkg.NewFillRunService(newFakeFillRunRepo(), formRepo, jobSvc, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), *config.Default())
 
-	_, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID}, auth.Principal{UserID: uuid.New()})
+	_, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID}, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}})
 
 	require.Error(t, err)
 	require.Equal(t, httpx.CodeInvalidArgument, httpx.ErrorFrom(err).Code)
@@ -146,7 +226,7 @@ func TestFillRunServiceCreateJobFailureMarksRunFailed(t *testing.T) {
 	fillRepo := newFakeFillRunRepo()
 	service := formpkg.NewFillRunService(fillRepo, formRepo, &fakeJobUseCase{err: errors.New("queue unavailable")}, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), *config.Default())
 
-	_, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "target"}, auth.Principal{UserID: uuid.New()})
+	_, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "target"}, auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}})
 
 	require.Error(t, err)
 	require.Len(t, fillRepo.runs, 1)
@@ -156,19 +236,90 @@ func TestFillRunServiceCreateJobFailureMarksRunFailed(t *testing.T) {
 	}
 }
 
+func TestFillRunServiceCreateForOperatorRequiresReadyKnowledgeBase(t *testing.T) {
+	workspaceID := uuid.New()
+	formRepo := newFakeFormFileRepo()
+	formID := uuid.New()
+	kbID := uuid.New()
+	currentVersionID := uuid.New()
+	require.NoError(t, formRepo.Create(context.Background(), formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, FileID: uuid.New(), Filename: "form.xlsx"}))
+	bases := newFakeKnowledgeBaseRepo()
+	require.NoError(t, bases.Create(context.Background(), knowledgepkg.KnowledgeBase{
+		ID:                    kbID,
+		WorkspaceID:           workspaceID,
+		Name:                  "西咸4号楼",
+		Namespace:             "xixian_4",
+		Status:                knowledgepkg.KnowledgeBaseStatusReady,
+		CurrentIndexVersionID: &currentVersionID,
+	}))
+	jobSvc := &fakeJobUseCase{}
+	cfg := *config.Default()
+	cfg.Python.ProjectDir = t.TempDir()
+	cfg.Python.Step15DefaultRows = "4-144"
+	cfg.Python.Step15DefaultRetrievalMode = "layered"
+	cfg.Python.Step15DefaultPromptVersion = "step15_compat"
+	service := formpkg.NewFillRunService(newFakeFillRunRepo(), formRepo, jobSvc, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), cfg)
+	service.SetKnowledgeBaseReader(bases)
+	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}}
+	wrongVersionID := uuid.New()
+	writeback := false
+
+	run, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{
+		WorkspaceID:     workspaceID,
+		FormFileID:      formID,
+		KnowledgeBaseID: &kbID,
+		IndexVersionID:  &wrongVersionID,
+		TargetNamespace: "other",
+		Rows:            "1-999",
+		RetrievalMode:   "flat",
+		PromptVersion:   "debug",
+		Judge:           true,
+		UseJudgeCache:   true,
+		Writeback:       &writeback,
+	}, actor)
+
+	require.Error(t, err)
+	require.Nil(t, run)
+	require.Equal(t, httpx.CodeConflict, httpx.ErrorFrom(err).Code)
+	require.Empty(t, jobSvc.created)
+
+	run, err = service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{
+		WorkspaceID:     workspaceID,
+		FormFileID:      formID,
+		KnowledgeBaseID: &kbID,
+		Rows:            "1-999",
+		RetrievalMode:   "flat",
+		PromptVersion:   "debug",
+		Judge:           true,
+		UseJudgeCache:   true,
+		Writeback:       &writeback,
+	}, actor)
+
+	require.NoError(t, err)
+	require.Equal(t, "xixian_4", run.TargetNamespace)
+	require.Equal(t, currentVersionID, *run.IndexVersionID)
+	require.Equal(t, "4-144", run.RowsSpec)
+	require.Equal(t, "layered", run.RetrievalMode)
+	require.Equal(t, "step15_compat", run.PromptVersion)
+	require.False(t, run.JudgeEnabled)
+	require.False(t, run.UseJudgeCache)
+	require.True(t, run.WritebackEnabled)
+}
+
 func TestFillRunServiceDownloadArtifactByType(t *testing.T) {
 	workspaceID := uuid.New()
 	runID := uuid.New()
 	artifactID := uuid.New()
+	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}}
 	fillRepo := newFakeFillRunRepo()
-	require.NoError(t, fillRepo.Create(context.Background(), formpkg.FillRun{ID: runID, WorkspaceID: workspaceID, FormFileID: uuid.New(), Status: formpkg.FillRunStatusSucceeded}))
+	require.NoError(t, fillRepo.Create(context.Background(), formpkg.FillRun{ID: runID, WorkspaceID: workspaceID, FormFileID: uuid.New(), Status: formpkg.FillRunStatusSucceeded, CreatedBy: actor.UserID}))
 	artifacts := &fakeFillArtifactService{
 		artifacts: []artifact.RunArtifact{{ID: uuid.New(), ArtifactType: artifact.TypeRunSummary}, {ID: artifactID, ArtifactType: artifact.TypeFilledForm}},
 		download:  &artifact.DownloadResult{Filename: "filled.xlsx", ContentType: "application/octet-stream", ContentLength: 6, Reader: io.NopCloser(strings.NewReader("result"))},
 	}
 	service := formpkg.NewFillRunService(fillRepo, newFakeFormFileRepo(), &fakeJobUseCase{}, artifacts, &fakeAuthorizer{}, nil, zap.NewNop(), *config.Default())
 
-	result, err := service.GetDownloadArtifactByType(context.Background(), runID, artifact.TypeFilledForm, auth.Principal{UserID: uuid.New()})
+	result, err := service.GetDownloadArtifactByType(context.Background(), runID, artifact.TypeFilledForm, actor)
 
 	require.NoError(t, err)
 	require.Equal(t, "filled.xlsx", result.Filename)
@@ -179,12 +330,13 @@ func TestFillRunServiceDownloadArtifactByType(t *testing.T) {
 func TestFillRunServiceDownloadArtifactByTypeNotFound(t *testing.T) {
 	workspaceID := uuid.New()
 	runID := uuid.New()
+	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}}
 	fillRepo := newFakeFillRunRepo()
-	require.NoError(t, fillRepo.Create(context.Background(), formpkg.FillRun{ID: runID, WorkspaceID: workspaceID, FormFileID: uuid.New(), Status: formpkg.FillRunStatusSucceeded}))
+	require.NoError(t, fillRepo.Create(context.Background(), formpkg.FillRun{ID: runID, WorkspaceID: workspaceID, FormFileID: uuid.New(), Status: formpkg.FillRunStatusSucceeded, CreatedBy: actor.UserID}))
 	artifacts := &fakeFillArtifactService{artifacts: []artifact.RunArtifact{{ID: uuid.New(), ArtifactType: artifact.TypeRunSummary}}}
 	service := formpkg.NewFillRunService(fillRepo, newFakeFormFileRepo(), &fakeJobUseCase{}, artifacts, &fakeAuthorizer{}, nil, zap.NewNop(), *config.Default())
 
-	_, err := service.GetDownloadArtifactByType(context.Background(), runID, artifact.TypeFilledForm, auth.Principal{UserID: uuid.New()})
+	_, err := service.GetDownloadArtifactByType(context.Background(), runID, artifact.TypeFilledForm, actor)
 
 	require.Error(t, err)
 	require.Equal(t, httpx.CodeNotFound, httpx.ErrorFrom(err).Code)

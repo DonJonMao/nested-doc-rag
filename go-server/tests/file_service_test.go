@@ -51,6 +51,17 @@ func TestFileServiceUploadRepoFailureDeletesUploadedObject(t *testing.T) {
 	require.Len(t, storage.deleteLog, 1)
 }
 
+func TestFileServiceKnowledgeDocumentUploadRequiresAdmin(t *testing.T) {
+	service, repo, _, _, _, actor, workspaceID := newFileServiceFixture(t)
+	req := uploadReq(workspaceID)
+	req.Category = filepkg.FileCategoryKnowledgeDocument
+
+	_, err := service.Upload(context.Background(), req, actor)
+
+	requireAppError(t, err, httpx.CodeForbidden, http.StatusForbidden)
+	require.Zero(t, repo.createCount)
+}
+
 func TestFileServiceDownloadChecksWorkspaceReadPermission(t *testing.T) {
 	service, repo, storage, _, authorizer, actor, workspaceID := newFileServiceFixture(t)
 	record := seedFile(repo, storage, workspaceID, actor.UserID)
@@ -62,6 +73,26 @@ func TestFileServiceDownloadChecksWorkspaceReadPermission(t *testing.T) {
 	require.Equal(t, 1, authorizer.reads)
 }
 
+func TestFileServiceKnowledgeDocumentDownloadRequiresAdmin(t *testing.T) {
+	service, repo, storage, _, authorizer, actor, workspaceID := newFileServiceFixture(t)
+	record := seedFile(repo, storage, workspaceID, actor.UserID)
+	record.FileCategory = filepkg.FileCategoryKnowledgeDocument
+	repo.files[record.ID] = record
+
+	_, err := service.Download(context.Background(), record.ID, actor)
+
+	requireAppError(t, err, httpx.CodeForbidden, http.StatusForbidden)
+	require.Equal(t, 0, authorizer.reads)
+}
+
+func TestFileServiceKnowledgeDocumentListRequiresAdmin(t *testing.T) {
+	service, _, _, _, _, actor, workspaceID := newFileServiceFixture(t)
+
+	_, err := service.List(context.Background(), workspaceID, filepkg.FileCategoryKnowledgeDocument, 50, 0, actor)
+
+	requireAppError(t, err, httpx.CodeForbidden, http.StatusForbidden)
+}
+
 func TestFileServiceDeleteChecksWorkspaceWritePermission(t *testing.T) {
 	service, repo, storage, _, authorizer, actor, workspaceID := newFileServiceFixture(t)
 	record := seedFile(repo, storage, workspaceID, actor.UserID)
@@ -70,6 +101,19 @@ func TestFileServiceDeleteChecksWorkspaceWritePermission(t *testing.T) {
 	err := service.Delete(context.Background(), record.ID, actor)
 
 	requireAppError(t, err, httpx.CodeForbidden, http.StatusForbidden)
+	require.Empty(t, repo.softDeleted)
+}
+
+func TestFileServiceKnowledgeDocumentDeleteRequiresAdmin(t *testing.T) {
+	service, repo, storage, _, authorizer, actor, workspaceID := newFileServiceFixture(t)
+	record := seedFile(repo, storage, workspaceID, actor.UserID)
+	record.FileCategory = filepkg.FileCategoryKnowledgeDocument
+	repo.files[record.ID] = record
+
+	err := service.Delete(context.Background(), record.ID, actor)
+
+	requireAppError(t, err, httpx.CodeForbidden, http.StatusForbidden)
+	require.Equal(t, 0, authorizer.writes)
 	require.Empty(t, repo.softDeleted)
 }
 

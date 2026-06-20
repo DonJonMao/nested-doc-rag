@@ -113,8 +113,16 @@ func TestFillRunHandlerCreateGetListCancel(t *testing.T) {
 	require.Equal(t, http.StatusOK, createRec.Code)
 	require.Len(t, runs.created, 1)
 
+	kbID := uuid.New()
+	simpleReq := httptest.NewRequest(http.MethodPost, "/fill-runs/simple", strings.NewReader(`{"workspace_id":"`+workspaceID.String()+`","knowledge_base_id":"`+kbID.String()+`","form_file_id":"`+uuid.New().String()+`","name":"一号楼调研"}`)).WithContext(actorCtx)
+	simpleRec := httptest.NewRecorder()
 	router := chi.NewRouter()
 	handler.RegisterRoutes(router)
+	router.ServeHTTP(simpleRec, simpleReq)
+	require.Equal(t, http.StatusOK, simpleRec.Code)
+	require.Len(t, runs.created, 2)
+	require.Equal(t, "一号楼调研", runs.created[1].Name)
+
 	getReq := httptest.NewRequest(http.MethodGet, "/fill-runs/"+runID.String(), nil).WithContext(actorCtx)
 	getRec := httptest.NewRecorder()
 	router.ServeHTTP(getRec, getReq)
@@ -199,11 +207,16 @@ func (f *fakeFillRunUseCase) CreateFillRun(ctx context.Context, req formpkg.Crea
 	return f.run, f.err
 }
 
+func (f *fakeFillRunUseCase) CreateSimpleFillRun(ctx context.Context, req formpkg.CreateSimpleFillRunRequest, actor auth.Principal) (*formpkg.FillRun, error) {
+	f.created = append(f.created, formpkg.CreateFillRunRequest{WorkspaceID: req.WorkspaceID, FormFileID: req.FormFileID, Name: req.Name, KnowledgeBaseID: &req.KnowledgeBaseID, RoomContext: req.RoomContext})
+	return f.run, f.err
+}
+
 func (f *fakeFillRunUseCase) GetFillRun(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*formpkg.FillRun, error) {
 	return f.run, f.err
 }
 
-func (f *fakeFillRunUseCase) ListFillRuns(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int, actor auth.Principal) ([]formpkg.FillRun, error) {
+func (f *fakeFillRunUseCase) ListFillRuns(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int, mine bool, actor auth.Principal) ([]formpkg.FillRun, error) {
 	return f.runs, f.err
 }
 

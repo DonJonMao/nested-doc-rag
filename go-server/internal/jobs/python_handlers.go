@@ -179,7 +179,7 @@ func (h *FillFormPythonHandler) Handle(ctx context.Context, job *Job) error {
 		h.markFailed(context.Background(), payload.FillRunID, err)
 		return err
 	}
-	actor := auth.Principal{UserID: job.CreatedBy, Roles: []string{auth.RoleOperator}}
+	actor := auth.Principal{UserID: job.CreatedBy, Roles: []string{auth.RoleAdmin}}
 	registered, err := h.Archiver.ArchiveStep15Artifacts(ctx, job.WorkspaceID, job.ResourceID, result.Manifest, actor)
 	if err != nil {
 		h.markFailed(context.Background(), payload.FillRunID, err)
@@ -212,6 +212,20 @@ func (h *FillFormPythonHandler) Handle(ctx context.Context, job *Job) error {
 		}
 	}
 	return nil
+}
+
+func (h *FillFormPythonHandler) RecoverInterruptedJob(ctx context.Context, job *Job, terminalStatus string, err error) {
+	if h == nil || job == nil || job.ResourceID == uuid.Nil {
+		return
+	}
+	if terminalStatus == JobStatusCanceled {
+		h.markCanceled(ctx, job.ResourceID)
+		return
+	}
+	if err == nil {
+		err = errors.New("worker interrupted fill run")
+	}
+	h.markFailed(ctx, job.ResourceID, err)
 }
 
 type IngestKnowledgePythonHandler struct {
@@ -332,16 +346,18 @@ func (h *IngestKnowledgePythonHandler) Handle(ctx context.Context, job *Job) err
 		ingestionID = job.ResourceID
 	}
 	result, err := h.Runner.RunKnowledgeIngestion(ctx, python.IngestionRequest{
-		WorkspaceID:     job.WorkspaceID,
-		JobID:           job.ID,
-		IngestionID:     ingestionID,
-		ConfigPath:      payload.ConfigPath,
-		InputDir:        payload.InputDir,
-		Namespace:       payload.Namespace,
-		KnowledgeBaseID: externalID,
-		OutDir:          payload.OutDir,
-		Resume:          payload.Resume,
-		Env:             payload.Env,
+		WorkspaceID:      job.WorkspaceID,
+		JobID:            job.ID,
+		IngestionID:      ingestionID,
+		ConfigPath:       payload.ConfigPath,
+		InputDir:         payload.InputDir,
+		Namespace:        payload.Namespace,
+		KnowledgeBaseID:  externalID,
+		QdrantCollection: payload.QdrantCollection,
+		QdrantNamespace:  payload.QdrantNamespace,
+		OutDir:           payload.OutDir,
+		Resume:           payload.Resume,
+		Env:              payload.Env,
 	})
 	if err != nil {
 		h.emit(ctx, job, runevent.EventIngestionFailed, map[string]any{"error_message": err.Error()})
@@ -370,6 +386,20 @@ func (h *IngestKnowledgePythonHandler) Handle(ctx context.Context, job *Job) err
 	}
 	h.emit(ctx, job, runevent.EventIndexVersionReady, map[string]any{"ingestion_job_id": payload.IngestionJobID.String(), "index_version_id": payload.IndexVersionID.String()})
 	return nil
+}
+
+func (h *IngestKnowledgePythonHandler) RecoverInterruptedJob(ctx context.Context, job *Job, terminalStatus string, err error) {
+	if h == nil || job == nil || job.ResourceID == uuid.Nil {
+		return
+	}
+	if terminalStatus == JobStatusCanceled {
+		h.markIngestionCanceled(ctx, job.ResourceID)
+		return
+	}
+	if err == nil {
+		err = errors.New("worker interrupted ingestion run")
+	}
+	h.markIngestionFailed(ctx, job.ResourceID, err)
 }
 
 func (h *FillFormPythonHandler) emit(ctx context.Context, job *Job, eventType string, payload map[string]any) {
@@ -494,7 +524,7 @@ func (h *IngestKnowledgePythonHandler) archiveIngestionArtifacts(ctx context.Con
 	if err != nil {
 		return err
 	}
-	actor := auth.Principal{UserID: job.CreatedBy, Roles: []string{auth.RoleOperator}}
+	actor := auth.Principal{UserID: job.CreatedBy, Roles: []string{auth.RoleAdmin}}
 	ingestionID := payload.IngestionJobID
 	if ingestionID == uuid.Nil {
 		ingestionID = job.ResourceID

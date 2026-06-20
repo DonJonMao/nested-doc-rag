@@ -3,23 +3,32 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from qdrant_client import QdrantClient, models
+from qdrant_client import models
 
 from nested_doc_rag.embedding import EmbeddingClient
+from nested_doc_rag.retrieval.qdrant_client import build_qdrant_client
 
 
 class QdrantRetriever:
     def __init__(
         self,
         *,
-        qdrant_path: Path,
+        qdrant_path: Path | None,
+        qdrant_url: str | None = None,
+        qdrant_api_key_env: str | None = None,
         collection_name: str,
         embedding_endpoint: str,
         embedding_model: str,
         prefer_grpc: bool = False,
         timeout: int = 60,
     ) -> None:
-        self.client = QdrantClient(path=str(qdrant_path), prefer_grpc=prefer_grpc, timeout=timeout)
+        self.client = build_qdrant_client(
+            qdrant_path=qdrant_path,
+            qdrant_url=qdrant_url,
+            api_key_env=qdrant_api_key_env,
+            prefer_grpc=prefer_grpc,
+            timeout=timeout,
+        )
         self.collection_name = collection_name
         self.embedder = EmbeddingClient(endpoint=embedding_endpoint, model=embedding_model)
 

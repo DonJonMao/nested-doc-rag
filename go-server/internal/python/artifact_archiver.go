@@ -44,7 +44,7 @@ func (a *ArtifactArchiver) ArchiveStep15Artifacts(ctx context.Context, workspace
 	for artifactType := range manifest.Artifacts {
 		path, ok := manifest.ArtifactPath(artifactType)
 		if !ok || strings.TrimSpace(path) == "" {
-			return nil, fmt.Errorf("%w: artifact %s path is empty", ErrArtifactArchiveFail, artifactType)
+			continue
 		}
 		meta, err := inspectArtifact(path)
 		if err != nil {

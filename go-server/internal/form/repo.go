@@ -23,6 +23,7 @@ type FillRunRepo interface {
 	Create(ctx context.Context, run FillRun) error
 	GetByID(ctx context.Context, id uuid.UUID) (*FillRun, error)
 	ListByWorkspace(ctx context.Context, workspaceID uuid.UUID, status string, limit int, offset int) ([]FillRun, error)
+	ListByWorkspaceAndCreator(ctx context.Context, workspaceID uuid.UUID, createdBy uuid.UUID, status string, limit int, offset int) ([]FillRun, error)
 	AttachJob(ctx context.Context, runID uuid.UUID, jobID uuid.UUID, queuedAt time.Time) error
 	MarkRunning(ctx context.Context, runID uuid.UUID, startedAt time.Time) error
 	MarkSucceeded(ctx context.Context, runID uuid.UUID, finishedAt time.Time, update FillRunCompletionUpdate) error
@@ -111,7 +112,7 @@ func (r *PGXFillRunRepo) Create(ctx context.Context, run FillRun) error {
 	}
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO fill_runs (
-			id, workspace_id, form_file_id, job_id, knowledge_base_id, index_version_id,
+			id, workspace_id, form_file_id, job_id, name, knowledge_base_id, index_version_id,
 			target_namespace, global_namespace, room_context, rows_spec, retrieval_mode, prompt_version,
 			judge_enabled, use_judge_cache, writeback_enabled, status, progress_total, progress_done,
 			out_dir, run_manifest_path, summary_path, filled_form_artifact_id,
@@ -122,9 +123,9 @@ func (r *PGXFillRunRepo) Create(ctx context.Context, run FillRun) error {
 		VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
 			$13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
-			$23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36
+			$23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37
 		)
-	`, run.ID, run.WorkspaceID, run.FormFileID, run.JobID, run.KnowledgeBaseID, run.IndexVersionID,
+	`, run.ID, run.WorkspaceID, run.FormFileID, run.JobID, run.Name, run.KnowledgeBaseID, run.IndexVersionID,
 		run.TargetNamespace, run.GlobalNamespace, run.RoomContext, run.RowsSpec, run.RetrievalMode, run.PromptVersion,
 		run.JudgeEnabled, run.UseJudgeCache, run.WritebackEnabled, run.Status, run.ProgressTotal, run.ProgressDone,
 		run.OutDir, run.RunManifestPath, run.SummaryPath, run.FilledFormArtifactID,
@@ -148,6 +149,32 @@ func (r *PGXFillRunRepo) ListByWorkspace(ctx context.Context, workspaceID uuid.U
 		rows, err = r.pool.Query(ctx, selectFillRunSQL()+` WHERE workspace_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`, workspaceID, status, limit, offset)
 	} else {
 		rows, err = r.pool.Query(ctx, selectFillRunSQL()+` WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, workspaceID, limit, offset)
+	}
+	if err != nil {
+		return nil, mapDBError(err, "list fill runs conflict", "fill runs not found")
+	}
+	defer rows.Close()
+	var runs []FillRun
+	for rows.Next() {
+		run, err := scanFillRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, *run)
+	}
+	return runs, mapDBError(rows.Err(), "list fill runs conflict", "fill runs not found")
+}
+
+func (r *PGXFillRunRepo) ListByWorkspaceAndCreator(ctx context.Context, workspaceID uuid.UUID, createdBy uuid.UUID, status string, limit int, offset int) ([]FillRun, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	var rows pgx.Rows
+	var err error
+	if status != "" {
+		rows, err = r.pool.Query(ctx, selectFillRunSQL()+` WHERE workspace_id = $1 AND created_by = $2 AND status = $3 ORDER BY created_at DESC LIMIT $4 OFFSET $5`, workspaceID, createdBy, status, limit, offset)
+	} else {
+		rows, err = r.pool.Query(ctx, selectFillRunSQL()+` WHERE workspace_id = $1 AND created_by = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`, workspaceID, createdBy, limit, offset)
 	}
 	if err != nil {
 		return nil, mapDBError(err, "list fill runs conflict", "fill runs not found")
@@ -244,7 +271,7 @@ func (r *PGXFillRunRepo) updateStatus(ctx context.Context, runID uuid.UUID, from
 
 func selectFillRunSQL() string {
 	return `
-		SELECT id, workspace_id, form_file_id, job_id, knowledge_base_id, index_version_id,
+		SELECT id, workspace_id, form_file_id, job_id, COALESCE(name, ''), knowledge_base_id, index_version_id,
 			target_namespace, global_namespace, COALESCE(room_context, ''), rows_spec, retrieval_mode, prompt_version,
 			judge_enabled, use_judge_cache, writeback_enabled, status, progress_total, progress_done,
 			COALESCE(out_dir, ''), COALESCE(run_manifest_path, ''), COALESCE(summary_path, ''), filled_form_artifact_id,
@@ -257,7 +284,7 @@ func selectFillRunSQL() string {
 func scanFillRun(row pgx.Row) (*FillRun, error) {
 	var run FillRun
 	err := row.Scan(
-		&run.ID, &run.WorkspaceID, &run.FormFileID, &run.JobID, &run.KnowledgeBaseID, &run.IndexVersionID,
+		&run.ID, &run.WorkspaceID, &run.FormFileID, &run.JobID, &run.Name, &run.KnowledgeBaseID, &run.IndexVersionID,
 		&run.TargetNamespace, &run.GlobalNamespace, &run.RoomContext, &run.RowsSpec, &run.RetrievalMode, &run.PromptVersion,
 		&run.JudgeEnabled, &run.UseJudgeCache, &run.WritebackEnabled, &run.Status, &run.ProgressTotal, &run.ProgressDone,
 		&run.OutDir, &run.RunManifestPath, &run.SummaryPath, &run.FilledFormArtifactID,

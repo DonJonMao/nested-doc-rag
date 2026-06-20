@@ -1,0 +1,12 @@
+@media (prefers-reduced-motion: no-preference) {
+  .gk-fade-enter-active,
+  .gk-fade-leave-active {
+    transition: opacity 180ms var(--gk-ease), transform 180ms var(--gk-ease);
+  }
+
+  .gk-fade-enter-from,
+  .gk-fade-leave-to {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}

@@ -28,3 +28,22 @@ func TestRunEventServiceCreateListAndLastSequence(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, second.Sequence, last)
 }
+
+func TestRunEventSequenceIsScopedPerRun(t *testing.T) {
+	repo := &fakeRunEventRepo{}
+	service := runevent.NewService(repo, nil)
+	workspaceID := uuid.New()
+	firstRunID := uuid.New()
+	secondRunID := uuid.New()
+
+	first, err := service.Create(context.Background(), runevent.RunEvent{WorkspaceID: workspaceID, RunID: firstRunID, EventType: runevent.EventQueued})
+	require.NoError(t, err)
+	second, err := service.Create(context.Background(), runevent.RunEvent{WorkspaceID: workspaceID, RunID: secondRunID, EventType: runevent.EventQueued})
+	require.NoError(t, err)
+	nextFirst, err := service.Create(context.Background(), runevent.RunEvent{WorkspaceID: workspaceID, RunID: firstRunID, EventType: runevent.EventRunning})
+	require.NoError(t, err)
+
+	require.EqualValues(t, 1, first.Sequence)
+	require.EqualValues(t, 1, second.Sequence)
+	require.EqualValues(t, 2, nextFirst.Sequence)
+}

@@ -4,8 +4,24 @@ type KnowledgeBaseListResponse struct {
 	KnowledgeBases []KnowledgeBase `json:"knowledge_bases"`
 }
 
+type KnowledgeBaseOptionsResponse struct {
+	KnowledgeBases []KnowledgeBase `json:"knowledge_bases"`
+}
+
 type KnowledgeDocumentListResponse struct {
 	Documents []KnowledgeDocument `json:"documents"`
+}
+
+type UploadDocumentResponse struct {
+	Document     *KnowledgeDocument     `json:"document"`
+	IngestionJob *IngestionJob          `json:"ingestion_job,omitempty"`
+	IndexVersion *KnowledgeIndexVersion `json:"index_version,omitempty"`
+}
+
+type DeleteDocumentResponse struct {
+	Document     *KnowledgeDocument `json:"document"`
+	IngestionJob *IngestionJob      `json:"ingestion_job,omitempty"`
+	Deleted      bool               `json:"deleted"`
 }
 
 type IndexVersionListResponse struct {

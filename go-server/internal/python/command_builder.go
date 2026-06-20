@@ -30,7 +30,7 @@ func (b *CommandBuilder) BuildStep15AgentCommand(req Step15RunRequest) CommandSp
 		"--global-namespace", strings.TrimSpace(req.GlobalNamespace),
 		"--room-context", strings.TrimSpace(req.RoomContext),
 		"--rows", strings.TrimSpace(req.Rows),
-		"--retrieval-mode", strings.TrimSpace(req.RetrievalMode),
+		"--retrieval-plan", strings.TrimSpace(req.RetrievalMode),
 		"--prompt-version", strings.TrimSpace(req.PromptVersion),
 		"--out-dir", strings.TrimSpace(req.OutDir),
 	}
@@ -91,6 +91,12 @@ func (b *CommandBuilder) BuildKnowledgeIngestionCommand(req IngestionRequest) Co
 		"--namespace", strings.TrimSpace(req.Namespace),
 		"--knowledge-base-id", strings.TrimSpace(req.KnowledgeBaseID),
 		"--out-dir", strings.TrimSpace(req.OutDir),
+	}
+	if strings.TrimSpace(req.QdrantCollection) != "" {
+		args = append(args, "--qdrant-collection", strings.TrimSpace(req.QdrantCollection))
+	}
+	if strings.TrimSpace(req.QdrantNamespace) != "" {
+		args = append(args, "--qdrant-namespace", strings.TrimSpace(req.QdrantNamespace))
 	}
 	if req.Resume {
 		args = append(args, "--resume")

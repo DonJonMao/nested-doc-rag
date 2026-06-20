@@ -54,6 +54,22 @@ func TestPythonArtifactArchiverMissingFileReturnsError(t *testing.T) {
 	require.ErrorIs(t, err, pythonpkg.ErrArtifactArchiveFail)
 }
 
+func TestPythonArtifactArchiverSkipsEmptyOptionalArtifacts(t *testing.T) {
+	runDir := writeTestManifest(t, map[string]string{"predictions": "predictions.json", "filled_form": ""})
+	require.NoError(t, os.WriteFile(filepath.Join(runDir, "predictions.json"), []byte("predictions"), 0o644))
+	manifest, err := pythonpkg.LoadRunManifestFromDir(runDir)
+	require.NoError(t, err)
+	registrar := &fakeArtifactRegistrar{}
+	archiver := pythonpkg.NewArtifactArchiver(registrar, nil)
+
+	registered, err := archiver.ArchiveStep15Artifacts(context.Background(), uuid.New(), uuid.New(), manifest, auth.Principal{UserID: uuid.New()})
+
+	require.NoError(t, err)
+	require.Len(t, registered, 1)
+	require.Len(t, registrar.requests, 1)
+	require.Equal(t, "predictions", registrar.requests[0].ArtifactType)
+}
+
 func TestPythonArtifactArchiverComputesSHA256(t *testing.T) {
 	runDir := writeTestManifest(t, map[string]string{"predictions": "predictions.json"})
 	data := []byte("hash me")
@@ -85,6 +101,7 @@ func TestPythonArtifactArchiverRegistrarError(t *testing.T) {
 
 type fakeArtifactRegistrar struct {
 	requests []artifact.RegisterArtifactRequest
+	actors   []auth.Principal
 	err      error
 }
 
@@ -93,6 +110,7 @@ func (f *fakeArtifactRegistrar) RegisterArtifact(ctx context.Context, req artifa
 		return nil, f.err
 	}
 	f.requests = append(f.requests, req)
+	f.actors = append(f.actors, actor)
 	return &artifact.RunArtifact{
 		ID:           uuid.New(),
 		WorkspaceID:  req.WorkspaceID,

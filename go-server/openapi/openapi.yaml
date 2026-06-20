@@ -306,6 +306,7 @@ paths:
   /api/v1/files:
     post:
       summary: Upload a workspace-scoped file.
+      description: Generic file upload. Uploading file_category=knowledge_document is admin-only; product knowledge uploads should use /api/v1/knowledge-bases/{kb_id}/documents.
       security:
         - BearerAuth: []
       requestBody:
@@ -329,6 +330,7 @@ paths:
                 $ref: "#/components/schemas/ApiErrorResponse"
     get:
       summary: List workspace files.
+      description: Generic file listing. Listing knowledge_document files, or all categories with no file_category filter, is admin-only.
       security:
         - BearerAuth: []
       parameters:
@@ -363,6 +365,7 @@ paths:
   /api/v1/files/{file_id}:
     get:
       summary: Get file metadata.
+      description: Knowledge document file metadata is admin-only.
       security:
         - BearerAuth: []
       parameters:
@@ -376,6 +379,7 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
     delete:
       summary: Soft delete file metadata.
+      description: Knowledge document files are admin-only and should normally be deleted through DELETE /api/v1/documents/{doc_id}?reindex=true.
       security:
         - BearerAuth: []
       parameters:
@@ -390,6 +394,7 @@ paths:
   /api/v1/files/{file_id}/download:
     get:
       summary: Download file through Go proxy.
+      description: Knowledge document downloads are admin-only.
       security:
         - BearerAuth: []
       parameters:
@@ -522,10 +527,34 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/FormFile"
+  /api/v1/fill-runs/simple:
+    post:
+      summary: Create a productized gongkan form fill run.
+      description: Frontend-oriented endpoint. The client sends a knowledge_base_id and form_file_id; the server derives target_namespace, index_version_id, rows, retrieval mode, prompt version, and writeback defaults from product configuration and the selected ready knowledge base.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSimpleFillRunRequest"
+      responses:
+        "200":
+          description: Fill run created and queued.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/FillRun"
   /api/v1/fill-runs:
     post:
       summary: Create a gongkan form fill run.
-      description: Creates a fill_runs record and enqueues a fill_form job. Python execution happens asynchronously in the worker.
+      description: Creates a fill_runs record and enqueues a fill_form job. Python execution happens asynchronously in the worker. Admin users may pass advanced runtime parameters. Non-admin users must bind the run to a ready knowledge_base_id/current index version; the server derives namespace and product defaults even on this lower-level endpoint.
       security:
         - BearerAuth: []
       requestBody:
@@ -561,6 +590,11 @@ paths:
           in: query
           schema:
             $ref: "#/components/schemas/FillRunStatus"
+        - name: mine
+          in: query
+          description: When true, returns only runs created by the current user. Non-admin users are always restricted to their own runs.
+          schema:
+            type: boolean
         - name: limit
           in: query
           schema:
@@ -859,6 +893,7 @@ paths:
   /api/v1/knowledge-bases:
     post:
       summary: Create a knowledge base.
+      description: Admin-only knowledge management endpoint.
       security:
         - BearerAuth: []
       requestBody:
@@ -881,6 +916,7 @@ paths:
                         $ref: "#/components/schemas/KnowledgeBase"
     get:
       summary: List knowledge bases in a workspace.
+      description: Admin-only knowledge management endpoint. Ordinary users should use /api/v1/knowledge-bases/options.
       security:
         - BearerAuth: []
       parameters:
@@ -908,9 +944,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/KnowledgeBaseListResponse"
+  /api/v1/knowledge-bases/options:
+    get:
+      summary: List lightweight knowledge-base options for form filling.
+      description: Returns workspace knowledge bases with product status fields. Ordinary users may call this endpoint, but only ready knowledge bases should be selectable for fill-run creation.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: workspace_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Knowledge base options.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeBaseOptionsResponse"
   /api/v1/knowledge-bases/{kb_id}:
     get:
       summary: Get knowledge base metadata.
+      description: Admin-only knowledge management endpoint.
       security:
         - BearerAuth: []
       parameters:
@@ -930,6 +998,7 @@ paths:
   /api/v1/knowledge-bases/{kb_id}/index-versions:
     get:
       summary: List knowledge index versions.
+      description: Admin-only knowledge management endpoint.
       security:
         - BearerAuth: []
       parameters:
@@ -944,6 +1013,7 @@ paths:
   /api/v1/knowledge-bases/{kb_id}/current-index-version:
     post:
       summary: Set current ready index version.
+      description: Admin-only knowledge management endpoint.
       security:
         - BearerAuth: []
       parameters:
@@ -964,10 +1034,16 @@ paths:
   /api/v1/knowledge-bases/{kb_id}/documents:
     post:
       summary: Upload a knowledge document.
+      description: Admin-only endpoint. When auto_ingest=true, the API creates an ingestion run after storing the document metadata.
       security:
         - BearerAuth: []
       parameters:
         - $ref: "#/components/parameters/KnowledgeBaseID"
+        - name: auto_ingest
+          in: query
+          description: When true, creates an ingestion run immediately after the document is uploaded.
+          schema:
+            type: boolean
       requestBody:
         required: true
         content:
@@ -983,6 +1059,7 @@ paths:
                 $ref: "#/components/schemas/UploadKnowledgeDocumentResponse"
     get:
       summary: List knowledge documents.
+      description: Admin-only knowledge management endpoint.
       security:
         - BearerAuth: []
       parameters:
@@ -1012,21 +1089,27 @@ paths:
   /api/v1/documents/{doc_id}:
     delete:
       summary: Soft delete a knowledge document.
+      description: Admin-only endpoint. Use reindex=true to enqueue a namespace rebuild after soft deletion.
       security:
         - BearerAuth: []
       parameters:
         - $ref: "#/components/parameters/KnowledgeDocumentID"
+        - name: reindex
+          in: query
+          description: When true, creates a rebuild_namespace ingestion run after the document is soft deleted.
+          schema:
+            type: boolean
       responses:
         "200":
           description: Knowledge document marked deleted.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
+                $ref: "#/components/schemas/DeleteKnowledgeDocumentResponse"
   /api/v1/knowledge-bases/{kb_id}/ingestion-runs:
     post:
       summary: Create an ingestion run.
-      description: Creates a knowledge_index_versions row, an ingestion_jobs row, and enqueues an ingest_knowledge worker job. If python.ingest_command_enabled=false the API returns FEATURE_DISABLED.
+      description: Admin-only endpoint. Creates a knowledge_index_versions row, an ingestion_jobs row, and enqueues an ingest_knowledge worker job. If python.ingest_command_enabled=false the API returns FEATURE_DISABLED.
       security:
         - BearerAuth: []
       parameters:
@@ -1057,6 +1140,7 @@ paths:
                 $ref: "#/components/schemas/ApiErrorResponse"
     get:
       summary: List ingestion runs for a knowledge base.
+      description: Admin-only knowledge management endpoint.
       security:
         - BearerAuth: []
       parameters:
@@ -1086,6 +1170,7 @@ paths:
   /api/v1/ingestion-runs/{ingestion_job_id}:
     get:
       summary: Get ingestion run.
+      description: Admin-only knowledge management endpoint.
       security:
         - BearerAuth: []
       parameters:
@@ -1105,6 +1190,7 @@ paths:
   /api/v1/ingestion-runs/{ingestion_job_id}/cancel:
     post:
       summary: Cancel an ingestion run.
+      description: Admin-only knowledge management endpoint.
       security:
         - BearerAuth: []
       parameters:
@@ -1119,7 +1205,7 @@ paths:
   /api/v1/ingestion-runs/{ingestion_job_id}/events:
     get:
       summary: Redirect to run event SSE for an ingestion run.
-      description: Returns a temporary redirect to /api/v1/runs/{ingestion_job_id}/events?workspace_id=...
+      description: Admin-only endpoint. Returns a temporary redirect to /api/v1/runs/{ingestion_job_id}/events?workspace_id=...
       security:
         - BearerAuth: []
       parameters:
@@ -1199,7 +1285,7 @@ paths:
   /api/v1/runs/{run_id}/events:
     get:
       summary: Subscribe to persisted and live run events.
-      description: Streams Server-Sent Events from persisted run_events plus a Redis-backed realtime bridge. Use after_sequence to replay missed events after reconnect.
+      description: Streams Server-Sent Events from persisted run_events plus a Redis-backed realtime bridge. Use after_sequence, or the Last-Event-ID header when after_sequence is absent, to replay missed events after reconnect. Fill-run event streams are owner-scoped for non-admin users; ingestion event streams are admin-only.
       security:
         - BearerAuth: []
       parameters:
@@ -1216,6 +1302,12 @@ paths:
             type: integer
             format: int64
             default: 0
+        - name: Last-Event-ID
+          in: header
+          description: SSE reconnect cursor used when after_sequence is omitted.
+          schema:
+            type: integer
+            format: int64
       responses:
         "200":
           description: SSE stream of run events.
@@ -1640,6 +1732,10 @@ components:
         form_file_id:
           type: string
           format: uuid
+        name:
+          type: string
+          maxLength: 120
+          description: User-facing fill task name. If omitted, the server derives it from the uploaded form filename.
         knowledge_base_id:
           type: string
           format: uuid
@@ -1674,6 +1770,25 @@ components:
         writeback:
           type: boolean
           default: true
+    CreateSimpleFillRunRequest:
+      type: object
+      required: [workspace_id, knowledge_base_id, form_file_id]
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+        knowledge_base_id:
+          type: string
+          format: uuid
+        form_file_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 120
+          description: User-facing fill task name. If omitted, the server derives it from the uploaded form filename.
+        room_context:
+          type: string
     FillRun:
       type: object
       properties:
@@ -1690,6 +1805,9 @@ components:
           type: string
           format: uuid
           nullable: true
+        name:
+          type: string
+          description: User-facing fill task name shown in task lists and details.
         knowledge_base_id:
           type: string
           format: uuid
@@ -1996,6 +2114,9 @@ components:
           format: uuid
         name:
           type: string
+        namespace:
+          type: string
+          description: Stable Qdrant/Python namespace. If omitted, the server derives one.
         description:
           type: string
         qdrant_collection:
@@ -2011,6 +2132,8 @@ components:
           format: uuid
         name:
           type: string
+        namespace:
+          type: string
         description:
           type: string
         qdrant_collection:
@@ -2018,6 +2141,14 @@ components:
         current_index_version_id:
           type: string
           format: uuid
+          nullable: true
+        status:
+          $ref: "#/components/schemas/KnowledgeBaseStatus"
+        document_count:
+          type: integer
+        last_ingested_at:
+          type: string
+          format: date-time
           nullable: true
         created_by:
           type: string
@@ -2029,6 +2160,21 @@ components:
           type: string
           format: date-time
     KnowledgeBaseListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                knowledge_bases:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/KnowledgeBase"
+    KnowledgeBaseStatus:
+      type: string
+      enum: [empty, building, ready, stale, failed, archived]
+    KnowledgeBaseOptionsResponse:
       allOf:
         - $ref: "#/components/schemas/ApiResponse"
         - type: object
@@ -2055,12 +2201,13 @@ components:
       enum: [uploaded, indexing, indexed, failed, deleted]
     UploadKnowledgeDocumentRequest:
       type: object
-      required: [document_role, namespace, file]
+      required: [document_role, file]
       properties:
         document_role:
           $ref: "#/components/schemas/DocumentRole"
         namespace:
           type: string
+          description: Optional. Defaults to the selected knowledge base namespace.
         file:
           type: string
           format: binary
@@ -2096,13 +2243,44 @@ components:
         updated_at:
           type: string
           format: date-time
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_ingested_at:
+          type: string
+          format: date-time
+          nullable: true
     UploadKnowledgeDocumentResponse:
       allOf:
         - $ref: "#/components/schemas/ApiResponse"
         - type: object
           properties:
             data:
-              $ref: "#/components/schemas/KnowledgeDocument"
+              oneOf:
+                - $ref: "#/components/schemas/KnowledgeDocument"
+                - type: object
+                  properties:
+                    document:
+                      $ref: "#/components/schemas/KnowledgeDocument"
+                    ingestion_job:
+                      $ref: "#/components/schemas/IngestionJob"
+                      nullable: true
+    DeleteKnowledgeDocumentResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                document:
+                  $ref: "#/components/schemas/KnowledgeDocument"
+                ingestion_job:
+                  $ref: "#/components/schemas/IngestionJob"
+                  nullable: true
+                deleted:
+                  type: boolean
     KnowledgeDocumentListResponse:
       allOf:
         - $ref: "#/components/schemas/ApiResponse"
@@ -2185,6 +2363,9 @@ components:
         rebuild:
           type: boolean
           default: false
+        mode:
+          type: string
+          enum: [rebuild_namespace, append_documents, delete_document_vectors]
         qdrant_collection:
           type: string
         qdrant_namespace:

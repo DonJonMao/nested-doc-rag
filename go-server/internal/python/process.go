@@ -116,6 +116,13 @@ func (r *ProcessRunner) Run(ctx context.Context, spec CommandSpec, timeout time.
 	result := processResult(exitCode, stdout, stderr, started, finished)
 	if waitErr != nil {
 		r.observePython(command, "failed", result)
+		logger.Warn(
+			"python command failed",
+			zap.String("command", command),
+			zap.Int("exit_code", exitCode),
+			zap.String("stdout_tail", result.StdoutTail),
+			zap.String("stderr_tail", result.StderrTail),
+		)
 		return result, &PythonRunError{
 			Message:    fmt.Sprintf("python command failed with exit code %d", exitCode),
 			ExitCode:   exitCode,

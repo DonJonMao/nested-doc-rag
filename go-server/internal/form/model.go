@@ -20,6 +20,7 @@ type FillRun struct {
 	WorkspaceID uuid.UUID  `json:"workspace_id"`
 	FormFileID  uuid.UUID  `json:"form_file_id"`
 	JobID       *uuid.UUID `json:"job_id,omitempty"`
+	Name        string     `json:"name"`
 
 	KnowledgeBaseID *uuid.UUID `json:"knowledge_base_id,omitempty"`
 	IndexVersionID  *uuid.UUID `json:"index_version_id,omitempty"`

@@ -31,3 +31,9 @@ qdrant/
 # Go server local build outputs.
 go-server/api
 go-server/worker
+
+# Frontend local dependencies and build/test outputs.
+web/node_modules/
+web/dist/
+web/test-results/
+web/playwright-report/

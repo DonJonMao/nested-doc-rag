@@ -199,6 +199,8 @@ class Step15AgentRunner:
         self.judge_cache: dict[str, dict[str, Any]] = load_judge_cache(judge_cache_path) if use_judge_cache and judge_cache_path else {}
         self.deepseek_api_key_env = deepseek_api_key_env or config.services.chat_api_key_env
         self.qdrant_path = qdrant_path or config.paths.qdrant_path
+        self.qdrant_url = config.qdrant.url
+        self.qdrant_api_key_env = config.qdrant.api_key_env
         self.collection_name = collection_name or config.qdrant.collection_name
         self.embedding_endpoint = embedding_endpoint or config.services.embedding_endpoint
         self.embedding_model = embedding_model or config.services.embedding_model
@@ -258,6 +260,8 @@ class Step15AgentRunner:
         if retrieval_fn is None:
             self.retriever = self.retriever or QdrantRetriever(
                 qdrant_path=self.qdrant_path,
+                qdrant_url=self.qdrant_url,
+                qdrant_api_key_env=self.qdrant_api_key_env,
                 collection_name=self.collection_name,
                 embedding_endpoint=self.embedding_endpoint,
                 embedding_model=self.embedding_model,
@@ -1273,6 +1277,7 @@ def parse_rows_arg(rows_text: str | None, *, step12_dir: Path) -> list[int]:
 def validate_step15_agent_config(
     *,
     qdrant_path: Path | None,
+    qdrant_url: str = "",
     collection_name: str,
     embedding_endpoint: str,
     embedding_model: str,
@@ -1283,7 +1288,7 @@ def validate_step15_agent_config(
     missing = [
         name
         for name, value in [
-            ("qdrant_path", qdrant_path),
+            ("qdrant_path_or_url", qdrant_path or qdrant_url),
             ("collection_name", collection_name),
             ("embedding_endpoint", embedding_endpoint),
             ("embedding_model", embedding_model),
@@ -1295,7 +1300,7 @@ def validate_step15_agent_config(
     ]
     if missing:
         raise RuntimeError(
-            "run-step15-agent requires qdrant_path, collection_name, embedding_endpoint, embedding_model, rerank_endpoint, chat_endpoint, chat_model"
+            "run-step15-agent requires qdrant_path or qdrant.url, collection_name, embedding_endpoint, embedding_model, rerank_endpoint, chat_endpoint, chat_model"
         )
 
 

@@ -1,0 +1,58 @@
+:root {
+  --el-color-primary: var(--gk-blue);
+  --el-color-primary-light-3: #3385d6;
+  --el-color-primary-light-5: #66a3e0;
+  --el-color-primary-light-7: #99c2eb;
+  --el-color-primary-light-9: #eaf4ff;
+  --el-border-radius-base: var(--gk-radius-sm);
+  --el-font-size-base: 17px;
+  --el-text-color-primary: var(--gk-ink);
+  --el-bg-color-page: var(--gk-page);
+}
+
+.el-button {
+  border-radius: var(--gk-radius-pill);
+  font-weight: 400;
+  box-shadow: none;
+  transition: transform 160ms var(--gk-ease), background-color 160ms var(--gk-ease), border-color 160ms var(--gk-ease);
+}
+
+.el-button--primary {
+  padding: 10px 22px;
+  border-color: var(--gk-blue);
+  background: var(--gk-blue);
+}
+
+.el-button--primary:hover {
+  background: var(--gk-blue-hover);
+  border-color: var(--gk-blue-hover);
+}
+
+.el-button:active {
+  transform: scale(0.96);
+}
+
+.el-card {
+  border-radius: var(--gk-radius-lg);
+  border: 1px solid var(--gk-hairline-soft);
+  box-shadow: none;
+}
+
+.el-input__wrapper,
+.el-select__wrapper,
+.el-textarea__inner {
+  border-radius: var(--gk-radius-md);
+  box-shadow: 0 0 0 1px var(--gk-hairline-soft) inset;
+}
+
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 2px var(--gk-blue) inset;
+}
+
+.el-table {
+  --el-table-border-color: var(--gk-hairline-soft);
+  --el-table-header-bg-color: #fbfbfd;
+  border-radius: var(--gk-radius-lg);
+  overflow: hidden;
+}

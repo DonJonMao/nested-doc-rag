@@ -19,6 +19,9 @@ services:
 
 qdrant:
   collection_name: datacenter_chunks_v1
+  # Leave empty to use local qdrant_path. Set to http://localhost:6333 to use the Docker Compose Qdrant service.
+  url: ""
+  api_key_env: QDRANT_API_KEY
   prefer_grpc: false
   timeout: 60
 

@@ -17,7 +17,9 @@ type KnowledgeBaseRepo interface {
 	Create(ctx context.Context, kb KnowledgeBase) error
 	GetByID(ctx context.Context, id uuid.UUID) (*KnowledgeBase, error)
 	ListByWorkspace(ctx context.Context, workspaceID uuid.UUID, limit int, offset int) ([]KnowledgeBase, error)
+	ListOptionsByWorkspace(ctx context.Context, workspaceID uuid.UUID, limit int, offset int) ([]KnowledgeBase, error)
 	UpdateCurrentIndexVersion(ctx context.Context, kbID uuid.UUID, versionID uuid.UUID) error
+	UpdateStatus(ctx context.Context, kbID uuid.UUID, status string) error
 	Update(ctx context.Context, kb KnowledgeBase) error
 	Delete(ctx context.Context, id uuid.UUID) error
 }
@@ -72,11 +74,12 @@ func (r *PGXKnowledgeBaseRepo) Create(ctx context.Context, kb KnowledgeBase) err
 	}
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO knowledge_bases (
-			id, workspace_id, name, description, qdrant_collection, current_index_version_id,
-			created_by, created_at, updated_at
+			id, workspace_id, name, namespace, description, qdrant_collection, current_index_version_id,
+			status, document_count, last_ingested_at, created_by, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, kb.ID, kb.WorkspaceID, kb.Name, kb.Description, kb.QdrantCollection, kb.CurrentIndexVersionID, kb.CreatedBy, kb.CreatedAt, kb.UpdatedAt)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	`, kb.ID, kb.WorkspaceID, kb.Name, kb.Namespace, kb.Description, kb.QdrantCollection, kb.CurrentIndexVersionID,
+		kb.Status, kb.DocumentCount, kb.LastIngestedAt, kb.CreatedBy, kb.CreatedAt, kb.UpdatedAt)
 	return mapDBError(err, "knowledge base already exists", "knowledge base not found")
 }
 
@@ -104,12 +107,43 @@ func (r *PGXKnowledgeBaseRepo) ListByWorkspace(ctx context.Context, workspaceID 
 	return out, mapDBError(rows.Err(), "list knowledge bases conflict", "knowledge bases not found")
 }
 
+func (r *PGXKnowledgeBaseRepo) ListOptionsByWorkspace(ctx context.Context, workspaceID uuid.UUID, limit int, offset int) ([]KnowledgeBase, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := r.pool.Query(ctx, selectKnowledgeBaseSQL()+` WHERE workspace_id = $1 AND status <> $2 ORDER BY name ASC LIMIT $3 OFFSET $4`, workspaceID, KnowledgeBaseStatusArchived, limit, offset)
+	if err != nil {
+		return nil, mapDBError(err, "list knowledge base options conflict", "knowledge bases not found")
+	}
+	defer rows.Close()
+	var out []KnowledgeBase
+	for rows.Next() {
+		item, err := scanKnowledgeBase(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *item)
+	}
+	return out, mapDBError(rows.Err(), "list knowledge base options conflict", "knowledge bases not found")
+}
+
 func (r *PGXKnowledgeBaseRepo) UpdateCurrentIndexVersion(ctx context.Context, kbID uuid.UUID, versionID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx, `
-		UPDATE knowledge_bases SET current_index_version_id = $2, updated_at = now() WHERE id = $1
-	`, kbID, versionID)
+		UPDATE knowledge_bases SET current_index_version_id = $2, status = $3, last_ingested_at = now(), updated_at = now() WHERE id = $1
+	`, kbID, versionID, KnowledgeBaseStatusReady)
 	if err != nil {
 		return mapDBError(err, "update current index version conflict", "knowledge base not found")
+	}
+	if tag.RowsAffected() == 0 {
+		return httpx.NewAppError(httpx.CodeNotFound, "knowledge base not found", http.StatusNotFound, nil, nil)
+	}
+	return nil
+}
+
+func (r *PGXKnowledgeBaseRepo) UpdateStatus(ctx context.Context, kbID uuid.UUID, status string) error {
+	tag, err := r.pool.Exec(ctx, `UPDATE knowledge_bases SET status = $2, updated_at = now() WHERE id = $1`, kbID, status)
+	if err != nil {
+		return mapDBError(err, "update knowledge base status conflict", "knowledge base not found")
 	}
 	if tag.RowsAffected() == 0 {
 		return httpx.NewAppError(httpx.CodeNotFound, "knowledge base not found", http.StatusNotFound, nil, nil)
@@ -120,9 +154,12 @@ func (r *PGXKnowledgeBaseRepo) UpdateCurrentIndexVersion(ctx context.Context, kb
 func (r *PGXKnowledgeBaseRepo) Update(ctx context.Context, kb KnowledgeBase) error {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE knowledge_bases
-		SET name = $2, description = $3, qdrant_collection = $4, current_index_version_id = $5, updated_at = now()
+		SET name = $2, namespace = $3, description = $4, qdrant_collection = $5,
+			current_index_version_id = $6, status = $7, document_count = $8,
+			last_ingested_at = $9, updated_at = now()
 		WHERE id = $1
-	`, kb.ID, kb.Name, kb.Description, kb.QdrantCollection, kb.CurrentIndexVersionID)
+	`, kb.ID, kb.Name, kb.Namespace, kb.Description, kb.QdrantCollection, kb.CurrentIndexVersionID,
+		kb.Status, kb.DocumentCount, kb.LastIngestedAt)
 	if err != nil {
 		return mapDBError(err, "update knowledge base conflict", "knowledge base not found")
 	}
@@ -145,14 +182,22 @@ func (r *PGXKnowledgeBaseRepo) Delete(ctx context.Context, id uuid.UUID) error {
 
 func selectKnowledgeBaseSQL() string {
 	return `
-		SELECT id, workspace_id, name, COALESCE(description, ''), COALESCE(qdrant_collection, ''),
-			current_index_version_id, created_by, created_at, updated_at
+		SELECT id, workspace_id, name, COALESCE(namespace, ''), COALESCE(description, ''), COALESCE(qdrant_collection, ''),
+			current_index_version_id, COALESCE(status, 'empty'),
+			(
+				SELECT COUNT(*)
+				FROM knowledge_documents
+				WHERE knowledge_documents.knowledge_base_id = knowledge_bases.id
+					AND knowledge_documents.status <> 'deleted'
+			)::INT AS document_count,
+			last_ingested_at, created_by, created_at, updated_at
 		FROM knowledge_bases`
 }
 
 func scanKnowledgeBase(row pgx.Row) (*KnowledgeBase, error) {
 	var kb KnowledgeBase
-	err := row.Scan(&kb.ID, &kb.WorkspaceID, &kb.Name, &kb.Description, &kb.QdrantCollection, &kb.CurrentIndexVersionID, &kb.CreatedBy, &kb.CreatedAt, &kb.UpdatedAt)
+	err := row.Scan(&kb.ID, &kb.WorkspaceID, &kb.Name, &kb.Namespace, &kb.Description, &kb.QdrantCollection, &kb.CurrentIndexVersionID,
+		&kb.Status, &kb.DocumentCount, &kb.LastIngestedAt, &kb.CreatedBy, &kb.CreatedAt, &kb.UpdatedAt)
 	if err != nil {
 		return nil, mapDBError(err, "knowledge base conflict", "knowledge base not found")
 	}
@@ -229,13 +274,24 @@ func (r *PGXKnowledgeDocumentRepo) MarkStatus(ctx context.Context, id uuid.UUID,
 }
 
 func (r *PGXKnowledgeDocumentRepo) SoftDelete(ctx context.Context, id uuid.UUID) error {
-	return r.MarkStatus(ctx, id, KnowledgeDocumentStatusDeleted, "")
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE knowledge_documents
+		SET status = $2, deleted_at = COALESCE(deleted_at, now()), updated_at = now()
+		WHERE id = $1
+	`, id, KnowledgeDocumentStatusDeleted)
+	if err != nil {
+		return mapDBError(err, "delete knowledge document conflict", "knowledge document not found")
+	}
+	if tag.RowsAffected() == 0 {
+		return httpx.NewAppError(httpx.CodeNotFound, "knowledge document not found", http.StatusNotFound, nil, nil)
+	}
+	return nil
 }
 
 func selectKnowledgeDocumentSQL() string {
 	return `
 		SELECT id, knowledge_base_id, workspace_id, file_id, filename, document_role, namespace,
-			status, created_by, created_at, updated_at
+			status, created_by, created_at, updated_at, deleted_at, last_ingested_at
 		FROM knowledge_documents`
 }
 
@@ -254,7 +310,8 @@ func scanKnowledgeDocuments(rows pgx.Rows) ([]KnowledgeDocument, error) {
 
 func scanKnowledgeDocument(row pgx.Row) (*KnowledgeDocument, error) {
 	var doc KnowledgeDocument
-	err := row.Scan(&doc.ID, &doc.KnowledgeBaseID, &doc.WorkspaceID, &doc.FileID, &doc.Filename, &doc.DocumentRole, &doc.Namespace, &doc.Status, &doc.CreatedBy, &doc.CreatedAt, &doc.UpdatedAt)
+	err := row.Scan(&doc.ID, &doc.KnowledgeBaseID, &doc.WorkspaceID, &doc.FileID, &doc.Filename, &doc.DocumentRole, &doc.Namespace,
+		&doc.Status, &doc.CreatedBy, &doc.CreatedAt, &doc.UpdatedAt, &doc.DeletedAt, &doc.LastIngestedAt)
 	if err != nil {
 		return nil, mapDBError(err, "knowledge document conflict", "knowledge document not found")
 	}

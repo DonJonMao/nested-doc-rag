@@ -17,6 +17,7 @@ from nested_doc_rag.agent.step15_runner import Step15AgentRunner, parse_rows_arg
 from nested_doc_rag.artifacts import ArtifactValidationError, validate_step15_artifacts
 from nested_doc_rag.embedding import RerankClient
 from nested_doc_rag.gongkan_eval import select_eval_items
+from nested_doc_rag.ingestion import IngestionOptions, dumps_summary, run_knowledge_ingestion
 from nested_doc_rag.retrieval import QdrantRetriever
 
 from .agent.runner import FieldFillingAgent, load_corpus, load_fields
@@ -62,6 +63,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Allow predictions.jsonl to differ from predictions_raw.jsonl. Disabled for overlay mode.",
     )
+
+    ingest_parser = subparsers.add_parser("ingest-knowledge", help="Parse uploaded knowledge documents, embed chunks, and upsert them to Qdrant.")
+    ingest_parser.add_argument("--config", type=Path, default=None, help="Optional local YAML config path.")
+    ingest_parser.add_argument("--input-dir", type=Path, required=True, help="Directory containing materialized knowledge documents.")
+    ingest_parser.add_argument("--namespace", required=True, help="Knowledge-base namespace to write into Qdrant.")
+    ingest_parser.add_argument("--knowledge-base-id", required=True, help="Stable knowledge-base id for traceable chunk ids.")
+    ingest_parser.add_argument("--out-dir", type=Path, required=True, help="Directory for ingestion artifacts.")
+    ingest_parser.add_argument("--qdrant-collection", default=None, help="Qdrant collection override.")
+    ingest_parser.add_argument("--qdrant-namespace", default=None, help="Qdrant namespace override. Defaults to --namespace.")
+    ingest_parser.add_argument("--batch-size", type=int, default=16, help="Embedding/upsert batch size.")
+    ingest_parser.add_argument("--resume", action="store_true", help="Accepted for worker compatibility; namespace rebuild is still deterministic.")
 
     agent_parser = subparsers.add_parser("run-agent", help="Run the lightweight field-filling agent with mini or real backends.")
     agent_parser.add_argument("--config", type=Path, default=None, help="Optional local YAML config path.")
@@ -190,6 +202,25 @@ def main(argv: Sequence[str] | None = None) -> None:
         except ArtifactValidationError as exc:
             parser.error(str(exc))
         print(json.dumps(result, ensure_ascii=False))
+    elif args.command == "ingest-knowledge":
+        config = load_app_config(args.config)
+        try:
+            summary = run_knowledge_ingestion(
+                IngestionOptions(
+                    input_dir=args.input_dir,
+                    namespace=args.namespace,
+                    knowledge_base_id=args.knowledge_base_id,
+                    out_dir=args.out_dir,
+                    config=config,
+                    qdrant_collection=args.qdrant_collection,
+                    qdrant_namespace=args.qdrant_namespace,
+                    batch_size=args.batch_size,
+                    resume=bool(args.resume),
+                )
+            )
+        except RuntimeError as exc:
+            parser.error(str(exc))
+        print(dumps_summary(summary))
     elif args.command == "run-baselines":
         summary = run_baseline_experiment(
             args.config,
@@ -279,6 +310,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             chat_model = args.chat_model or config.services.chat_model
             validate_step15_agent_config(
                 qdrant_path=qdrant_path,
+                qdrant_url=config.qdrant.url,
                 collection_name=collection_name,
                 embedding_endpoint=embedding_endpoint,
                 embedding_model=embedding_model,
@@ -373,9 +405,11 @@ def build_agent_retriever(
         if not value
     ]
     if missing:
-        raise RuntimeError("retrieval-backend=qdrant requires qdrant_path, collection_name, embedding_endpoint, embedding_model")
+        raise RuntimeError("retrieval-backend=qdrant requires qdrant_path or qdrant.url, collection_name, embedding_endpoint, embedding_model")
     qdrant_retriever = QdrantRetriever(
         qdrant_path=qdrant_path,
+        qdrant_url=config.qdrant.url,
+        qdrant_api_key_env=config.qdrant.api_key_env,
         collection_name=collection_name,
         embedding_endpoint=embedding_endpoint,
         embedding_model=embedding_model,

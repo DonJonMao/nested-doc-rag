@@ -20,6 +20,10 @@ type WorkspaceAuthorizer interface {
 	CanReadWorkspace(ctx context.Context, workspaceID uuid.UUID, actor auth.Principal) error
 }
 
+type RunAuthorizer interface {
+	CanReadRunEvents(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, actor auth.Principal) error
+}
+
 type EventReader interface {
 	ListByRun(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, afterSequence int64, limit int) ([]runevent.RunEvent, error)
 }
@@ -34,6 +38,7 @@ type Handler struct {
 	reader     EventReader
 	broker     *Broker
 	authorizer WorkspaceAuthorizer
+	runAuth    RunAuthorizer
 	metrics    Metrics
 }
 
@@ -43,6 +48,10 @@ func NewHandler(reader EventReader, broker *Broker, authorizer WorkspaceAuthoriz
 		observer = metrics[0]
 	}
 	return &Handler{reader: reader, broker: broker, authorizer: authorizer, metrics: observer}
+}
+
+func (h *Handler) SetRunAuthorizer(authorizer RunAuthorizer) {
+	h.runAuth = authorizer
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -65,11 +74,18 @@ func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.NewAppError(httpx.CodeInvalidArgument, "workspace_id is required", http.StatusBadRequest, nil, err))
 		return
 	}
-	if err := h.authorizer.CanReadWorkspace(r.Context(), workspaceID, actor); err != nil {
-		httpx.WriteError(w, r, err)
-		return
+	if h.runAuth != nil {
+		if err := h.runAuth.CanReadRunEvents(r.Context(), workspaceID, runID, actor); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	} else {
+		if err := h.authorizer.CanReadWorkspace(r.Context(), workspaceID, actor); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
 	}
-	afterSequence := parseInt64(r.URL.Query().Get("after_sequence"), 0)
+	afterSequence := resolveAfterSequence(r)
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		httpx.WriteError(w, r, httpx.NewAppError(httpx.CodeInternal, "streaming is not supported", http.StatusInternalServerError, nil, nil))
@@ -140,6 +156,16 @@ func writeSSE(w http.ResponseWriter, flusher http.Flusher, event Event) error {
 	}
 	flusher.Flush()
 	return nil
+}
+
+func resolveAfterSequence(r *http.Request) int64 {
+	if r == nil {
+		return 0
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("after_sequence")); value != "" {
+		return parseInt64(value, 0)
+	}
+	return parseInt64(strings.TrimSpace(r.Header.Get("Last-Event-ID")), 0)
 }
 
 func parseInt64(value string, fallback int64) int64 {

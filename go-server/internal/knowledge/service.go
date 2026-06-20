@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -48,6 +49,9 @@ func NewKnowledgeBaseService(repo KnowledgeBaseRepo, versions KnowledgeIndexVers
 }
 
 func (s *KnowledgeBaseService) CreateKnowledgeBase(ctx context.Context, req CreateKnowledgeBaseRequest, actor auth.Principal) (*KnowledgeBase, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
 	if err := s.authorizer.CanWriteWorkspace(ctx, req.WorkspaceID, actor); err != nil {
 		return nil, err
 	}
@@ -60,13 +64,19 @@ func (s *KnowledgeBaseService) CreateKnowledgeBase(ctx context.Context, req Crea
 	if collection == "" {
 		collection = "kb_" + strings.ReplaceAll(kbID.String()[:8], "-", "")
 	}
+	namespace := strings.TrimSpace(req.Namespace)
+	if namespace == "" {
+		namespace = fallbackNamespace(name, kbID)
+	}
 	now := time.Now().UTC()
 	kb := KnowledgeBase{
 		ID:               kbID,
 		WorkspaceID:      req.WorkspaceID,
 		Name:             name,
+		Namespace:        namespace,
 		Description:      strings.TrimSpace(req.Description),
 		QdrantCollection: collection,
+		Status:           KnowledgeBaseStatusEmpty,
 		CreatedBy:        actor.UserID,
 		CreatedAt:        now,
 		UpdatedAt:        now,
@@ -79,6 +89,9 @@ func (s *KnowledgeBaseService) CreateKnowledgeBase(ctx context.Context, req Crea
 }
 
 func (s *KnowledgeBaseService) GetKnowledgeBase(ctx context.Context, id uuid.UUID, actor auth.Principal) (*KnowledgeBase, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
 	kb, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -90,13 +103,26 @@ func (s *KnowledgeBaseService) GetKnowledgeBase(ctx context.Context, id uuid.UUI
 }
 
 func (s *KnowledgeBaseService) ListKnowledgeBases(ctx context.Context, workspaceID uuid.UUID, limit int, offset int, actor auth.Principal) ([]KnowledgeBase, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
 	if err := s.authorizer.CanReadWorkspace(ctx, workspaceID, actor); err != nil {
 		return nil, err
 	}
 	return s.repo.ListByWorkspace(ctx, workspaceID, limit, offset)
 }
 
+func (s *KnowledgeBaseService) ListKnowledgeBaseOptions(ctx context.Context, workspaceID uuid.UUID, limit int, offset int, actor auth.Principal) ([]KnowledgeBase, error) {
+	if err := s.authorizer.CanReadWorkspace(ctx, workspaceID, actor); err != nil {
+		return nil, err
+	}
+	return s.repo.ListOptionsByWorkspace(ctx, workspaceID, limit, offset)
+}
+
 func (s *KnowledgeBaseService) ListIndexVersions(ctx context.Context, kbID uuid.UUID, limit int, offset int, actor auth.Principal) ([]KnowledgeIndexVersion, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
 	kb, err := s.GetKnowledgeBase(ctx, kbID, actor)
 	if err != nil {
 		return nil, err
@@ -105,6 +131,9 @@ func (s *KnowledgeBaseService) ListIndexVersions(ctx context.Context, kbID uuid.
 }
 
 func (s *KnowledgeBaseService) SetCurrentIndexVersion(ctx context.Context, kbID uuid.UUID, versionID uuid.UUID, actor auth.Principal) (*KnowledgeBase, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
 	kb, err := s.repo.GetByID(ctx, kbID)
 	if err != nil {
 		return nil, err
@@ -152,6 +181,9 @@ func NewKnowledgeDocumentService(bases KnowledgeBaseRepo, docs KnowledgeDocument
 }
 
 func (s *KnowledgeDocumentService) UploadDocument(ctx context.Context, req UploadDocumentRequest, actor auth.Principal) (*KnowledgeDocument, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
 	kb, err := s.bases.GetByID(ctx, req.KnowledgeBaseID)
 	if err != nil {
 		return nil, err
@@ -165,7 +197,10 @@ func (s *KnowledgeDocumentService) UploadDocument(ctx context.Context, req Uploa
 	}
 	namespace := strings.TrimSpace(req.Namespace)
 	if namespace == "" {
-		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "namespace is required", http.StatusBadRequest, nil, nil)
+		namespace = strings.TrimSpace(kb.Namespace)
+	}
+	if namespace == "" {
+		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "knowledge base namespace is required", http.StatusBadRequest, nil, nil)
 	}
 	file, err := s.files.Upload(ctx, filepkg.UploadFileRequest{
 		WorkspaceID:      kb.WorkspaceID,
@@ -194,11 +229,15 @@ func (s *KnowledgeDocumentService) UploadDocument(ctx context.Context, req Uploa
 	if err := s.docs.Create(ctx, doc); err != nil {
 		return nil, err
 	}
+	_ = s.bases.UpdateStatus(ctx, kb.ID, KnowledgeBaseStatusStale)
 	s.record(ctx, actor, doc.WorkspaceID, "knowledge_document.uploaded", "knowledge_document", doc.ID.String(), map[string]any{"knowledge_base_id": kb.ID.String(), "file_id": doc.FileID.String(), "namespace": doc.Namespace, "document_role": doc.DocumentRole})
 	return &doc, nil
 }
 
 func (s *KnowledgeDocumentService) RegisterExistingFileAsDocument(ctx context.Context, kbID uuid.UUID, fileID uuid.UUID, documentRole string, namespace string, actor auth.Principal) (*KnowledgeDocument, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
 	kb, err := s.bases.GetByID(ctx, kbID)
 	if err != nil {
 		return nil, err
@@ -212,7 +251,10 @@ func (s *KnowledgeDocumentService) RegisterExistingFileAsDocument(ctx context.Co
 	}
 	namespace = strings.TrimSpace(namespace)
 	if namespace == "" {
-		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "namespace is required", http.StatusBadRequest, nil, nil)
+		namespace = strings.TrimSpace(kb.Namespace)
+	}
+	if namespace == "" {
+		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "knowledge base namespace is required", http.StatusBadRequest, nil, nil)
 	}
 	file, err := s.files.Get(ctx, fileID, actor)
 	if err != nil {
@@ -237,11 +279,15 @@ func (s *KnowledgeDocumentService) RegisterExistingFileAsDocument(ctx context.Co
 	if err := s.docs.Create(ctx, doc); err != nil {
 		return nil, err
 	}
+	_ = s.bases.UpdateStatus(ctx, kb.ID, KnowledgeBaseStatusStale)
 	s.record(ctx, actor, doc.WorkspaceID, "knowledge_document.registered", "knowledge_document", doc.ID.String(), map[string]any{"knowledge_base_id": kb.ID.String(), "file_id": doc.FileID.String()})
 	return &doc, nil
 }
 
 func (s *KnowledgeDocumentService) ListDocuments(ctx context.Context, kbID uuid.UUID, status string, limit int, offset int, actor auth.Principal) ([]KnowledgeDocument, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
 	kb, err := s.bases.GetByID(ctx, kbID)
 	if err != nil {
 		return nil, err
@@ -256,19 +302,30 @@ func (s *KnowledgeDocumentService) ListDocuments(ctx context.Context, kbID uuid.
 	return s.docs.ListByKnowledgeBase(ctx, kb.ID, status, limit, offset)
 }
 
-func (s *KnowledgeDocumentService) DeleteDocument(ctx context.Context, docID uuid.UUID, actor auth.Principal) error {
+func (s *KnowledgeDocumentService) DeleteDocument(ctx context.Context, docID uuid.UUID, actor auth.Principal) (*KnowledgeDocument, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
 	doc, err := s.docs.GetByID(ctx, docID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := s.authorizer.CanWriteWorkspace(ctx, doc.WorkspaceID, actor); err != nil {
-		return err
+		return nil, err
 	}
 	if err := s.docs.SoftDelete(ctx, doc.ID); err != nil {
-		return err
+		return nil, err
+	}
+	nextStatus := KnowledgeBaseStatusStale
+	if active, err := s.docs.ListActiveByKnowledgeBase(ctx, doc.KnowledgeBaseID); err == nil && len(active) == 0 {
+		nextStatus = KnowledgeBaseStatusEmpty
+	}
+	_ = s.bases.UpdateStatus(ctx, doc.KnowledgeBaseID, nextStatus)
+	if deleted, err := s.docs.GetByID(ctx, doc.ID); err == nil {
+		doc = deleted
 	}
 	s.record(ctx, actor, doc.WorkspaceID, "knowledge_document.deleted", "knowledge_document", doc.ID.String(), map[string]any{"knowledge_base_id": doc.KnowledgeBaseID.String(), "file_id": doc.FileID.String()})
-	return nil
+	return doc, nil
 }
 
 func (s *KnowledgeDocumentService) record(ctx context.Context, actor auth.Principal, workspaceID uuid.UUID, action string, resourceType string, resourceID string, payload map[string]any) {
@@ -297,6 +354,9 @@ func NewIngestionService(bases KnowledgeBaseRepo, docs KnowledgeDocumentRepo, ve
 }
 
 func (s *IngestionService) CreateIngestionRun(ctx context.Context, req CreateIngestionRunRequest, actor auth.Principal) (*IngestionJob, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
 	kb, err := s.bases.GetByID(ctx, req.KnowledgeBaseID)
 	if err != nil {
 		return nil, err
@@ -318,7 +378,10 @@ func (s *IngestionService) CreateIngestionRun(ctx context.Context, req CreateIng
 	if err != nil {
 		return nil, err
 	}
-	namespace := defaultString(req.Namespace, "default")
+	namespace := defaultString(req.Namespace, kb.Namespace)
+	if namespace == "" {
+		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "knowledge base namespace is required", http.StatusBadRequest, nil, nil)
+	}
 	qdrantCollection := defaultString(req.QdrantCollection, kb.QdrantCollection)
 	if qdrantCollection == "" {
 		qdrantCollection = "kb_" + strings.ReplaceAll(kb.ID.String()[:8], "-", "")
@@ -375,11 +438,15 @@ func (s *IngestionService) CreateIngestionRun(ctx context.Context, req CreateIng
 	if err := s.ingestions.AttachJob(ctx, ingestion.ID, job.ID, time.Now().UTC()); err != nil {
 		return nil, err
 	}
+	_ = s.bases.UpdateStatus(ctx, kb.ID, KnowledgeBaseStatusBuilding)
 	s.record(ctx, actor, ingestion.WorkspaceID, "ingestion.created", "ingestion_job", ingestion.ID.String(), map[string]any{"knowledge_base_id": kb.ID.String(), "index_version_id": version.ID.String(), "job_id": job.ID.String()})
 	return s.ingestions.GetByID(ctx, ingestion.ID)
 }
 
 func (s *IngestionService) GetIngestionJob(ctx context.Context, id uuid.UUID, actor auth.Principal) (*IngestionJob, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
 	ingestion, err := s.ingestions.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -391,6 +458,9 @@ func (s *IngestionService) GetIngestionJob(ctx context.Context, id uuid.UUID, ac
 }
 
 func (s *IngestionService) ListIngestionJobs(ctx context.Context, kbID uuid.UUID, status string, limit int, offset int, actor auth.Principal) ([]IngestionJob, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
 	kb, err := s.bases.GetByID(ctx, kbID)
 	if err != nil {
 		return nil, err
@@ -406,6 +476,9 @@ func (s *IngestionService) ListIngestionJobs(ctx context.Context, kbID uuid.UUID
 }
 
 func (s *IngestionService) CancelIngestionJob(ctx context.Context, id uuid.UUID, actor auth.Principal) (*IngestionJob, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
 	ingestion, err := s.ingestions.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -453,4 +526,22 @@ func defaultString(value string, fallback string) string {
 		return value
 	}
 	return strings.TrimSpace(fallback)
+}
+
+func requireAdmin(actor auth.Principal) error {
+	if auth.IsAdminRoles(actor.Roles) {
+		return nil
+	}
+	return httpx.NewAppError(httpx.CodeForbidden, "admin role required", http.StatusForbidden, nil, nil)
+}
+
+var namespaceUnsafe = regexp.MustCompile(`[^a-zA-Z0-9_]+`)
+
+func fallbackNamespace(name string, id uuid.UUID) string {
+	candidate := strings.ToLower(namespaceUnsafe.ReplaceAllString(strings.TrimSpace(name), "_"))
+	candidate = strings.Trim(candidate, "_")
+	if candidate != "" {
+		return candidate
+	}
+	return "kb_" + strings.ReplaceAll(id.String()[:8], "-", "")
 }
