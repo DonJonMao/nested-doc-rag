@@ -27,6 +27,7 @@ type Config struct {
 	Observability ObservabilityConfig `yaml:"observability"`
 	Security      SecurityConfig      `yaml:"security"`
 	Operations    OperationsConfig    `yaml:"operations"`
+	ModelGateway  ModelGatewayConfig  `yaml:"model_gateway"`
 }
 
 type ServerConfig struct {
@@ -164,6 +165,49 @@ type OperationsConfig struct {
 	GracefulShutdownTimeout Duration `yaml:"graceful_shutdown_timeout"`
 	DiagnosticsEnabled      bool     `yaml:"diagnostics_enabled"`
 	ExposeBuildInfo         bool     `yaml:"expose_build_info"`
+}
+
+type ModelGatewayConfig struct {
+	Enabled              bool                     `yaml:"enabled"`
+	BindToAPI            bool                     `yaml:"bind_to_api"`
+	InternalBaseURL      string                   `yaml:"internal_base_url"`
+	RequireInternalToken bool                     `yaml:"require_internal_token"`
+	InternalTokenEnv     string                   `yaml:"internal_token_env"`
+	Defaults             ModelGatewayDefaults     `yaml:"defaults"`
+	Chat                 ModelGatewayKindConfig   `yaml:"chat"`
+	Embedding            ModelGatewayKindConfig   `yaml:"embedding"`
+	Rerank               ModelGatewayKindConfig   `yaml:"rerank"`
+	RedisLimiter         ModelGatewayRedisLimiter `yaml:"redis_limiter"`
+}
+
+type ModelGatewayDefaults struct {
+	RequestTimeoutSeconds   int   `yaml:"request_timeout_seconds"`
+	QueueTimeoutSeconds     int   `yaml:"queue_timeout_seconds"`
+	MaxRequestBodyBytes     int64 `yaml:"max_request_body_bytes"`
+	MaxResponseBodyBytes    int64 `yaml:"max_response_body_bytes"`
+	RetryMaxAttempts        int   `yaml:"retry_max_attempts"`
+	RetryBaseDelayMillis    int   `yaml:"retry_base_delay_ms"`
+	RetryMaxDelayMillis     int   `yaml:"retry_max_delay_ms"`
+	CircuitFailureThreshold int   `yaml:"circuit_failure_threshold"`
+	CircuitOpenSeconds      int   `yaml:"circuit_open_seconds"`
+}
+
+type ModelGatewayKindConfig struct {
+	Enabled           bool   `yaml:"enabled"`
+	UpstreamURL       string `yaml:"upstream_url"`
+	APIKeyEnv         string `yaml:"api_key_env"`
+	MaxConcurrency    int    `yaml:"max_concurrency"`
+	MaxQueueSize      int    `yaml:"max_queue_size"`
+	QPS               int    `yaml:"qps"`
+	RPM               int    `yaml:"rpm"`
+	PerRunMaxInflight int    `yaml:"per_run_max_inflight"`
+	TimeoutSeconds    int    `yaml:"timeout_seconds"`
+}
+
+type ModelGatewayRedisLimiter struct {
+	Enabled        bool   `yaml:"enabled"`
+	KeyPrefix      string `yaml:"key_prefix"`
+	LockTTLSeconds int    `yaml:"lock_ttl_seconds"`
 }
 
 func Load(path string) (*Config, error) {
@@ -318,10 +362,82 @@ func Validate(cfg *Config) error {
 	if cfg.Operations.GracefulShutdownTimeout.Duration <= 0 {
 		problems = append(problems, "operations.graceful_shutdown_timeout must be greater than 0")
 	}
+	validateModelGatewayConfig(cfg, &problems)
 	if len(problems) > 0 {
 		return fmt.Errorf("invalid config: %s", strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+func validateModelGatewayConfig(cfg *Config, problems *[]string) {
+	if cfg == nil || problems == nil || !cfg.ModelGateway.Enabled {
+		return
+	}
+	if strings.TrimSpace(cfg.ModelGateway.InternalBaseURL) == "" {
+		*problems = append(*problems, "model_gateway.internal_base_url is required when model_gateway.enabled=true")
+	}
+	if cfg.ModelGateway.RequireInternalToken && strings.TrimSpace(cfg.ModelGateway.InternalTokenEnv) == "" {
+		*problems = append(*problems, "model_gateway.internal_token_env is required when require_internal_token=true")
+	}
+	defaults := cfg.ModelGateway.Defaults
+	if defaults.RequestTimeoutSeconds <= 0 {
+		*problems = append(*problems, "model_gateway.defaults.request_timeout_seconds must be greater than 0")
+	}
+	if defaults.QueueTimeoutSeconds <= 0 {
+		*problems = append(*problems, "model_gateway.defaults.queue_timeout_seconds must be greater than 0")
+	}
+	if defaults.MaxRequestBodyBytes <= 0 {
+		*problems = append(*problems, "model_gateway.defaults.max_request_body_bytes must be greater than 0")
+	}
+	if defaults.MaxResponseBodyBytes <= 0 {
+		*problems = append(*problems, "model_gateway.defaults.max_response_body_bytes must be greater than 0")
+	}
+	if defaults.RetryMaxAttempts <= 0 {
+		*problems = append(*problems, "model_gateway.defaults.retry_max_attempts must be greater than 0")
+	}
+	if defaults.RetryBaseDelayMillis <= 0 {
+		*problems = append(*problems, "model_gateway.defaults.retry_base_delay_ms must be greater than 0")
+	}
+	if defaults.RetryMaxDelayMillis <= 0 {
+		*problems = append(*problems, "model_gateway.defaults.retry_max_delay_ms must be greater than 0")
+	}
+	if defaults.CircuitFailureThreshold <= 0 {
+		*problems = append(*problems, "model_gateway.defaults.circuit_failure_threshold must be greater than 0")
+	}
+	if defaults.CircuitOpenSeconds <= 0 {
+		*problems = append(*problems, "model_gateway.defaults.circuit_open_seconds must be greater than 0")
+	}
+	validateModelGatewayKind("chat", cfg.ModelGateway.Chat, problems)
+	validateModelGatewayKind("embedding", cfg.ModelGateway.Embedding, problems)
+	validateModelGatewayKind("rerank", cfg.ModelGateway.Rerank, problems)
+}
+
+func validateModelGatewayKind(name string, kind ModelGatewayKindConfig, problems *[]string) {
+	if !kind.Enabled {
+		return
+	}
+	prefix := "model_gateway." + name
+	if strings.TrimSpace(kind.UpstreamURL) == "" {
+		*problems = append(*problems, prefix+".upstream_url is required when enabled=true")
+	}
+	if kind.MaxConcurrency <= 0 {
+		*problems = append(*problems, prefix+".max_concurrency must be greater than 0")
+	}
+	if kind.MaxQueueSize < 0 {
+		*problems = append(*problems, prefix+".max_queue_size must be greater than or equal to 0")
+	}
+	if kind.QPS < 0 {
+		*problems = append(*problems, prefix+".qps must be greater than or equal to 0")
+	}
+	if kind.RPM < 0 {
+		*problems = append(*problems, prefix+".rpm must be greater than or equal to 0")
+	}
+	if kind.PerRunMaxInflight <= 0 {
+		*problems = append(*problems, prefix+".per_run_max_inflight must be greater than 0")
+	}
+	if kind.TimeoutSeconds <= 0 {
+		*problems = append(*problems, prefix+".timeout_seconds must be greater than 0")
+	}
 }
 
 func Default() *Config {
@@ -440,6 +556,60 @@ func Default() *Config {
 			GracefulShutdownTimeout: NewDuration(30 * time.Second),
 			DiagnosticsEnabled:      true,
 			ExposeBuildInfo:         true,
+		},
+		ModelGateway: ModelGatewayConfig{
+			Enabled:              false,
+			BindToAPI:            true,
+			InternalBaseURL:      "http://127.0.0.1:8080/internal/model-gateway",
+			RequireInternalToken: true,
+			InternalTokenEnv:     "NDR_MODEL_GATEWAY_TOKEN",
+			Defaults: ModelGatewayDefaults{
+				RequestTimeoutSeconds:   180,
+				QueueTimeoutSeconds:     300,
+				MaxRequestBodyBytes:     10 * 1024 * 1024,
+				MaxResponseBodyBytes:    10 * 1024 * 1024,
+				RetryMaxAttempts:        3,
+				RetryBaseDelayMillis:    500,
+				RetryMaxDelayMillis:     8000,
+				CircuitFailureThreshold: 5,
+				CircuitOpenSeconds:      30,
+			},
+			Chat: ModelGatewayKindConfig{
+				Enabled:           true,
+				UpstreamURL:       "http://111.19.156.30/v1/chat/completions",
+				APIKeyEnv:         "DEEPSEEK_API_KEY",
+				MaxConcurrency:    2,
+				MaxQueueSize:      100,
+				QPS:               1,
+				RPM:               60,
+				PerRunMaxInflight: 1,
+				TimeoutSeconds:    180,
+			},
+			Embedding: ModelGatewayKindConfig{
+				Enabled:           true,
+				UpstreamURL:       "http://111.19.156.74/v1/embeddings",
+				MaxConcurrency:    4,
+				MaxQueueSize:      100,
+				QPS:               4,
+				RPM:               240,
+				PerRunMaxInflight: 2,
+				TimeoutSeconds:    120,
+			},
+			Rerank: ModelGatewayKindConfig{
+				Enabled:           true,
+				UpstreamURL:       "http://111.19.156.74/v1/rerank",
+				MaxConcurrency:    2,
+				MaxQueueSize:      100,
+				QPS:               2,
+				RPM:               120,
+				PerRunMaxInflight: 2,
+				TimeoutSeconds:    120,
+			},
+			RedisLimiter: ModelGatewayRedisLimiter{
+				Enabled:        false,
+				KeyPrefix:      "ndr:model-gateway",
+				LockTTLSeconds: 300,
+			},
 		},
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/auth"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/config"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/jobs"
 	pythonpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/python"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/runevent"
@@ -80,6 +81,73 @@ func TestFillFormPythonHandlerValidatesPayload(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "target_namespace")
+}
+
+func TestWorkerInjectsGatewayEnvWhenEnabled(t *testing.T) {
+	t.Setenv("NDR_MODEL_GATEWAY_TOKEN", "worker-token")
+	runDir, manifest := manifestWithArtifacts(t)
+	runner := &pythonpkg.FakeRunner{Step15Result: &pythonpkg.Step15RunResult{
+		RunID:      uuid.New(),
+		OutDir:     runDir,
+		Manifest:   manifest,
+		Validation: &pythonpkg.ArtifactValidationResult{RunDir: runDir, OK: true},
+	}}
+	cfg := config.Default().ModelGateway
+	cfg.Enabled = true
+	cfg.InternalBaseURL = "http://api:8080/internal/model-gateway"
+	cfg.InternalTokenEnv = "NDR_MODEL_GATEWAY_TOKEN"
+	handler := jobs.NewFillFormPythonHandler(
+		runner,
+		pythonpkg.NewArtifactArchiver(&fakeArtifactRegistrar{}, zap.NewNop()),
+		runevent.NewService(&fakeRunEventRepo{}, nil),
+		zap.NewNop(),
+		jobs.WithFillModelGatewayEnv(cfg),
+	)
+	job := fillFormJob(runDir)
+
+	err := handler.Handle(context.Background(), &job)
+
+	require.NoError(t, err)
+	require.Len(t, runner.Step15Calls, 1)
+	env := runner.Step15Calls[0].Env
+	require.Equal(t, "true", env["NDR_MODEL_GATEWAY_ENABLED"])
+	require.Equal(t, "http://api:8080/internal/model-gateway", env["NDR_MODEL_GATEWAY_BASE_URL"])
+	require.Equal(t, "worker-token", env["NDR_MODEL_GATEWAY_TOKEN"])
+	require.Equal(t, job.ResourceID.String(), env["NDR_RUN_ID"])
+	require.Equal(t, job.ID.String(), env["NDR_JOB_ID"])
+	require.Equal(t, job.CreatedBy.String(), env["NDR_USER_ID"])
+	require.Equal(t, job.WorkspaceID.String(), env["NDR_WORKSPACE_ID"])
+}
+
+func TestWorkerKeepsDirectEndpointsWhenGatewayDisabled(t *testing.T) {
+	runDir, manifest := manifestWithArtifacts(t)
+	runner := &pythonpkg.FakeRunner{Step15Result: &pythonpkg.Step15RunResult{
+		RunID:      uuid.New(),
+		OutDir:     runDir,
+		Manifest:   manifest,
+		Validation: &pythonpkg.ArtifactValidationResult{RunDir: runDir, OK: true},
+	}}
+	cfg := config.Default().ModelGateway
+	cfg.Enabled = false
+	handler := jobs.NewFillFormPythonHandler(
+		runner,
+		pythonpkg.NewArtifactArchiver(&fakeArtifactRegistrar{}, zap.NewNop()),
+		runevent.NewService(&fakeRunEventRepo{}, nil),
+		zap.NewNop(),
+		jobs.WithFillModelGatewayEnv(cfg),
+	)
+	job := fillFormJob(runDir)
+	job.Payload["env"] = map[string]string{"EXISTING": "1"}
+
+	err := handler.Handle(context.Background(), &job)
+
+	require.NoError(t, err)
+	require.Len(t, runner.Step15Calls, 1)
+	env := runner.Step15Calls[0].Env
+	require.Equal(t, "1", env["EXISTING"])
+	require.NotContains(t, env, "NDR_MODEL_GATEWAY_ENABLED")
+	require.NotContains(t, env, "NDR_MODEL_GATEWAY_BASE_URL")
+	require.NotContains(t, env, "NDR_MODEL_GATEWAY_TOKEN")
 }
 
 func TestIngestKnowledgePythonHandlerDisabled(t *testing.T) {

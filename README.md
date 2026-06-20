@@ -119,6 +119,12 @@ Current permission model:
 
 The web app calls the real Go API. Long-running ingestion and form-filling tasks are executed by the Go worker through Python Core CLI entry points; the frontend does not mock task success.
 
+Optional Model Gateway:
+
+- Disabled by default, so Python Core keeps using configured direct chat/embedding/rerank endpoints.
+- When enabled, worker-injected `NDR_MODEL_GATEWAY_*` env routes Python Core model calls through `POST /internal/model-gateway/v1/chat/completions`, `/v1/embeddings`, and `/v1/rerank`.
+- Gateway enforces bounded concurrency, queues, per-run inflight limits, finite retry, circuit breakers, internal token auth, stats, and request tracing without logging full prompts, evidence, or answers.
+
 Run platform tests and builds:
 
 ```bash

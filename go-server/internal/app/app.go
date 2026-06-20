@@ -18,6 +18,7 @@ import (
 	knowledgepkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/knowledge"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/logging"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/middleware"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/modelgateway"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/observability"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/redisx"
 	reviewpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/review"
@@ -164,6 +165,17 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	artifactService.SetRunAccessAuthorizer(runAccess)
 	sseHandler := ssepkg.NewHandler(runEventService, sseBroker, workspaceAuthorizer, metrics)
 	sseHandler.SetRunAuthorizer(runAccess)
+	var modelGatewayHandler *modelgateway.Handler
+	if cfg.ModelGateway.Enabled && cfg.ModelGateway.BindToAPI {
+		modelGatewayService, err := modelgateway.NewService(cfg.ModelGateway, logger)
+		if err != nil {
+			_ = redisx.Close(redisClient)
+			database.Close(db)
+			_ = logger.Sync()
+			return nil, err
+		}
+		modelGatewayHandler = modelgateway.NewHandler(modelGatewayService)
+	}
 	routes := platformRoutes{
 		tokenManager:     tokenManager,
 		authHandler:      auth.NewHandler(authService),
@@ -176,6 +188,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		formHandler:      formpkg.NewHandler(formFileService, fillRunService),
 		knowledgeHandler: knowledgepkg.NewHandler(knowledgeBaseService, knowledgeDocumentService, ingestionService),
 		reviewHandler:    reviewpkg.NewHandler(reviewService, fillRunService),
+		modelGateway:     modelGatewayHandler,
 		enableNoopJob:    cfg.Jobs.EnableNoopJob,
 	}
 	router := buildRouter(cfg, logger, db, redisClient, objectStorage, metrics, routes)
@@ -295,6 +308,7 @@ type platformRoutes struct {
 	formHandler      *formpkg.Handler
 	knowledgeHandler *knowledgepkg.Handler
 	reviewHandler    *reviewpkg.Handler
+	modelGateway     *modelgateway.Handler
 	enableNoopJob    bool
 }
 
@@ -369,6 +383,9 @@ func isNotFound(err error) bool {
 }
 
 func registerPlatformRoutes(r chi.Router, routes platformRoutes) {
+	if routes.modelGateway != nil {
+		routes.modelGateway.RegisterRoutes(r)
+	}
 	if routes.authHandler == nil || routes.tokenManager == nil {
 		return
 	}

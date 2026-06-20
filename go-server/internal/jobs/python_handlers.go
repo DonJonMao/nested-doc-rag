@@ -10,6 +10,7 @@ import (
 
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/artifact"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/auth"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/config"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/python"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/runevent"
 	"github.com/google/uuid"
@@ -24,6 +25,7 @@ type FillFormPythonHandler struct {
 	TemplateMaterializer TemplateMaterializer
 	Lifecycle            FillRunLifecycle
 	ReviewImporter       ReviewImporter
+	ModelGateway         ModelGatewayEnvConfig
 }
 
 type FillFormPythonHandlerOption func(*FillFormPythonHandler)
@@ -54,6 +56,12 @@ type ReviewImportResult struct {
 	WritebackAllowed int
 }
 
+type ModelGatewayEnvConfig struct {
+	Enabled          bool
+	InternalBaseURL  string
+	InternalTokenEnv string
+}
+
 func WithTemplateMaterializer(materializer TemplateMaterializer) FillFormPythonHandlerOption {
 	return func(h *FillFormPythonHandler) {
 		h.TemplateMaterializer = materializer
@@ -69,6 +77,12 @@ func WithFillRunLifecycle(lifecycle FillRunLifecycle) FillFormPythonHandlerOptio
 func WithReviewImporter(importer ReviewImporter) FillFormPythonHandlerOption {
 	return func(h *FillFormPythonHandler) {
 		h.ReviewImporter = importer
+	}
+}
+
+func WithFillModelGatewayEnv(cfg config.ModelGatewayConfig) FillFormPythonHandlerOption {
+	return func(h *FillFormPythonHandler) {
+		h.ModelGateway = modelGatewayEnvConfig(cfg)
 	}
 }
 
@@ -124,6 +138,11 @@ func (h *FillFormPythonHandler) Handle(ctx context.Context, job *Job) error {
 		}
 	}
 	h.emit(ctx, job, runevent.EventPythonStarted, map[string]any{"out_dir": payload.OutDir})
+	runID := payload.FillRunID
+	if runID == uuid.Nil {
+		runID = job.ResourceID
+	}
+	env := mergeModelGatewayEnv(payload.Env, h.ModelGateway, job, runID)
 	result, err := h.Runner.RunStep15Agent(ctx, python.Step15RunRequest{
 		WorkspaceID:     job.WorkspaceID,
 		JobID:           job.ID,
@@ -142,7 +161,7 @@ func (h *FillFormPythonHandler) Handle(ctx context.Context, job *Job) error {
 		Writeback:       payload.Writeback,
 		Resume:          payload.Resume,
 		OutDir:          payload.OutDir,
-		Env:             payload.Env,
+		Env:             env,
 	})
 	if err != nil {
 		h.emit(ctx, job, runevent.EventArtifactValidationFailed, map[string]any{"error_message": err.Error()})
@@ -236,6 +255,7 @@ type IngestKnowledgePythonHandler struct {
 	Materializer IngestionMaterializer
 	Lifecycle    IngestionLifecycle
 	Archiver     *python.ArtifactArchiver
+	ModelGateway ModelGatewayEnvConfig
 }
 
 type IngestKnowledgePythonHandlerOption func(*IngestKnowledgePythonHandler)
@@ -266,6 +286,12 @@ func WithIngestionLifecycle(lifecycle IngestionLifecycle) IngestKnowledgePythonH
 func WithIngestionArtifactArchiver(archiver *python.ArtifactArchiver) IngestKnowledgePythonHandlerOption {
 	return func(h *IngestKnowledgePythonHandler) {
 		h.Archiver = archiver
+	}
+}
+
+func WithIngestionModelGatewayEnv(cfg config.ModelGatewayConfig) IngestKnowledgePythonHandlerOption {
+	return func(h *IngestKnowledgePythonHandler) {
+		h.ModelGateway = modelGatewayEnvConfig(cfg)
 	}
 }
 
@@ -345,6 +371,7 @@ func (h *IngestKnowledgePythonHandler) Handle(ctx context.Context, job *Job) err
 	if ingestionID == uuid.Nil {
 		ingestionID = job.ResourceID
 	}
+	env := mergeModelGatewayEnv(payload.Env, h.ModelGateway, job, ingestionID)
 	result, err := h.Runner.RunKnowledgeIngestion(ctx, python.IngestionRequest{
 		WorkspaceID:      job.WorkspaceID,
 		JobID:            job.ID,
@@ -357,7 +384,7 @@ func (h *IngestKnowledgePythonHandler) Handle(ctx context.Context, job *Job) err
 		QdrantNamespace:  payload.QdrantNamespace,
 		OutDir:           payload.OutDir,
 		Resume:           payload.Resume,
-		Env:              payload.Env,
+		Env:              env,
 	})
 	if err != nil {
 		h.emit(ctx, job, runevent.EventIngestionFailed, map[string]any{"error_message": err.Error()})
@@ -454,6 +481,44 @@ func decodeJobPayload(payload map[string]any, target any) error {
 		return fmt.Errorf("decode job payload: %w", err)
 	}
 	return nil
+}
+
+func modelGatewayEnvConfig(cfg config.ModelGatewayConfig) ModelGatewayEnvConfig {
+	return ModelGatewayEnvConfig{
+		Enabled:          cfg.Enabled,
+		InternalBaseURL:  strings.TrimSpace(cfg.InternalBaseURL),
+		InternalTokenEnv: strings.TrimSpace(cfg.InternalTokenEnv),
+	}
+}
+
+func mergeModelGatewayEnv(base map[string]string, cfg ModelGatewayEnvConfig, job *Job, runID uuid.UUID) map[string]string {
+	if !cfg.Enabled {
+		return base
+	}
+	env := make(map[string]string, len(base)+8)
+	for key, value := range base {
+		env[key] = value
+	}
+	env["NDR_MODEL_GATEWAY_ENABLED"] = "true"
+	env["NDR_MODEL_GATEWAY_BASE_URL"] = strings.TrimRight(cfg.InternalBaseURL, "/")
+	if cfg.InternalTokenEnv != "" {
+		env["NDR_MODEL_GATEWAY_TOKEN"] = os.Getenv(cfg.InternalTokenEnv)
+	}
+	if runID != uuid.Nil {
+		env["NDR_RUN_ID"] = runID.String()
+	}
+	if job != nil {
+		if job.ID != uuid.Nil {
+			env["NDR_JOB_ID"] = job.ID.String()
+		}
+		if job.CreatedBy != uuid.Nil {
+			env["NDR_USER_ID"] = job.CreatedBy.String()
+		}
+		if job.WorkspaceID != uuid.Nil {
+			env["NDR_WORKSPACE_ID"] = job.WorkspaceID.String()
+		}
+	}
+	return env
 }
 
 type fillFormPythonPayload struct {

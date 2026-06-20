@@ -58,6 +58,7 @@ def call_deepseek_json(
     api_key: str,
     messages: list[dict[str, str]],
     timeout: int,
+    headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     payload = {"model": model, "temperature": 0, "messages": messages}
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as tmp:
@@ -77,8 +78,11 @@ def call_deepseek_json(
                 url,
                 "-H",
                 "Content-Type: application/json",
-                "-H",
-                f"Authorization: Bearer {api_key}",
+                *[
+                    item
+                    for name, value in (headers if headers is not None else {"Authorization": f"Bearer {api_key}"}).items()
+                    for item in ("-H", f"{name}: {value}")
+                ],
                 "-d",
                 f"@{tmp_path}",
             ],

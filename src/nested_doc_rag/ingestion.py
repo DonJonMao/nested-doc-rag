@@ -58,6 +58,7 @@ def run_knowledge_ingestion(options: IngestionOptions) -> dict[str, Any]:
         endpoint=options.config.services.embedding_endpoint,
         model=options.config.services.embedding_model,
         timeout_seconds=options.config.services.timeout_seconds,
+        purpose="ingestion_embedding",
     )
     collection_name = options.qdrant_collection or options.config.qdrant.collection_name
     qdrant_path = options.config.paths.qdrant_path

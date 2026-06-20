@@ -148,6 +148,7 @@ func main() {
 		jobs.WithTemplateMaterializer(templateMaterializer),
 		jobs.WithFillRunLifecycle(fillRunLifecycle),
 		jobs.WithReviewImporter(reviewImporterAdapter{inner: reviewImporter}),
+		jobs.WithFillModelGatewayEnv(cfg.ModelGateway),
 	))
 	worker.RegisterHandler(jobs.JobTypeIngestKnowledge, jobs.NewIngestKnowledgePythonHandler(
 		pythonRunner,
@@ -157,6 +158,7 @@ func main() {
 		jobs.WithIngestionMaterializer(ingestionMaterializer),
 		jobs.WithIngestionLifecycle(ingestionLifecycle),
 		jobs.WithIngestionArtifactArchiver(artifactArchiver),
+		jobs.WithIngestionModelGatewayEnv(cfg.ModelGateway),
 	))
 	worker.RegisterHandler(jobs.JobTypeArchiveArtifacts, jobs.NewPlaceholderHandler(jobs.JobTypeArchiveArtifacts))
 

@@ -25,6 +25,7 @@ from nested_doc_rag.gongkan_eval import build_judge_messages, build_masked_query
 from nested_doc_rag.grounding import EvidenceStrengthEvaluator, EvidenceStrengthResult, apply_evidence_strength_to_overlay
 from nested_doc_rag.io import display_text, read_jsonl, write_json, write_jsonl
 from nested_doc_rag.llm import JsonRepairError
+from nested_doc_rag import model_gateway
 from nested_doc_rag.retrieval import QdrantRetriever, attach_parent_payloads
 from nested_doc_rag.schemas.eval import FieldPrediction
 
@@ -190,6 +191,8 @@ class Step15AgentRunner:
         self.resume = resume
         self.timeout_seconds = timeout_seconds or config.services.timeout_seconds
         self.chat_max_retries = max(0, chat_max_retries)
+        if model_gateway.is_enabled():
+            self.chat_max_retries = min(self.chat_max_retries, 1)
         self.chat_retry_backoff_seconds = max(0, chat_retry_backoff_seconds)
         if prompt_version not in PROMPT_VERSIONS:
             raise ValueError(f"unsupported prompt_version: {prompt_version}")
@@ -836,12 +839,20 @@ class Step15AgentRunner:
                 if caller is not None:
                     result = caller(**kwargs)
                 else:
+                    endpoint, headers = model_gateway.request_options(
+                        model_gateway.KIND_CHAT,
+                        self.chat_endpoint,
+                        "step15_judge" if call_kind == "judge" else "step15_answer",
+                        field_id=field_id,
+                        direct_headers={"Authorization": f"Bearer {self.chat_api_key}"},
+                    )
                     result = call_deepseek_json(
-                        url=self.chat_endpoint,
+                        url=endpoint,
                         model=self.chat_model,
                         api_key=self.chat_api_key,
                         messages=kwargs["messages"],
                         timeout=self.timeout_seconds,
+                        headers=headers,
                     )
             except Exception as exc:  # noqa: BLE001 - retry wraps fake and real chat callers
                 if is_json_parse_error(exc):

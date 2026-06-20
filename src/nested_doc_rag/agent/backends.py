@@ -6,6 +6,7 @@ import time
 from hashlib import sha1
 from typing import Any, Protocol
 
+from nested_doc_rag import model_gateway
 from nested_doc_rag.embedding import CurlJsonClient, RerankClient
 from nested_doc_rag.retrieval import QdrantRetriever, rerank_hits
 from nested_doc_rag.schemas.eval import FieldGold, FieldPrediction
@@ -298,15 +299,22 @@ class LLMAnswerGenerator:
         selected_chunk_ids = chunk_ids(evidence_bundle.selected_chunks)
         reference_chunk_ids = chunk_ids(evidence_bundle.reference_chunks)
         try:
-            response = self.http.post_json(
+            endpoint, headers = model_gateway.request_options(
+                model_gateway.KIND_CHAT,
                 self.chat_endpoint,
+                "step15_answer",
+                field_id=field.field_id,
+                direct_headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else None,
+            )
+            response = self.http.post_json(
+                endpoint,
                 {
                     "model": self.chat_model,
                     "temperature": self.temperature,
                     "max_tokens": self.max_tokens,
                     "messages": build_field_answer_messages(field, evidence_bundle, query_plan),
                 },
-                headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else None,
+                headers=headers,
             )
             parsed = parse_chat_completion_json(response)
         except Exception as exc:  # noqa: BLE001 - turn generator failures into reviewable field predictions

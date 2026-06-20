@@ -4,6 +4,8 @@ import json
 import subprocess
 from typing import Any
 
+from nested_doc_rag import model_gateway
+
 DEFAULT_EMBEDDING_ENDPOINT = "http://localhost:8001/v1/embeddings"
 DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b"
 DEFAULT_RERANK_ENDPOINT = "http://localhost:8002/rerank"
@@ -58,14 +60,21 @@ class EmbeddingClient:
         endpoint: str = DEFAULT_EMBEDDING_ENDPOINT,
         model: str = DEFAULT_EMBEDDING_MODEL,
         timeout_seconds: int = 180,
+        purpose: str = "query_embedding",
     ) -> None:
         self.endpoint = endpoint
         self.model = model
+        self.purpose = purpose
         self.http = CurlJsonClient(timeout_seconds=timeout_seconds)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         payload = {"model": self.model, "input": texts}
-        response = self.http.post_json(self.endpoint, payload)
+        endpoint, headers = model_gateway.request_options(
+            model_gateway.KIND_EMBEDDING,
+            self.endpoint,
+            self.purpose,
+        )
+        response = self.http.post_json(endpoint, payload, headers=headers)
         data = response.get("data")
         if not isinstance(data, list):
             raise RuntimeError(f"embedding response missing data list: {response}")
@@ -106,7 +115,12 @@ class RerankClient:
         }
         if self.model:
             payload["model"] = self.model
-        response = self.http.post_json(self.endpoint, payload)
+        endpoint, headers = model_gateway.request_options(
+            model_gateway.KIND_RERANK,
+            self.endpoint,
+            "rerank",
+        )
+        response = self.http.post_json(endpoint, payload, headers=headers)
         results = response.get("results")
         if not isinstance(results, list):
             raise RuntimeError(f"rerank response missing results list: {response}")

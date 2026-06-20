@@ -600,6 +600,55 @@ Python Core reads Qdrant settings from `config/local.yaml`. Leave `qdrant.url` e
 
 The Go worker does not import Python code or inspect RAG/agent internals. Job payloads carry only lightweight paths and options. Python writes all execution outputs under `out_dir`; Go validates artifacts through the Python CLI, reads `run_manifest.json`, and registers manifest artifacts.
 
+## Model Gateway
+
+Model Gateway is an optional internal proxy for Python Core model calls:
+
+```text
+Python Core Step15 / ingestion -> Go Model Gateway -> upstream chat / embedding / rerank services
+```
+
+It addresses congestion from multiple Python subprocesses calling model services concurrently. It provides bounded per-kind concurrency, bounded queues, per-run inflight limits, QPS/RPM throttling, finite retry with jitter, per-kind circuit breakers, internal token auth, stats, and request tracing with `request_id`, `run_id`, `field_id`, `job_id`, `user_id`, and `workspace_id`.
+
+Gateway is disabled by default and does not change existing direct Python model endpoints:
+
+```yaml
+model_gateway:
+  enabled: true
+  internal_base_url: "http://go-server:8080/internal/model-gateway"
+  internal_token_env: "NDR_MODEL_GATEWAY_TOKEN"
+  chat:
+    upstream_url: "http://111.19.156.30/v1/chat/completions"
+    max_concurrency: 2
+  embedding:
+    upstream_url: "http://111.19.156.74/v1/embeddings"
+    max_concurrency: 4
+  rerank:
+    upstream_url: "http://111.19.156.74/v1/rerank"
+    max_concurrency: 2
+```
+
+Set secrets through env, never in Git:
+
+```bash
+MODEL_GATEWAY_ENABLED=true
+NDR_MODEL_GATEWAY_TOKEN=change-me
+DEEPSEEK_API_KEY=...
+```
+
+Internal endpoints:
+
+- `POST /internal/model-gateway/v1/chat/completions`
+- `POST /internal/model-gateway/v1/embeddings`
+- `POST /internal/model-gateway/v1/rerank`
+- `GET /internal/model-gateway/stats`
+
+All endpoints require `Authorization: Bearer <NDR_MODEL_GATEWAY_TOKEN>` or `X-NDR-Model-Gateway-Token`. They are for Python subprocesses and workers only; they are not ordinary user APIs. If API and worker run in different containers, `model_gateway.internal_base_url` must point the worker to the API service name. If they run on the same host, `127.0.0.1` is fine.
+
+Gateway logs metadata, queue wait, upstream latency, attempt count, status, byte counts, and `body_sha256`. It does not log full prompts, evidence, or answers, and it does not cache chat responses. Streaming chat requests are rejected with `model_gateway_stream_not_supported`.
+
+Gateway failure codes include `model_gateway_queue_full`, `model_gateway_queue_timeout`, `model_gateway_circuit_open`, `model_gateway_stream_not_supported`, `upstream_timeout`, and `upstream_rate_limited`. Start conservatively: chat `max_concurrency` at 1 or 2, embedding higher, rerank moderate; tune by watching queue depth, queue timeout, retry, and circuit stats.
+
 ## Tests
 
 ```bash
@@ -618,7 +667,6 @@ Future work:
 - OIDC/SSO
 - Kubernetes deployment
 - HA PostgreSQL/Redis
-- model gateway
 
 Detailed design:
 
