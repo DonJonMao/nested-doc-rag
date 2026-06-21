@@ -1,0 +1,154 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile.api
+    env_file:
+      - .env.prod
+    command: ["--config", "configs/config.docker.yaml"]
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - api_runtime:/app/runtime
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: go-server/deployments/Dockerfile.worker
+    env_file:
+      - .env.prod
+    command: ["--config", "configs/config.docker.yaml"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import nested_doc_rag' && test -x /app/gongkan-worker"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - worker_runtime:/app/runtime
+      - worker_python_artifacts:/app/python-core/artifacts
+      - worker_python_tmp:/app/python-core/tmp
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gongkan
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: gongkan
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gongkan -d gongkan"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "127.0.0.1:9001:9001"
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_started
+    env_file:
+      - .env.prod
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD; do sleep 2; done;
+      mc mb -p local/$${GONGKAN_MINIO_BUCKET:-gongkan-platform} || true;
+      mc anonymous set none local/$${GONGKAN_MINIO_BUCKET:-gongkan-platform} || true;
+      "
+    restart: "no"
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  qdrant_data:
+  api_runtime:
+  worker_runtime:
+  worker_python_artifacts:
+  worker_python_tmp:

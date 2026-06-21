@@ -1,13 +1,86 @@
-FROM golang:1.22-alpine AS builder
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN go build -o /bin/gongkan-worker ./cmd/worker
+# syntax=docker/dockerfile:1
 
-FROM alpine:3.20
+# ----------------------------
+# 1. Build Go worker
+# ----------------------------
+FROM golang:1.23 AS go-builder
+
+WORKDIR /src/go-server
+
+COPY go-server/go.mod go-server/go.sum ./
+RUN go mod download
+
+COPY go-server ./
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" \
+    -o /out/gongkan-worker ./cmd/worker
+
+
+# ----------------------------
+# 2. Build Python wheels
+# ----------------------------
+FROM python:3.11-slim AS py-builder
+
+WORKDIR /src/python-core
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ROOT_USER_ACTION=ignore \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+RUN python -m pip install --upgrade pip setuptools wheel \
+    && python -m pip wheel --wheel-dir /wheels .
+
+
+# ----------------------------
+# 3. Runtime image
+# ----------------------------
+FROM python:3.11-slim AS runtime
+
 WORKDIR /app
-COPY --from=builder /bin/gongkan-worker /app/gongkan-worker
-COPY configs /app/configs
-COPY migrations /app/migrations
-ENTRYPOINT ["/app/gongkan-worker"]
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ROOT_USER_ACTION=ignore \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    GONGKAN_PYTHON_EXECUTABLE=/usr/local/bin/python \
+    GONGKAN_PYTHON_PROJECT_DIR=/app/python-core
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=go-builder /out/gongkan-worker /app/gongkan-worker
+
+COPY --from=py-builder /wheels /wheels
+RUN python -m pip install --no-cache-dir /wheels/*.whl \
+    && rm -rf /wheels
+
+COPY go-server/configs /app/configs
+COPY go-server/migrations /app/migrations
+
+# The Python CLI receives --config config/docker.yaml while its cwd is /app/python-core.
+RUN mkdir -p /app/python-core/config
+COPY config/docker.yaml /app/python-core/config/docker.yaml
+
+RUN mkdir -p \
+      /app/runtime/tmp/uploads \
+      /app/python-core/artifacts \
+      /app/python-core/tmp \
+    && useradd --system --uid 10001 --home-dir /app --shell /usr/sbin/nologin appuser \
+    && chown -R appuser:root /app
+
+USER appuser
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/gongkan-worker"]

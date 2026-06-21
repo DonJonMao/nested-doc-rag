@@ -1,7 +1,8 @@
-.PHONY: test test-race fmt fmt-check vet build build-api build-worker run-api run-worker docker-up docker-down docker-logs migrate-up migrate-down smoke-api smoke-auth smoke-files smoke-jobs smoke-product-flow loadtest-smoke ci tidy-check
+.PHONY: test test-race fmt fmt-check vet build build-api build-worker run-api run-worker docker-up docker-down docker-logs docker-prod-config docker-prod-up docker-prod-down docker-prod-logs docker-prod-worker-smoke migrate-up migrate-down smoke-api smoke-auth smoke-files smoke-jobs smoke-product-flow loadtest-smoke ci tidy-check
 
 CONFIG ?= configs/config.example.yaml
 COMPOSE ?= docker compose -f deployments/docker-compose.yaml
+COMPOSE_PROD ?= docker compose -f deployments/docker-compose.prod.yaml --env-file deployments/.env.prod
 
 test:
 	go test ./...
@@ -40,6 +41,24 @@ docker-down:
 
 docker-logs:
 	$(COMPOSE) logs -f
+
+docker-prod-config:
+	$(COMPOSE_PROD) config
+
+docker-prod-up:
+	$(COMPOSE_PROD) up -d --build
+
+docker-prod-down:
+	$(COMPOSE_PROD) down
+
+docker-prod-logs:
+	$(COMPOSE_PROD) logs -f api worker
+
+docker-prod-worker-smoke:
+	$(COMPOSE_PROD) exec worker python --version
+	$(COMPOSE_PROD) exec worker python -c "import nested_doc_rag; print('python core ok')"
+	$(COMPOSE_PROD) exec worker sh -lc "cd /app/python-core && python -m nested_doc_rag.cli --help >/tmp/nested_doc_rag_help.txt && head -n 5 /tmp/nested_doc_rag_help.txt"
+	$(COMPOSE_PROD) exec worker sh -lc "cd /app/python-core && python -m nested_doc_rag.cli show-config --config config/docker.yaml --json >/tmp/nested_doc_rag_config.json && head -n 20 /tmp/nested_doc_rag_config.json"
 
 migrate-up:
 	@echo "Migrations are applied by API startup in the current deployment mode."

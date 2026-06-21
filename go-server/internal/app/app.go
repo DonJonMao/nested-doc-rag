@@ -169,6 +169,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	if cfg.ModelGateway.Enabled && cfg.ModelGateway.BindToAPI {
 		modelGatewayService, err := modelgateway.NewService(cfg.ModelGateway, logger)
 		if err != nil {
+			eventBusCancel()
 			_ = redisx.Close(redisClient)
 			database.Close(db)
 			_ = logger.Sync()

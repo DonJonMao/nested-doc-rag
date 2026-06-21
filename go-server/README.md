@@ -364,6 +364,8 @@ jobs:
 - On worker startup, stale `running` jobs whose heartbeat has expired are marked `failed`; stale `cancel_requested` jobs are marked `canceled`. The fill-run or ingestion lifecycle is updated through the registered Python job handler recovery hook.
 - Python Core remains a separate CLI engine; Go does not call LLMs directly.
 
+Production Docker Compose deployment is documented in [docs/DOCKER_PRODUCTION.md](docs/DOCKER_PRODUCTION.md). The production Worker image bundles the Go worker binary plus Python 3.11 and the `nested_doc_rag` wheel so subprocess Python Core calls work inside Docker.
+
 ## Operational Commands
 
 ```bash
