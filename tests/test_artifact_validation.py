@@ -77,6 +77,24 @@ def test_validate_manifest_11_rejects_summary_mismatch(tmp_path: Path) -> None:
         validate_step15_artifacts(tmp_path)
 
 
+def test_validate_manifest_11_rejects_comment_too_long(tmp_path: Path) -> None:
+    write_valid_artifacts(tmp_path, writeback_enabled=True, manifest_11=True)
+    write_writeback_artifacts(
+        tmp_path,
+        audit_rows=[
+            {
+                "field_id": "item_4",
+                "status": "uncertain",
+                "writeback_action": "written_red_comment",
+                "comment_length": 2001,
+            }
+        ],
+    )
+
+    with pytest.raises(ArtifactValidationError, match="WB_COMMENT_TOO_LONG"):
+        validate_step15_artifacts(tmp_path)
+
+
 def test_validate_artifacts_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     write_valid_artifacts(tmp_path)
 
@@ -173,9 +191,9 @@ def write_valid_artifacts(
     write_json(run_dir / "run_manifest.json", manifest)
 
 
-def write_writeback_artifacts(run_dir: Path) -> None:
+def write_writeback_artifacts(run_dir: Path, *, audit_rows: list[dict] | None = None) -> None:
     (run_dir / "filled_form.xlsx").write_bytes(b"xlsx")
-    write_jsonl(run_dir / "writeback_audit.jsonl", [])
+    write_jsonl(run_dir / "writeback_audit.jsonl", audit_rows or [])
     write_json(run_dir / "evidence_map.json", {"fields": {}})
 
 

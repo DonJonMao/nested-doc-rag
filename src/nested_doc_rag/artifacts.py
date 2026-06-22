@@ -45,6 +45,7 @@ WRITEBACK_ERROR_CODES = {
     "WB_POLICY_REJECTED",
     "WB_MANIFEST_SCHEMA_INVALID",
 }
+DEFAULT_MAX_COMMENT_CHARS = 2000
 
 
 def validate_step15_artifacts(run_dir: Path, *, allow_mutated_predictions: bool = False) -> dict[str, Any]:
@@ -159,6 +160,48 @@ def validate_manifest_11(run_dir: Path, manifest: dict[str, Any], errors: list[s
     for key, value in expected.items():
         if summary.get(key) is not None and int(summary.get(key) or 0) != value:
             errors.append(f"WB_MANIFEST_SCHEMA_INVALID: writeback.summary.{key} does not match fields")
+
+    validate_writeback_audit(run_dir, writeback, errors)
+
+
+def validate_writeback_audit(run_dir: Path, writeback: dict[str, Any], errors: list[str]) -> None:
+    audit_path = run_dir / "writeback_audit.jsonl"
+    if not audit_path.exists():
+        return
+    max_comment_chars = max_comment_chars_from_manifest(writeback)
+    for index, row in enumerate(read_jsonl(audit_path), start=1):
+        if not isinstance(row, dict):
+            errors.append(f"WB_MANIFEST_SCHEMA_INVALID: writeback_audit row {index} must be an object")
+            continue
+        field_key = str(row.get("field_id") or row.get("field_key") or f"row_{index}")
+        comment_length = row.get("comment_length")
+        if comment_length is None:
+            continue
+        try:
+            length = int(comment_length)
+        except (TypeError, ValueError):
+            errors.append(f"WB_MANIFEST_SCHEMA_INVALID: invalid comment_length for {field_key}: {comment_length}")
+            continue
+        if length > max_comment_chars:
+            errors.append(f"WB_COMMENT_TOO_LONG: comment_length exceeds max_comment_chars for {field_key}: {length}>{max_comment_chars}")
+
+
+def max_comment_chars_from_manifest(writeback: dict[str, Any]) -> int:
+    config = writeback.get("config")
+    candidates = []
+    if isinstance(config, dict):
+        candidates.append(config.get("max_comment_chars"))
+    candidates.append(writeback.get("max_comment_chars"))
+    for value in candidates:
+        if value is None:
+            continue
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            return parsed
+    return DEFAULT_MAX_COMMENT_CHARS
 
 
 def image_evidence_keys(run_dir: Path) -> set[str]:

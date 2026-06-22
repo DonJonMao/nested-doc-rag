@@ -494,9 +494,15 @@ def maybe_write_uncertain_comment(
     if cell.comment and cell.comment.text:
         comment_text = f"{cell.comment.text}\n\n{comment_text}"
     truncated = False
-    if len(comment_text) > policy.max_comment_chars:
+    limit = max(0, policy.max_comment_chars)
+    if len(comment_text) > limit:
         suffix = f"\n{WB_COMMENT_TOO_LONG}: comment truncated"
-        comment_text = comment_text[: max(0, policy.max_comment_chars - len(suffix))].rstrip() + suffix
+        if limit == 0:
+            comment_text = ""
+        elif limit <= len(suffix):
+            comment_text = suffix[-limit:]
+        else:
+            comment_text = comment_text[: limit - len(suffix)].rstrip() + suffix
         truncated = True
     cell.comment = Comment(comment_text, COMMENT_AUTHOR)
     return len(comment_text), truncated

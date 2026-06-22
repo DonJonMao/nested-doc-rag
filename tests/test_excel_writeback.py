@@ -291,6 +291,50 @@ def test_uncertain_allowed_writes_red_comment_and_evidence(tmp_path: Path) -> No
     assert "Evidence" in workbook.sheetnames
 
 
+def test_uncertain_comment_is_truncated_to_configured_limit(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    output = tmp_path / "filled_form.xlsx"
+    make_template(template)
+    limit = 120
+
+    prediction = make_prediction(
+        "field_1",
+        "C6",
+        "双路市电",
+        status="partial_clue",
+        reference_docs=[
+            {
+                "chunk_id": "chunk_1",
+                "document_id": "doc_1",
+                "object_key": "kb/xixian/doc.xlsx",
+                "source_anchor": "能力清单!H42",
+                "sheet_name": "能力清单",
+                "cell": "H42",
+                "text_preview": "市电配置为双路。" * 80,
+            }
+        ],
+        evidence_ids=[],
+    )
+
+    patch_workbook(
+        template,
+        [prediction],
+        output,
+        overlays_by_field_id={"field_1": {"writeback_allowed": False, "critic_flags": [], "review_required": True}},
+        writeback_config={"allow_uncertain": True, "max_comment_chars": limit},
+        run_id="run_1",
+    )
+
+    workbook = load_workbook(output)
+    comment = workbook["Sheet1"]["C6"].comment
+    assert comment is not None
+    assert len(comment.text) <= limit
+    assert "WB_COMMENT_TOO_LONG" in comment.text
+    audit = read_jsonl(tmp_path / "writeback_audit.jsonl")
+    assert audit[0]["comment_length"] <= limit
+    assert audit[0]["error_code"] == "WB_COMMENT_TOO_LONG"
+
+
 def test_flagged_does_not_write(tmp_path: Path) -> None:
     template = tmp_path / "template.xlsx"
     output = tmp_path / "filled_form.xlsx"
