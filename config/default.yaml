@@ -94,6 +94,15 @@ excel:
   write_comments: true
   preserve_styles: true
 
+writeback:
+  allow_uncertain: false
+  uncertain_style: red_fill
+  uncertain_comment_prefix: "[UNCERTAIN]"
+  embed_evidence_images: false
+  evidence_image_mode: hyperlink
+  max_evidence_images_per_field: 3
+  max_comment_chars: 2000
+
 agent:
   max_repair_attempts: 2
   confidence_threshold: 0.72

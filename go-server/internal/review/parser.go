@@ -168,6 +168,10 @@ func reviewItemFromMap(raw map[string]any, overlay map[string]any, runID uuid.UU
 		SuggestedAnswerValue:              getString(source, "suggested_answer_value", "suggested_answer"),
 		SuggestedReferenceSourceDocuments: getMapSlice(source, "suggested_reference_source_documents"),
 		Reasons:                           getStringSlice(source, "reasons"),
+		WritebackStatus:                   getString(source, "writeback_status", "field_status", "status"),
+		WritebackAction:                   getString(source, "writeback_action"),
+		EvidenceRefs:                      getMapSlice(source, "evidence_refs"),
+		WritebackErrorCode:                getString(source, "writeback_error_code", "error_code"),
 		RiskLevel:                         getString(source, "risk_level"),
 		Status:                            ReviewStatusPending,
 		RawPayload:                        copyMap(raw),
@@ -194,6 +198,18 @@ func mergeOverlay(item ReviewItem, overlay map[string]any) ReviewItem {
 	item.SuggestedAnswerValue = getString(overlay, "suggested_answer_value", "suggested_answer")
 	item.SuggestedReferenceSourceDocuments = getMapSlice(overlay, "suggested_reference_source_documents")
 	item.Reasons = getStringSlice(overlay, "reasons")
+	if item.WritebackStatus == "" {
+		item.WritebackStatus = getString(overlay, "writeback_status", "field_status", "status")
+	}
+	if item.WritebackAction == "" {
+		item.WritebackAction = getString(overlay, "writeback_action")
+	}
+	if len(item.EvidenceRefs) == 0 {
+		item.EvidenceRefs = getMapSlice(overlay, "evidence_refs")
+	}
+	if item.WritebackErrorCode == "" {
+		item.WritebackErrorCode = getString(overlay, "writeback_error_code", "error_code")
+	}
 	item.RiskLevel = getString(overlay, "risk_level")
 	if item.RiskLevel == "" {
 		item.RiskLevel = riskFromFlags(item.CriticFlags, item.ReviewRequired)

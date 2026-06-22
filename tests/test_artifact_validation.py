@@ -51,6 +51,32 @@ def test_validate_artifacts_requires_writeback_outputs_when_enabled(tmp_path: Pa
         validate_step15_artifacts(tmp_path)
 
 
+def test_validate_manifest_11_success(tmp_path: Path) -> None:
+    write_valid_artifacts(tmp_path, writeback_enabled=True, manifest_11=True)
+    write_writeback_artifacts(tmp_path)
+
+    result = validate_step15_artifacts(tmp_path)
+
+    assert result["valid"] is True
+    assert result["writeback_enabled"] is True
+
+
+def test_validate_manifest_11_rejects_uncertain_without_evidence(tmp_path: Path) -> None:
+    write_valid_artifacts(tmp_path, writeback_enabled=True, manifest_11=True, evidence_refs=[])
+    write_writeback_artifacts(tmp_path)
+
+    with pytest.raises(ArtifactValidationError, match="WB_MISSING_EVIDENCE"):
+        validate_step15_artifacts(tmp_path)
+
+
+def test_validate_manifest_11_rejects_summary_mismatch(tmp_path: Path) -> None:
+    write_valid_artifacts(tmp_path, writeback_enabled=True, manifest_11=True, summary_override={"uncertain": 2})
+    write_writeback_artifacts(tmp_path)
+
+    with pytest.raises(ArtifactValidationError, match="writeback.summary.uncertain"):
+        validate_step15_artifacts(tmp_path)
+
+
 def test_validate_artifacts_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     write_valid_artifacts(tmp_path)
 
@@ -70,7 +96,14 @@ def test_validate_artifacts_cli_args(tmp_path: Path) -> None:
     assert args.allow_mutated_predictions is True
 
 
-def write_valid_artifacts(run_dir: Path, *, writeback_enabled: bool = False) -> None:
+def write_valid_artifacts(
+    run_dir: Path,
+    *,
+    writeback_enabled: bool = False,
+    manifest_11: bool = False,
+    evidence_refs: list[dict] | None = None,
+    summary_override: dict | None = None,
+) -> None:
     write_jsonl(run_dir / "predictions_raw.jsonl", [raw_record()])
     write_jsonl(run_dir / "predictions.jsonl", [raw_record()])
     write_jsonl(run_dir / "agent_overlays.jsonl", [overlay_record()])
@@ -80,9 +113,7 @@ def write_valid_artifacts(run_dir: Path, *, writeback_enabled: bool = False) -> 
     write_json(run_dir / "trace_summary.json", {"total_fields": 1})
     write_json(run_dir / "summary.json", {"fields_total": 1})
     (run_dir / "run_summary.md").write_text("# Summary\n", encoding="utf-8")
-    write_json(
-        run_dir / "run_manifest.json",
-        {
+    manifest = {
             "run_id": "run_1",
             "status": "completed",
             "engine": "step15_agent_overlay",
@@ -100,8 +131,52 @@ def write_valid_artifacts(run_dir: Path, *, writeback_enabled: bool = False) -> 
                 "filled_form": "filled_form.xlsx" if writeback_enabled else None,
             },
             "counts": {"total_fields": 1},
-        },
-    )
+        }
+    if manifest_11:
+        refs = [
+            {
+                "chunk_id": "chunk_main",
+                "document_id": "doc_1",
+                "object_key": "kb/xixian/doc.xlsx",
+                "qdrant_point_id": "point_1",
+                "source_type": "main_excel_capability",
+                "source_anchor": "能力清单!H42",
+                "sheet_name": "能力清单",
+                "cell": "H42",
+            }
+        ] if evidence_refs is None else evidence_refs
+        writeback_summary = {"confirmed": 0, "uncertain": 1, "flagged": 0, "written": 1, "review": 1}
+        writeback_summary.update(summary_override or {})
+        manifest.update(
+            {
+                "schema_version": "1.1",
+                "writeback": {
+                    "summary": writeback_summary,
+                    "fields": [
+                        {
+                            "field_key": "item_4",
+                            "field_id": "item_4",
+                            "row_index": 4,
+                            "target_cell": "D4",
+                            "sheet_name": "Sheet1",
+                            "cell": "D4",
+                            "status": "uncertain",
+                            "answer_status": "partial_clue",
+                            "answer_value": "2路市电",
+                            "writeback_action": "written_red_comment",
+                            "evidence_refs": refs,
+                        }
+                    ],
+                },
+            }
+        )
+    write_json(run_dir / "run_manifest.json", manifest)
+
+
+def write_writeback_artifacts(run_dir: Path) -> None:
+    (run_dir / "filled_form.xlsx").write_bytes(b"xlsx")
+    write_jsonl(run_dir / "writeback_audit.jsonl", [])
+    write_json(run_dir / "evidence_map.json", {"fields": {}})
 
 
 def raw_record() -> dict:

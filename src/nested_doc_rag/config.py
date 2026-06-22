@@ -143,6 +143,17 @@ class ExcelConfig:
 
 
 @dataclass(frozen=True)
+class WritebackConfig:
+    allow_uncertain: bool = False
+    uncertain_style: str = "red_fill"
+    uncertain_comment_prefix: str = "[UNCERTAIN]"
+    embed_evidence_images: bool = False
+    evidence_image_mode: str = "hyperlink"
+    max_evidence_images_per_field: int = 3
+    max_comment_chars: int = 2000
+
+
+@dataclass(frozen=True)
 class AgentConfig:
     max_repair_attempts: int = 2
     confidence_threshold: float = 0.72
@@ -171,6 +182,7 @@ class AppConfig:
     grounding: GroundingConfig = field(default_factory=GroundingConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     excel: ExcelConfig = field(default_factory=ExcelConfig)
+    writeback: WritebackConfig = field(default_factory=WritebackConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     agentscope: AgentScopeConfig = field(default_factory=AgentScopeConfig)
 
@@ -208,6 +220,7 @@ def code_defaults(project_root: Path | None = None) -> dict[str, Any]:
         "grounding": _serialize(GroundingConfig()),
         "evaluation": _serialize(EvaluationConfig()),
         "excel": _serialize(ExcelConfig()),
+        "writeback": _serialize(WritebackConfig()),
         "agent": _serialize(AgentConfig()),
         "agentscope": _serialize(AgentScopeConfig()),
     }
@@ -357,6 +370,16 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         write_comments=_as_bool(excel_data.get("write_comments", True)),
         preserve_styles=_as_bool(excel_data.get("preserve_styles", True)),
     )
+    writeback_data = _section(data, "writeback", WritebackConfig())
+    writeback = WritebackConfig(
+        allow_uncertain=_as_bool(writeback_data.get("allow_uncertain", False)),
+        uncertain_style=str(writeback_data.get("uncertain_style", "red_fill")),
+        uncertain_comment_prefix=str(writeback_data.get("uncertain_comment_prefix", "[UNCERTAIN]")),
+        embed_evidence_images=_as_bool(writeback_data.get("embed_evidence_images", False)),
+        evidence_image_mode=str(writeback_data.get("evidence_image_mode", "hyperlink")),
+        max_evidence_images_per_field=_as_int(writeback_data.get("max_evidence_images_per_field", 3)),
+        max_comment_chars=_as_int(writeback_data.get("max_comment_chars", 2000)),
+    )
     agent_data = _section(data, "agent", AgentConfig())
     agent = AgentConfig(
         max_repair_attempts=_as_int(agent_data.get("max_repair_attempts", 2)),
@@ -386,6 +409,7 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         grounding=grounding,
         evaluation=evaluation,
         excel=excel,
+        writeback=writeback,
         agent=agent,
         agentscope=agentscope,
     )
@@ -477,6 +501,9 @@ def _env_aliases() -> dict[str, tuple[str, str]]:
         "NDR_AGENT_RETRIEVAL_BACKEND": ("agent", "retrieval_backend"),
         "NDR_AGENT_GENERATION_BACKEND": ("agent", "generation_backend"),
         "NDR_AGENT_ENABLE_RERANK": ("agent", "enable_rerank"),
+        "NDR_WRITEBACK_ALLOW_UNCERTAIN": ("writeback", "allow_uncertain"),
+        "WRITEBACK_ALLOW_UNCERTAIN": ("writeback", "allow_uncertain"),
+        "WRITEBACK_EMBED_IMAGE": ("writeback", "embed_evidence_images"),
     }
 
 

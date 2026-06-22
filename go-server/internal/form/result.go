@@ -67,6 +67,7 @@ type FillRunDetail struct {
 	ErrorMessage               string                   `json:"error_message,omitempty"`
 	Summary                    FillRunSummaryCounts     `json:"summary"`
 	Artifacts                  FillRunArtifactDownloads `json:"artifacts"`
+	Writeback                  FillRunWritebackBlock    `json:"writeback"`
 	ArtifactValidationWarnings []string                 `json:"artifact_validation_warnings,omitempty"`
 }
 
@@ -79,6 +80,10 @@ type FillRunSummaryCounts struct {
 	WritebackAllowed   int `json:"writeback_allowed"`
 	ReviewRequired     int `json:"review_required"`
 	FailedFields       int `json:"failed_fields"`
+	Confirmed          int `json:"confirmed"`
+	Uncertain          int `json:"uncertain"`
+	Flagged            int `json:"flagged"`
+	Written            int `json:"written"`
 }
 
 type FillRunDownloads struct {
@@ -101,12 +106,45 @@ type FillRunArtifactInfo struct {
 	Size      int64  `json:"size,omitempty"`
 }
 
+type FillRunWritebackBlock struct {
+	Summary FillRunWritebackSummary `json:"summary"`
+	Fields  []FillRunWritebackField `json:"fields"`
+}
+
+type FillRunWritebackSummary struct {
+	Confirmed int `json:"confirmed"`
+	Uncertain int `json:"uncertain"`
+	Flagged   int `json:"flagged"`
+	Written   int `json:"written"`
+	Review    int `json:"review"`
+}
+
+type FillRunWritebackField struct {
+	FieldKey        string           `json:"field_key,omitempty"`
+	FieldID         string           `json:"field_id,omitempty"`
+	RowIndex        int              `json:"row_index,omitempty"`
+	TargetCell      string           `json:"target_cell,omitempty"`
+	SheetName       string           `json:"sheet_name,omitempty"`
+	Cell            string           `json:"cell,omitempty"`
+	Status          string           `json:"status,omitempty"`
+	AnswerStatus    string           `json:"answer_status,omitempty"`
+	AnswerValue     any              `json:"answer_value,omitempty"`
+	WritebackAction string           `json:"writeback_action,omitempty"`
+	EvidenceRefs    []map[string]any `json:"evidence_refs"`
+	ErrorCode       string           `json:"error_code,omitempty"`
+}
+
 type runManifestArtifact struct {
+	SchemaVersion    string         `json:"schema_version"`
 	RunID            string         `json:"run_id"`
 	Status           string         `json:"status"`
 	WritebackEnabled bool           `json:"writeback_enabled"`
 	Artifacts        map[string]any `json:"artifacts"`
 	Counts           map[string]any `json:"counts"`
+	Writeback        struct {
+		Summary map[string]any   `json:"summary"`
+		Fields  []map[string]any `json:"fields"`
+	} `json:"writeback"`
 }
 
 type resultContext struct {
@@ -156,6 +194,7 @@ func (s *FillRunService) GetFillRunDetail(ctx context.Context, runID uuid.UUID, 
 		ErrorMessage:               run.ErrorMessage,
 		Summary:                    result.summary,
 		Artifacts:                  artifactDownloads(result.artifactByType),
+		Writeback:                  writebackFromManifest(result.manifest),
 		ArtifactValidationWarnings: result.warnings,
 	}, nil
 }
@@ -246,6 +285,37 @@ func (s *FillRunService) DownloadSummary(ctx context.Context, runID uuid.UUID, a
 		result.ContentType = "application/json; charset=utf-8"
 	}
 	return result, nil
+}
+
+func (s *FillRunService) DownloadEvidenceImage(ctx context.Context, runID uuid.UUID, imageObjectKey string, actor auth.Principal) (*artifact.DownloadResult, error) {
+	imageObjectKey = strings.TrimSpace(imageObjectKey)
+	if imageObjectKey == "" || unsafeObjectKey(imageObjectKey) {
+		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "invalid image object key", http.StatusBadRequest, nil, nil)
+	}
+	result, err := s.loadResultContext(ctx, runID, actor)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureFillRunDownloadReady(result.run); err != nil {
+		return nil, err
+	}
+	if result.manifest == nil || !result.manifest.hasImageObjectKey(imageObjectKey) {
+		return nil, httpx.NewAppError(httpx.CodeNotFound, "evidence image is not declared by run manifest", http.StatusNotFound, nil, nil)
+	}
+	for _, item := range result.artifacts {
+		if item.ObjectKey != imageObjectKey {
+			continue
+		}
+		download, err := s.artifacts.DownloadArtifactProxy(ctx, item.ID, actor)
+		if err != nil {
+			return nil, err
+		}
+		if download.Filename == "" {
+			download.Filename = filepath.Base(imageObjectKey)
+		}
+		return download, nil
+	}
+	return nil, httpx.NewAppError(httpx.CodeNotFound, "evidence image artifact not found", http.StatusNotFound, nil, nil)
 }
 
 func (s *FillRunService) downloadRunArtifact(ctx context.Context, runID uuid.UUID, artifactType string, actor auth.Principal) (*artifact.DownloadResult, error) {
@@ -466,6 +536,40 @@ func (m *runManifestArtifact) hasArtifact(artifactType string) bool {
 	return err == nil && ok && value != ""
 }
 
+func (m *runManifestArtifact) hasImageObjectKey(imageObjectKey string) bool {
+	if m == nil || strings.TrimSpace(imageObjectKey) == "" {
+		return false
+	}
+	for _, field := range m.Writeback.Fields {
+		refs, ok := field["evidence_refs"].([]any)
+		if !ok {
+			if typed, typedOK := field["evidence_refs"].([]map[string]any); typedOK {
+				for _, ref := range typed {
+					if strings.TrimSpace(fmt.Sprint(ref["image_object_key"])) == imageObjectKey {
+						return true
+					}
+				}
+			}
+			continue
+		}
+		for _, item := range refs {
+			ref, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if strings.TrimSpace(fmt.Sprint(ref["image_object_key"])) == imageObjectKey {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func unsafeObjectKey(value string) bool {
+	value = strings.TrimSpace(value)
+	return value == "" || strings.HasPrefix(value, "/") || strings.Contains(value, "../") || strings.Contains(value, `..\`)
+}
+
 func manifestArtifactValue(raw any) (string, bool, error) {
 	if raw == nil {
 		return "", false, nil
@@ -509,7 +613,7 @@ func summaryFromManifest(manifest *runManifestArtifact) FillRunSummaryCounts {
 	if manifest == nil {
 		return FillRunSummaryCounts{}
 	}
-	return FillRunSummaryCounts{
+	summary := FillRunSummaryCounts{
 		TotalFields:        intFromValue(manifest.Counts["total_fields"]),
 		Answered:           intFromValue(manifest.Counts["answered"]),
 		PartialClue:        intFromValue(manifest.Counts["partial_clue"]),
@@ -519,6 +623,11 @@ func summaryFromManifest(manifest *runManifestArtifact) FillRunSummaryCounts {
 		ReviewRequired:     intFromValue(manifest.Counts["review_required"]),
 		FailedFields:       intFromValue(manifest.Counts["failed"]),
 	}
+	summary.Confirmed = intFromValue(manifest.Writeback.Summary["confirmed"])
+	summary.Uncertain = intFromValue(manifest.Writeback.Summary["uncertain"])
+	summary.Flagged = intFromValue(manifest.Writeback.Summary["flagged"])
+	summary.Written = intFromValue(manifest.Writeback.Summary["written"])
+	return summary
 }
 
 func summaryFromMap(raw map[string]any) FillRunSummaryCounts {
@@ -531,7 +640,44 @@ func summaryFromMap(raw map[string]any) FillRunSummaryCounts {
 		WritebackAllowed:   firstInt(raw, []string{"writeback_allowed"}, []string{"writeback_allowed_count"}, []string{"overlay_counts", "writeback_allowed"}, []string{"counts", "writeback_allowed"}),
 		ReviewRequired:     firstInt(raw, []string{"review_required"}, []string{"review_required_count"}, []string{"overlay_counts", "review_required"}, []string{"counts", "review_required"}, []string{"trace_summary", "review_count"}),
 		FailedFields:       firstInt(raw, []string{"failed_fields"}, []string{"failed_count"}, []string{"failed_count"}, []string{"failures"}, []string{"trace_summary", "failed_count"}, []string{"counts", "failed"}),
+		Confirmed:          firstInt(raw, []string{"confirmed"}, []string{"writeback", "summary", "confirmed"}, []string{"writeback_summary", "confirmed_count"}),
+		Uncertain:          firstInt(raw, []string{"uncertain"}, []string{"writeback", "summary", "uncertain"}, []string{"writeback_summary", "uncertain_count"}),
+		Flagged:            firstInt(raw, []string{"flagged"}, []string{"writeback", "summary", "flagged"}, []string{"writeback_summary", "flagged_count"}),
+		Written:            firstInt(raw, []string{"written"}, []string{"writeback", "summary", "written"}, []string{"writeback_summary", "written_count"}),
 	}
+}
+
+func writebackFromManifest(manifest *runManifestArtifact) FillRunWritebackBlock {
+	var block FillRunWritebackBlock
+	if manifest == nil {
+		block.Fields = []FillRunWritebackField{}
+		return block
+	}
+	block.Summary = FillRunWritebackSummary{
+		Confirmed: intFromValue(manifest.Writeback.Summary["confirmed"]),
+		Uncertain: intFromValue(manifest.Writeback.Summary["uncertain"]),
+		Flagged:   intFromValue(manifest.Writeback.Summary["flagged"]),
+		Written:   intFromValue(manifest.Writeback.Summary["written"]),
+		Review:    intFromValue(manifest.Writeback.Summary["review"]),
+	}
+	block.Fields = make([]FillRunWritebackField, 0, len(manifest.Writeback.Fields))
+	for _, raw := range manifest.Writeback.Fields {
+		block.Fields = append(block.Fields, FillRunWritebackField{
+			FieldKey:        stringFromAny(raw["field_key"]),
+			FieldID:         stringFromAny(raw["field_id"]),
+			RowIndex:        intFromValue(raw["row_index"]),
+			TargetCell:      stringFromAny(raw["target_cell"]),
+			SheetName:       stringFromAny(raw["sheet_name"]),
+			Cell:            stringFromAny(raw["cell"]),
+			Status:          stringFromAny(raw["status"]),
+			AnswerStatus:    stringFromAny(raw["answer_status"]),
+			AnswerValue:     raw["answer_value"],
+			WritebackAction: stringFromAny(raw["writeback_action"]),
+			EvidenceRefs:    mapSliceFromAny(raw["evidence_refs"]),
+			ErrorCode:       stringFromAny(raw["error_code"]),
+		})
+	}
+	return block
 }
 
 func mergeSummaryCounts(primary FillRunSummaryCounts, fallback FillRunSummaryCounts) FillRunSummaryCounts {
@@ -558,6 +704,18 @@ func mergeSummaryCounts(primary FillRunSummaryCounts, fallback FillRunSummaryCou
 	}
 	if primary.FailedFields == 0 {
 		primary.FailedFields = fallback.FailedFields
+	}
+	if primary.Confirmed == 0 {
+		primary.Confirmed = fallback.Confirmed
+	}
+	if primary.Uncertain == 0 {
+		primary.Uncertain = fallback.Uncertain
+	}
+	if primary.Flagged == 0 {
+		primary.Flagged = fallback.Flagged
+	}
+	if primary.Written == 0 {
+		primary.Written = fallback.Written
 	}
 	return primary
 }
@@ -611,6 +769,36 @@ func intFromValue(value any) int {
 		return i
 	}
 	return 0
+}
+
+func stringFromAny(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case json.Number:
+		return v.String()
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
+}
+
+func mapSliceFromAny(value any) []map[string]any {
+	switch typed := value.(type) {
+	case []map[string]any:
+		return append([]map[string]any(nil), typed...)
+	case []any:
+		out := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if ref, ok := item.(map[string]any); ok {
+				out = append(out, ref)
+			}
+		}
+		return out
+	default:
+		return []map[string]any{}
+	}
 }
 
 func downloadsForResult(result *resultContext) FillRunDownloads {
@@ -695,11 +883,15 @@ func ReviewItemsJSONLToCSV(reader io.Reader, writer io.Writer) error {
 		"question_text",
 		"answer_status",
 		"answer_value",
+		"status",
+		"writeback_action",
 		"risk_level",
 		"review_required",
 		"writeback_allowed",
+		"error_code",
 		"reasons",
 		"source_chunk_ids",
+		"evidence_refs",
 		"notes",
 	}); err != nil {
 		return err
@@ -727,11 +919,15 @@ func ReviewItemsJSONLToCSV(reader io.Reader, writer io.Writer) error {
 			stringField(row, "question_text"),
 			stringField(row, "answer_status"),
 			firstStringField(row, "answer_value", "proposed_answer"),
+			firstStringField(row, "writeback_status", "field_status", "status"),
+			stringField(row, "writeback_action"),
 			stringField(row, "risk_level"),
 			stringField(row, "review_required"),
 			stringField(row, "writeback_allowed"),
+			firstStringField(row, "writeback_error_code", "error_code"),
 			joinListField(row, "reasons", "reason"),
 			joinListField(row, "source_chunk_ids", "candidate_chunk_ids"),
+			joinMapField(row, "evidence_refs"),
 			firstStringField(row, "notes", "review_comment", "suggested_action"),
 		}); err != nil {
 			return err
@@ -783,6 +979,38 @@ func joinListField(row map[string]any, keys ...string) string {
 			if text := valueToString(value); text != "" {
 				return text
 			}
+		}
+	}
+	return ""
+}
+
+func joinMapField(row map[string]any, key string) string {
+	value, ok := row[key]
+	if !ok || value == nil {
+		return ""
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return valueToString(value)
+	}
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		ref, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		source := firstNonEmptyValue(ref, "document_id", "object_key", "chunk_id")
+		location := firstNonEmptyValue(ref, "source_anchor", "cell", "page")
+		image := firstNonEmptyValue(ref, "image_object_key")
+		parts = append(parts, strings.Trim(strings.Join([]string{source, location, image}, "|"), "|"))
+	}
+	return strings.Join(parts, ";")
+}
+
+func firstNonEmptyValue(row map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := valueToString(row[key]); value != "" {
+			return value
 		}
 	}
 	return ""

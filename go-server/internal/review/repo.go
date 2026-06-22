@@ -42,6 +42,7 @@ func (r *PGXRepo) Create(ctx context.Context, item ReviewItem) error {
 		mustJSON(item.SourceChunkIDs), mustJSON(item.EvidenceAttachmentIDs), mustJSON(item.ReferenceChunkIDs), mustJSON(item.ReferenceSourceDocuments), mustJSON(item.ReferenceSnippets),
 		mustJSON(item.CriticFlags), item.RiskLevel, item.ReviewRequired, item.WritebackAllowed,
 		nullableString(item.SuggestedStatus), nullableString(item.SuggestedAnswerValue), mustJSON(item.SuggestedReferenceSourceDocuments), mustJSON(item.Reasons),
+		nullableString(item.WritebackStatus), nullableString(item.WritebackAction), mustJSON(item.EvidenceRefs), nullableString(item.WritebackErrorCode),
 		item.Status, item.ReviewerID, item.ReviewedAt, nullableString(item.ReviewComment), nullableString(item.EditedAnswer),
 		mustJSON(item.RawPayload), mustJSON(item.OverlayPayload), item.CreatedAt, item.UpdatedAt,
 	)
@@ -63,18 +64,20 @@ func (r *PGXRepo) UpsertByRunAndField(ctx context.Context, item ReviewItem) erro
 			answer_status = $7, answer_value = $8, confidence = $9,
 			source_chunk_ids = $10, evidence_attachment_ids = $11, reference_chunk_ids = $12,
 			reference_source_documents = $13, reference_snippets = $14, critic_flags = $15,
-			risk_level = $16, review_required = $17, writeback_allowed = $18,
-			suggested_status = $19, suggested_answer_value = $20,
-			suggested_reference_source_documents = $21, reasons = $22,
-			raw_payload = $23, overlay_payload = $24, updated_at = now()
-		WHERE id = $1
-	`, existingID, item.WorkspaceID, nullableString(item.FieldID), item.RowIndex, nullableString(item.TargetCell), nullableString(item.QuestionText),
+				risk_level = $16, review_required = $17, writeback_allowed = $18,
+				suggested_status = $19, suggested_answer_value = $20,
+				suggested_reference_source_documents = $21, reasons = $22,
+				writeback_status = $23, writeback_action = $24, evidence_refs = $25,
+				writeback_error_code = $26, raw_payload = $27, overlay_payload = $28, updated_at = now()
+			WHERE id = $1
+		`, existingID, item.WorkspaceID, nullableString(item.FieldID), item.RowIndex, nullableString(item.TargetCell), nullableString(item.QuestionText),
 		nullableString(item.AnswerStatus), nullableString(item.AnswerValue), item.Confidence,
 		mustJSON(item.SourceChunkIDs), mustJSON(item.EvidenceAttachmentIDs), mustJSON(item.ReferenceChunkIDs),
 		mustJSON(item.ReferenceSourceDocuments), mustJSON(item.ReferenceSnippets), mustJSON(item.CriticFlags),
 		item.RiskLevel, item.ReviewRequired, item.WritebackAllowed, nullableString(item.SuggestedStatus),
 		nullableString(item.SuggestedAnswerValue), mustJSON(item.SuggestedReferenceSourceDocuments), mustJSON(item.Reasons),
-		mustJSON(item.RawPayload), mustJSON(item.OverlayPayload))
+		nullableString(item.WritebackStatus), nullableString(item.WritebackAction), mustJSON(item.EvidenceRefs),
+		nullableString(item.WritebackErrorCode), mustJSON(item.RawPayload), mustJSON(item.OverlayPayload))
 	if err != nil {
 		return mapDBError(err, "upsert review item conflict", "review item not found")
 	}
@@ -200,12 +203,14 @@ func insertReviewSQL() string {
 			answer_status, answer_value, confidence, source_chunk_ids, evidence_attachment_ids,
 			reference_chunk_ids, reference_source_documents, reference_snippets, critic_flags,
 			risk_level, review_required, writeback_allowed, suggested_status, suggested_answer_value,
-			suggested_reference_source_documents, reasons, status, reviewer_id, reviewed_at,
+			suggested_reference_source_documents, reasons, writeback_status, writeback_action,
+			evidence_refs, writeback_error_code, status, reviewer_id, reviewed_at,
 			review_comment, edited_answer, raw_payload, overlay_payload, created_at, updated_at
 		)
 		VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-			$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32
+			$17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32,
+			$33, $34, $35, $36
 		)
 	`
 }
@@ -218,7 +223,9 @@ func selectReviewSQL() string {
 			evidence_attachment_ids, reference_chunk_ids, reference_source_documents,
 			reference_snippets, critic_flags, risk_level, review_required, writeback_allowed,
 			COALESCE(suggested_status, ''), COALESCE(suggested_answer_value, ''),
-			suggested_reference_source_documents, reasons, status, reviewer_id, reviewed_at,
+			suggested_reference_source_documents, reasons, COALESCE(writeback_status, ''),
+			COALESCE(writeback_action, ''), evidence_refs, COALESCE(writeback_error_code, ''),
+			status, reviewer_id, reviewed_at,
 			COALESCE(review_comment, ''), COALESCE(edited_answer, ''), raw_payload,
 			overlay_payload, created_at, updated_at
 		FROM review_items`
@@ -227,14 +234,15 @@ func selectReviewSQL() string {
 func scanReviewItem(row pgx.Row) (*ReviewItem, error) {
 	var item ReviewItem
 	var sourceChunkIDs, evidenceAttachmentIDs, referenceChunkIDs, referenceSourceDocuments, referenceSnippets []byte
-	var criticFlags, suggestedReferenceSourceDocuments, reasons, rawPayload, overlayPayload []byte
+	var criticFlags, suggestedReferenceSourceDocuments, reasons, evidenceRefs, rawPayload, overlayPayload []byte
 	err := row.Scan(
 		&item.ID, &item.WorkspaceID, &item.RunID, &item.FieldID, &item.RowIndex, &item.TargetCell,
 		&item.QuestionText, &item.AnswerStatus, &item.AnswerValue, &item.Confidence,
 		&sourceChunkIDs, &evidenceAttachmentIDs, &referenceChunkIDs, &referenceSourceDocuments,
 		&referenceSnippets, &criticFlags, &item.RiskLevel, &item.ReviewRequired,
 		&item.WritebackAllowed, &item.SuggestedStatus, &item.SuggestedAnswerValue,
-		&suggestedReferenceSourceDocuments, &reasons, &item.Status, &item.ReviewerID,
+		&suggestedReferenceSourceDocuments, &reasons, &item.WritebackStatus, &item.WritebackAction,
+		&evidenceRefs, &item.WritebackErrorCode, &item.Status, &item.ReviewerID,
 		&item.ReviewedAt, &item.ReviewComment, &item.EditedAnswer, &rawPayload,
 		&overlayPayload, &item.CreatedAt, &item.UpdatedAt,
 	)
@@ -249,6 +257,7 @@ func scanReviewItem(row pgx.Row) (*ReviewItem, error) {
 	_ = json.Unmarshal(criticFlags, &item.CriticFlags)
 	_ = json.Unmarshal(suggestedReferenceSourceDocuments, &item.SuggestedReferenceSourceDocuments)
 	_ = json.Unmarshal(reasons, &item.Reasons)
+	_ = json.Unmarshal(evidenceRefs, &item.EvidenceRefs)
 	_ = json.Unmarshal(rawPayload, &item.RawPayload)
 	_ = json.Unmarshal(overlayPayload, &item.OverlayPayload)
 	normalizeReviewItem(&item)
@@ -299,6 +308,9 @@ func normalizeReviewItem(item *ReviewItem) {
 	}
 	if item.Reasons == nil {
 		item.Reasons = []string{}
+	}
+	if item.EvidenceRefs == nil {
+		item.EvidenceRefs = []map[string]any{}
 	}
 	if item.RawPayload == nil {
 		item.RawPayload = map[string]any{}

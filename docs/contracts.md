@@ -69,7 +69,8 @@ Purpose:
 Purpose:
 
 - offline manual completion list
-- contains partial, not-found, conflict, failed, and risk-flagged answered fields that should not be written automatically
+- contains partial, not-found, conflict, failed, risk-flagged, and uncertain fields that need offline manual completion or verification
+- may include `writeback_status`, `writeback_action`, `evidence_refs`, and `error_code`
 
 ## `trace.jsonl`
 
@@ -108,6 +109,7 @@ Example:
 
 ```json
 {
+  "schema_version": "1.1",
   "run_id": "step15_agent_...",
   "created_at": "2026-06-08T07:36:41Z",
   "finished_at": "2026-06-08T09:01:41Z",
@@ -118,7 +120,7 @@ Example:
   "room_context": "西咸4号楼 301机房",
   "rows": "4-144",
   "judge_enabled": true,
-  "writeback_enabled": false,
+  "writeback_enabled": true,
   "artifacts": {
     "predictions_raw": "predictions_raw.jsonl",
     "predictions": "predictions.jsonl",
@@ -129,9 +131,10 @@ Example:
     "trace_summary": "trace_summary.json",
     "run_summary": "run_summary.md",
     "summary": "summary.json",
-    "filled_form": null,
-    "writeback_audit": null,
-    "evidence_map": null
+    "filled_form": "filled_form.xlsx",
+    "writeback_audit": "writeback_audit.jsonl",
+    "evidence_map": "evidence_map.json",
+    "image_evidence": "image_evidence.jsonl"
   },
   "counts": {
     "total_fields": 141,
@@ -142,6 +145,41 @@ Example:
     "review_required": 92,
     "writeback_allowed": 49,
     "failed": 1
+  },
+  "writeback": {
+    "summary": {
+      "confirmed": 82,
+      "uncertain": 11,
+      "flagged": 48,
+      "written": 89,
+      "review": 59
+    },
+    "fields": [
+      {
+        "field_key": "row_25_power_supply",
+        "field_id": "row_25_power_supply",
+        "row_index": 25,
+        "target_cell": "Sheet1!D25",
+        "sheet_name": "Sheet1",
+        "cell": "D25",
+        "status": "uncertain",
+        "answer_status": "partial_clue",
+        "answer_value": "双路市电",
+        "writeback_action": "written_red_comment",
+        "evidence_refs": [
+          {
+            "document_id": "doc_123",
+            "object_key": "kb/xixian_4/docs/capability.xlsx",
+            "qdrant_point_id": "pt_987",
+            "source_type": "main_excel_capability",
+            "source_anchor": "能力清单!H42",
+            "sheet_name": "能力清单",
+            "cell": "H42",
+            "image_object_key": "runs/fill_001/evidence/row_25_power_supply/proof_1"
+          }
+        ]
+      }
+    ]
   }
 }
 ```
@@ -157,6 +195,24 @@ Writeback artifacts are present only when writeback is enabled and completed:
 - `filled_form.xlsx`
 - `writeback_audit.jsonl`
 - `evidence_map.json`
+- `image_evidence.jsonl`, when fields reference `proof_attachment_ids`
+
+Field writeback statuses:
+
+- `confirmed`: safe answer, normal writeback.
+- `uncertain`: evidence exists but manual verification is still needed. Written only when `writeback.allow_uncertain=true` and the target cell is empty; otherwise exported for review only.
+- `flagged`: never written automatically.
+
+Allowed writeback actions:
+
+- `written`
+- `written_red_comment`
+- `review_only`
+- `skipped_uncertain_policy`
+- `skipped_non_empty_cell`
+- `skipped_formula`
+- `invalid_cell`
+- `duplicate_target_cell`
 
 AgentScope MAS is the default Step15 runtime. The MAS roles are deterministic wrappers around the original Step15 query,
 retrieval, answer arbitration, critic, and overlay control functions. They do not change the stable artifacts above.

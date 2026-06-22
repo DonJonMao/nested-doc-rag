@@ -134,9 +134,9 @@ bad-json
 
 	require.NoError(t, err)
 	csv := buf.String()
-	require.Contains(t, csv, "field_id,row_index,question_text,answer_status,answer_value,risk_level,review_required,writeback_allowed,reasons,source_chunk_ids,notes")
-	require.Contains(t, csv, "item_1,4,市电,partial_clue,2路,medium,true,false,weak_evidence;needs_review,c1;c2,人工确认")
-	require.Contains(t, csv, "item_2,,,,未找到,,,,not_found,c3,")
+	require.Contains(t, csv, "field_id,row_index,question_text,answer_status,answer_value,status,writeback_action,risk_level,review_required,writeback_allowed,error_code,reasons,source_chunk_ids,evidence_refs,notes")
+	require.Contains(t, csv, "item_1,4,市电,partial_clue,2路,,,medium,true,false,,weak_evidence;needs_review,c1;c2,,人工确认")
+	require.Contains(t, csv, "item_2,,,,未找到,,,,,,,not_found,c3,,")
 }
 
 func TestUserCannotDownloadOtherUsersFilledForm(t *testing.T) {

@@ -70,7 +70,7 @@ field
 -> optional safe Excel writeback
 ```
 
-The LLM sees the layered evidence pack and decides the answer status. The overlay does not change the raw answer. Excel writeback is gated by `overlay.writeback_allowed`, so unsafe or review-needed rows are not written automatically.
+The LLM sees the layered evidence pack and decides the answer status. The overlay does not change the raw answer. Excel writeback records a field-level writeback status: `confirmed`, `uncertain`, or `flagged`. By default only confirmed rows are written. If `writeback.allow_uncertain=true`, uncertain rows with evidence may be written into empty target cells with red styling and evidence comments. Flagged rows are never written automatically.
 
 ## Quickstart
 
@@ -99,7 +99,7 @@ The productized Gongkan platform lives alongside the Python Core:
 - `go-server/` provides the API server, auth/RBAC, workspace/file/artifact services, jobs, worker orchestration, SSE, knowledge-base ingestion APIs, fill-run APIs, and OpenAPI.
 - `web/` provides the Vue 3 app for role-based login, admin knowledge management, user form upload, fill-run creation, SSE progress, task history, result summaries, and artifact downloads.
 
-Current product MVP is a download-oriented automatic form-filling flow. The system only writes fields that pass grounding and the writeback gate (`writeback_allowed=true`) into `filled_form.xlsx`. Unsafe, evidence-insufficient, or review-needed fields are not written automatically; they are exported through `review_items`, and users complete those fields offline after downloading the workbook.
+Current product MVP is a download-oriented automatic form-filling flow. The system writes confirmed safe fields into `filled_form.xlsx`. Optional uncertain writeback is conservative and disabled by default; when enabled, evidence-backed uncertain fields are written only to empty target cells with red styling and an `[UNCERTAIN]` evidence comment. Unsafe, evidence-insufficient, conflict, or flagged fields are exported through `review_items`, and users complete or verify those fields offline after downloading the workbook.
 
 User flow:
 
@@ -174,6 +174,21 @@ python -m nested_doc_rag.cli run-step15-agent \
   --out-dir artifacts/runs/step15_agent_writeback
 ```
 
+Uncertain writeback remains off unless explicitly configured:
+
+```yaml
+writeback:
+  allow_uncertain: true
+  uncertain_style: red_fill
+  uncertain_comment_prefix: "[UNCERTAIN]"
+  embed_evidence_images: false
+  evidence_image_mode: hyperlink
+  max_evidence_images_per_field: 3
+  max_comment_chars: 2000
+```
+
+When enabled, uncertain cells are marked red, comments include document/location evidence, and image proof links are listed through the `Evidence` sheet and `image_evidence.jsonl` artifact when `proof_attachment_ids` are present.
+
 Validate an output directory:
 
 ```bash
@@ -198,8 +213,9 @@ Stable Step15AgentRunner overlay artifacts:
 - `filled_form.xlsx`, when writeback is enabled and completed
 - `writeback_audit.jsonl`, when writeback is enabled and completed
 - `evidence_map.json`, when writeback is enabled and completed
+- `image_evidence.jsonl`, when image proof references are present
 
-`predictions.jsonl` is a compatibility alias of `predictions_raw.jsonl` in overlay mode. Go/backend integrations should use `run_manifest.json` to locate artifacts and should not depend on Python internal functions.
+`run_manifest.json` uses `schema_version=1.1` and includes `writeback.summary` plus field-level `status`, `answer_status`, `answer_value`, `writeback_action`, and `evidence_refs[]`. `predictions.jsonl` is a compatibility alias of `predictions_raw.jsonl` in overlay mode. Go/backend integrations should use `run_manifest.json` to locate artifacts and should not depend on Python internal functions.
 
 See [docs/contracts.md](docs/contracts.md) for the frozen artifact contract.
 

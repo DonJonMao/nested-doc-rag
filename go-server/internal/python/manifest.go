@@ -11,6 +11,7 @@ import (
 const RunManifestFilename = "run_manifest.json"
 
 type RunManifest struct {
+	SchemaVersion    string            `json:"schema_version"`
 	RunID            string            `json:"run_id"`
 	CreatedAt        string            `json:"created_at"`
 	FinishedAt       string            `json:"finished_at"`
@@ -23,6 +24,7 @@ type RunManifest struct {
 	WritebackEnabled bool              `json:"writeback_enabled"`
 	Artifacts        map[string]string `json:"artifacts"`
 	Counts           ManifestCounts    `json:"counts"`
+	Writeback        ManifestWriteback `json:"writeback"`
 	runDir           string
 }
 
@@ -35,6 +37,34 @@ type ManifestCounts struct {
 	ReviewRequired     int `json:"review_required"`
 	WritebackAllowed   int `json:"writeback_allowed"`
 	Failed             int `json:"failed"`
+}
+
+type ManifestWriteback struct {
+	Summary ManifestWritebackSummary `json:"summary"`
+	Fields  []ManifestWritebackField `json:"fields"`
+}
+
+type ManifestWritebackSummary struct {
+	Confirmed int `json:"confirmed"`
+	Uncertain int `json:"uncertain"`
+	Flagged   int `json:"flagged"`
+	Written   int `json:"written"`
+	Review    int `json:"review"`
+}
+
+type ManifestWritebackField struct {
+	FieldKey        string           `json:"field_key"`
+	FieldID         string           `json:"field_id"`
+	RowIndex        int              `json:"row_index"`
+	TargetCell      string           `json:"target_cell"`
+	SheetName       string           `json:"sheet_name"`
+	Cell            string           `json:"cell"`
+	Status          string           `json:"status"`
+	AnswerStatus    string           `json:"answer_status"`
+	AnswerValue     any              `json:"answer_value"`
+	WritebackAction string           `json:"writeback_action"`
+	EvidenceRefs    []map[string]any `json:"evidence_refs"`
+	ErrorCode       string           `json:"error_code,omitempty"`
 }
 
 func LoadRunManifest(path string) (*RunManifest, error) {

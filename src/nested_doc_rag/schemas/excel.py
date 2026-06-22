@@ -28,6 +28,13 @@ class WritebackAuditRecord:
     source_chunk_ids: list[str] = field(default_factory=list)
     evidence_attachment_ids: list[str] = field(default_factory=list)
     trace_id: str | None = None
+    status: str = "flagged"
+    writeback_action: str = "review_only"
+    evidence_refs: list[dict[str, Any]] = field(default_factory=list)
+    evidence_count: int = 0
+    image_evidence_count: int = 0
+    error_code: str | None = None
+    comment_length: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -44,6 +51,13 @@ class WritebackAuditRecord:
             "source_chunk_ids": self.source_chunk_ids,
             "evidence_attachment_ids": self.evidence_attachment_ids,
             "trace_id": self.trace_id,
+            "status": self.status,
+            "writeback_action": self.writeback_action,
+            "evidence_refs": self.evidence_refs,
+            "evidence_count": self.evidence_count,
+            "image_evidence_count": self.image_evidence_count,
+            "error_code": self.error_code,
+            "comment_length": self.comment_length,
         }
 
 
@@ -59,6 +73,10 @@ class ReviewItem:
     source_chunk_ids: list[str] = field(default_factory=list)
     evidence_attachment_ids: list[str] = field(default_factory=list)
     trace_id: str | None = None
+    status: str = "flagged"
+    writeback_action: str = "review_only"
+    evidence_refs: list[dict[str, Any]] = field(default_factory=list)
+    error_code: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +90,10 @@ class ReviewItem:
             "source_chunk_ids": self.source_chunk_ids,
             "evidence_attachment_ids": self.evidence_attachment_ids,
             "trace_id": self.trace_id,
+            "status": self.status,
+            "writeback_action": self.writeback_action,
+            "evidence_refs": self.evidence_refs,
+            "error_code": self.error_code,
         }
 
 
@@ -88,6 +110,11 @@ class WritebackSummary:
     invalid_count: int
     formula_skipped_count: int
     review_count: int
+    confirmed_count: int = 0
+    uncertain_count: int = 0
+    flagged_count: int = 0
+    image_evidence_path: Path | None = None
+    fields: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -102,4 +129,9 @@ class WritebackSummary:
             "invalid_count": self.invalid_count,
             "formula_skipped_count": self.formula_skipped_count,
             "review_count": self.review_count,
+            "confirmed_count": self.confirmed_count,
+            "uncertain_count": self.uncertain_count,
+            "flagged_count": self.flagged_count,
+            "image_evidence_path": str(self.image_evidence_path) if self.image_evidence_path else None,
+            "fields": self.fields,
         }

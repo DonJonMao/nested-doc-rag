@@ -20,6 +20,10 @@ function shortId(value: string) {
   return value.slice(0, 8)
 }
 
+function count(value?: number) {
+  return value ?? 0
+}
+
 onMounted(load)
 </script>
 
@@ -63,7 +67,12 @@ onMounted(load)
           <template #default="{ row }">{{ row.summary.total_fields }}</template>
         </el-table-column>
         <el-table-column label="自动写入" width="100" align="right">
-          <template #default="{ row }">{{ row.summary.writeback_allowed }}</template>
+          <template #default="{ row }">{{ count(row.summary.written ?? row.summary.writeback_allowed) }}</template>
+        </el-table-column>
+        <el-table-column label="确认/存疑/标记" width="150" align="right">
+          <template #default="{ row }">
+            {{ count(row.summary.confirmed) }}/{{ count(row.summary.uncertain) }}/{{ count(row.summary.flagged) }}
+          </template>
         </el-table-column>
         <el-table-column label="需人工补充/复核" width="150" align="right">
           <template #default="{ row }">{{ row.summary.review_required }}</template>

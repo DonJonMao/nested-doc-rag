@@ -38,6 +38,7 @@ type FillRunUseCase interface {
 	DownloadReviewItems(ctx context.Context, runID uuid.UUID, format string, actor auth.Principal) (*artifact.DownloadResult, error)
 	DownloadWritebackAudit(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*artifact.DownloadResult, error)
 	DownloadSummary(ctx context.Context, runID uuid.UUID, actor auth.Principal) (*artifact.DownloadResult, error)
+	DownloadEvidenceImage(ctx context.Context, runID uuid.UUID, imageObjectKey string, actor auth.Principal) (*artifact.DownloadResult, error)
 }
 
 type Handler struct {
@@ -64,6 +65,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/fill-runs/{run_id}/downloads/review-items", h.DownloadReviewItems)
 	r.Get("/fill-runs/{run_id}/downloads/writeback-audit", h.DownloadWritebackAudit)
 	r.Get("/fill-runs/{run_id}/downloads/summary", h.DownloadSummary)
+	r.Get("/fill-runs/{run_id}/downloads/evidence-image", h.DownloadEvidenceImage)
 }
 
 func (h *Handler) UploadForm(w http.ResponseWriter, r *http.Request) {
@@ -354,6 +356,25 @@ func (h *Handler) DownloadSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.runs.DownloadSummary(r.Context(), runID, actor)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	streamDownload(w, r, result)
+}
+
+func (h *Handler) DownloadEvidenceImage(w http.ResponseWriter, r *http.Request) {
+	actor, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, unauthorized())
+		return
+	}
+	runID, err := runIDFromRequest(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	result, err := h.runs.DownloadEvidenceImage(r.Context(), runID, r.URL.Query().Get("key"), actor)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

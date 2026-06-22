@@ -19,6 +19,8 @@ def make_prediction(
     status: str = "answered",
     confidence: float = 0.91,
     validation: dict | None = None,
+    reference_docs: list[dict] | None = None,
+    evidence_ids: list[str] | None = None,
 ) -> FieldPrediction:
     return FieldPrediction(
         field_id=field_id,
@@ -28,7 +30,9 @@ def make_prediction(
         answer_status=status,
         confidence=confidence,
         source_chunk_ids=["chunk_1"],
-        evidence_attachment_ids=["img_1"],
+        evidence_attachment_ids=["img_1"] if evidence_ids is None else evidence_ids,
+        reference_source_documents=reference_docs or [],
+        reference_chunk_ids=[str(doc.get("chunk_id")) for doc in reference_docs or [] if doc.get("chunk_id")],
         validation=validation or {},
     )
 
@@ -44,6 +48,7 @@ def make_template(path: Path) -> None:
     worksheet.column_dimensions["C"].width = 28
     worksheet.row_dimensions[4].height = 30
     worksheet["C5"] = "keep me"
+    worksheet["C6"] = None
     worksheet["D4"] = "=SUM(A1:A2)"
     worksheet["A1"] = 1
     worksheet["A2"] = 2
@@ -191,3 +196,155 @@ def test_invalid_target_cell_audit(tmp_path: Path) -> None:
     assert audit[0]["action"] == "invalid"
     assert audit[0]["reason"] == "invalid_cell"
     assert review_items[0]["reason"] == "invalid_cell"
+
+
+def test_uncertain_default_off_goes_to_review_only(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    output = tmp_path / "filled_form.xlsx"
+    make_template(template)
+
+    prediction = make_prediction(
+        "field_1",
+        "C6",
+        "双路市电",
+        status="partial_clue",
+        reference_docs=[
+            {
+                "chunk_id": "chunk_1",
+                "document_id": "doc_1",
+                "object_key": "kb/xixian/doc.xlsx",
+                "source_anchor": "能力清单!H42",
+                "sheet_name": "能力清单",
+                "cell": "H42",
+                "text_preview": "市电配置为双路。",
+            }
+        ],
+    )
+
+    summary = patch_workbook(
+        template,
+        [prediction],
+        output,
+        overlays_by_field_id={"field_1": {"writeback_allowed": False, "critic_flags": [], "review_required": True}},
+    )
+
+    workbook = load_workbook(output)
+    assert workbook["Sheet1"]["C6"].value is None
+    audit = read_jsonl(tmp_path / "writeback_audit.jsonl")
+    assert audit[0]["status"] == "uncertain"
+    assert audit[0]["writeback_action"] == "skipped_uncertain_policy"
+    assert audit[0]["error_code"] == "WB_POLICY_REJECTED"
+    assert summary.uncertain_count == 1
+    assert summary.written_count == 0
+
+
+def test_uncertain_allowed_writes_red_comment_and_evidence(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    output = tmp_path / "filled_form.xlsx"
+    make_template(template)
+
+    prediction = make_prediction(
+        "field_1",
+        "C6",
+        "双路市电",
+        status="partial_clue",
+        reference_docs=[
+            {
+                "chunk_id": "chunk_1",
+                "document_id": "doc_1",
+                "object_key": "kb/xixian/doc.xlsx",
+                "source_anchor": "能力清单!H42",
+                "sheet_name": "能力清单",
+                "cell": "H42",
+                "text_preview": "市电配置为双路。",
+            }
+        ],
+        evidence_ids=[],
+    )
+
+    summary = patch_workbook(
+        template,
+        [prediction],
+        output,
+        overlays_by_field_id={"field_1": {"writeback_allowed": False, "critic_flags": [], "review_required": True}},
+        writeback_config={"allow_uncertain": True, "uncertain_comment_prefix": "[UNCERTAIN]"},
+        run_id="run_1",
+    )
+
+    workbook = load_workbook(output)
+    cell = workbook["Sheet1"]["C6"]
+    assert cell.value == "双路市电"
+    assert cell.fill.fgColor.rgb == "FFFFCCCC"
+    assert cell.comment is not None
+    assert "[UNCERTAIN]" in cell.comment.text
+    assert "能力清单!H42" in cell.comment.text
+    assert "市电配置为双路" in cell.comment.text
+    audit = read_jsonl(tmp_path / "writeback_audit.jsonl")
+    review_items = read_jsonl(tmp_path / "review_items.jsonl")
+    assert audit[0]["status"] == "uncertain"
+    assert audit[0]["writeback_action"] == "written_red_comment"
+    assert audit[0]["evidence_count"] == 1
+    assert review_items[0]["status"] == "uncertain"
+    assert summary.uncertain_count == 1
+    assert summary.written_count == 1
+    assert summary.review_count == 1
+    assert "Evidence" in workbook.sheetnames
+
+
+def test_flagged_does_not_write(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    output = tmp_path / "filled_form.xlsx"
+    make_template(template)
+
+    patch_workbook(
+        template,
+        [make_prediction("field_1", "C5", "未找到", status="not_found")],
+        output,
+        overlays_by_field_id={"field_1": {"writeback_allowed": False, "critic_flags": [], "review_required": True}},
+        writeback_config={"allow_uncertain": True},
+    )
+
+    workbook = load_workbook(output)
+    assert workbook["Sheet1"]["C5"].value == "keep me"
+    audit = read_jsonl(tmp_path / "writeback_audit.jsonl")
+    assert audit[0]["status"] == "flagged"
+    assert audit[0]["writeback_action"] == "review_only"
+
+
+def test_proof_attachment_ids_generate_image_evidence_artifact(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    output = tmp_path / "filled_form.xlsx"
+    make_template(template)
+
+    prediction = make_prediction(
+        "field_1",
+        "C6",
+        "双路市电",
+        status="partial_clue",
+        reference_docs=[
+            {
+                "chunk_id": "chunk_1",
+                "document_id": "doc_1",
+                "source_anchor": "能力清单!H42",
+                "proof_attachment_ids": ["proof_img_1"],
+            }
+        ],
+        evidence_ids=[],
+    )
+
+    summary = patch_workbook(
+        template,
+        [prediction],
+        output,
+        overlays_by_field_id={"field_1": {"writeback_allowed": False, "critic_flags": [], "review_required": True}},
+        writeback_config={"allow_uncertain": True},
+        run_id="run_1",
+    )
+
+    assert summary.image_evidence_path == tmp_path / "image_evidence.jsonl"
+    image_rows = read_jsonl(tmp_path / "image_evidence.jsonl")
+    assert image_rows[0]["field_id"] == "field_1"
+    assert image_rows[0]["image_object_key"] == "runs/run_1/evidence/field_1/proof_img_1"
+    audit = read_jsonl(tmp_path / "writeback_audit.jsonl")
+    assert audit[0]["image_evidence_count"] == 1
+    assert audit[0]["evidence_refs"][0]["image_object_key"] == "runs/run_1/evidence/field_1/proof_img_1"

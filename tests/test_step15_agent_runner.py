@@ -232,7 +232,7 @@ def test_grounding_blocks_unsupported_answer_without_mutating_raw(tmp_path: Path
     predictions = runner.run([make_item(4)])
 
     assert predictions[0].answer_status == "answered"
-    assert captured == [0]
+    assert captured == [1]
     raw = read_jsonl(tmp_path / "predictions_raw.jsonl")[0]
     overlays = read_jsonl(tmp_path / "agent_overlays.jsonl")
     assert "evidence_strength" not in raw
@@ -320,7 +320,7 @@ def test_field_binding_blocks_wrong_field_without_mutating_raw(tmp_path: Path) -
     assert overlay["risk_level"] == "high"
     assert "field_mismatch" in overlay["reasons"]
     assert grounding_trace["field_binding"] == "field_mismatch"
-    assert captured == [0]
+    assert captured == [1]
 
 
 def test_field_binding_exact_allows_existing_safe_overlay(tmp_path: Path) -> None:
@@ -726,7 +726,7 @@ def test_writeback_uses_overlay_gating(tmp_path: Path) -> None:
     predictions = runner.run([make_item(57, question_text="液冷机柜是否支持")])
 
     assert predictions[0].answer_status == "answered"
-    assert captured == [0]
+    assert captured == [1]
     overlays = read_jsonl(tmp_path / "agent_overlays.jsonl")
     assert overlays[0]["writeback_allowed"] is False
     assert overlays[0]["suggested_status"] == "partial_clue"

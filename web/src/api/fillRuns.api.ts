@@ -47,3 +47,9 @@ export async function downloadWritebackAudit(runId: string) {
 export async function downloadSummary(runId: string) {
   return downloadWithAuth(`/api/v1/fill-runs/${runId}/downloads/summary`, 'summary.json')
 }
+
+export async function downloadEvidenceImage(runId: string, imageObjectKey: string) {
+  const params = new URLSearchParams({ key: imageObjectKey })
+  const fallback = imageObjectKey.split('/').filter(Boolean).at(-1) || 'evidence-image'
+  return downloadWithAuth(`/api/v1/fill-runs/${runId}/downloads/evidence-image?${params.toString()}`, fallback)
+}

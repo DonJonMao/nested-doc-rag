@@ -117,6 +117,10 @@ export interface FillRunSummaryCounts {
   writeback_allowed: number
   review_required: number
   failed_fields: number
+  confirmed: number
+  uncertain: number
+  flagged: number
+  written: number
 }
 
 export interface FillRunDownloads {
@@ -137,6 +141,50 @@ export interface FillRunArtifactDownloads {
   review_items_csv: FillRunArtifactInfo
   writeback_audit: FillRunArtifactInfo
   summary: FillRunArtifactInfo
+}
+
+export interface FillRunEvidenceRef {
+  chunk_id?: string
+  document_id?: string
+  object_key?: string
+  object_version_id?: string
+  qdrant_point_id?: string
+  source_type?: string
+  source_anchor?: string
+  page?: number | string | null
+  sheet_name?: string
+  cell?: string
+  image_object_key?: string
+  bbox?: unknown
+  caption?: string
+  file_name?: string
+  text_preview?: string
+}
+
+export interface FillRunWritebackField {
+  field_key?: string
+  field_id?: string
+  row_index?: number
+  target_cell?: string
+  sheet_name?: string
+  cell?: string
+  status?: 'confirmed' | 'uncertain' | 'flagged' | string
+  answer_status?: string
+  answer_value?: unknown
+  writeback_action?: string
+  evidence_refs: FillRunEvidenceRef[]
+  error_code?: string
+}
+
+export interface FillRunWritebackBlock {
+  summary: {
+    confirmed: number
+    uncertain: number
+    flagged: number
+    written: number
+    review: number
+  }
+  fields: FillRunWritebackField[]
 }
 
 export interface FillRunListItem {
@@ -171,6 +219,7 @@ export interface FillRunDetail {
   error_message?: string
   summary: FillRunSummaryCounts
   artifacts: FillRunArtifactDownloads
+  writeback?: FillRunWritebackBlock
   artifact_validation_warnings?: string[]
 }
 

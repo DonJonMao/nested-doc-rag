@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from time import perf_counter, sleep
@@ -994,6 +994,8 @@ class Step15AgentRunner:
             manifest["artifacts"]["agentscope_events"] = "agentscope_events.jsonl"
         if (self.out_dir / "grounding_trace.jsonl").exists():
             manifest["artifacts"]["grounding_trace"] = "grounding_trace.jsonl"
+        if (self.out_dir / "image_evidence.jsonl").exists():
+            manifest["artifacts"]["image_evidence"] = "image_evidence.jsonl"
         write_json(self.out_dir / "run_manifest.json", manifest)
         (self.out_dir / "run_summary.md").write_text(
             build_run_summary_md(
@@ -1018,16 +1020,14 @@ class Step15AgentRunner:
 
         agent_review_items = list(self.review_items)
         overlay_by_field_id = {overlay.field_id: overlay for overlay in overlays}
-        writeback_predictions = [
-            prediction
-            for prediction in predictions
-            if prediction.answer_status == "answered" and overlay_by_field_id.get(prediction.field_id, default_blocking_overlay(prediction)).writeback_allowed
-        ]
         summary = self.writeback_fn(
             template_path=self.template_path,
-            predictions=writeback_predictions,
+            predictions=predictions,
             output_path=self.out_dir / "filled_form.xlsx",
-            trace_by_field={prediction.field_id: f"{self.run_id}:{prediction.field_id}" for prediction in writeback_predictions},
+            trace_by_field={prediction.field_id: f"{self.run_id}:{prediction.field_id}" for prediction in predictions},
+            overlays_by_field_id=overlay_by_field_id,
+            writeback_config=self.config.writeback,
+            run_id=self.run_id,
         )
         writeback_review_items = read_jsonl(self.out_dir / "review_items.jsonl")
         self.review_items = merge_review_items(agent_review_items, writeback_review_items)
@@ -1369,6 +1369,7 @@ def normalize_reference_source_documents(generated: dict[str, Any], top_hits: li
             continue
         chunk_id = str(item.get("chunk_id") or "")
         hit = hits.get(chunk_id, {})
+        source = hit_source(hit)
         output.append(
             {
                 "chunk_id": chunk_id,
@@ -1379,6 +1380,17 @@ def normalize_reference_source_documents(generated: dict[str, Any], top_hits: li
                 "source_anchor": item.get("source_anchor") or item.get("anchor") or hit.get("anchor"),
                 "file_name": item.get("file_name") or hit.get("file_name"),
                 "anchor": item.get("anchor") or hit.get("anchor"),
+                "document_id": item.get("document_id") or source.get("document_id") or source.get("file_id") or hit.get("document_id"),
+                "object_key": item.get("object_key") or source.get("object_key") or hit.get("object_key"),
+                "object_version_id": item.get("object_version_id") or source.get("object_version_id") or "",
+                "qdrant_point_id": item.get("qdrant_point_id") or hit.get("point_id") or hit.get("id"),
+                "page": item.get("page") or source.get("page"),
+                "sheet_name": item.get("sheet_name") or source.get("sheet_name"),
+                "cell": item.get("cell") or source.get("cell") or source.get("cell_range"),
+                "bbox": item.get("bbox") or source.get("bbox") or [],
+                "caption": item.get("caption") or source.get("caption") or "",
+                "image_object_key": item.get("image_object_key") or source.get("image_object_key") or "",
+                "proof_attachment_ids": item.get("proof_attachment_ids") or source.get("proof_attachment_ids") or [],
                 "reason": item.get("reason") or "",
                 "text_preview": item.get("text_preview") or display_text(hit.get("raw_text") or hit.get("text_for_embedding"), 180),
             }
@@ -1392,6 +1404,7 @@ def reference_source_documents_from_hits(top_hits: list[dict[str, Any]], limit: 
         chunk_id = str(hit.get("chunk_id") or "")
         if not chunk_id:
             continue
+        source = hit_source(hit)
         docs.append(
             {
                 "chunk_id": chunk_id,
@@ -1402,11 +1415,27 @@ def reference_source_documents_from_hits(top_hits: list[dict[str, Any]], limit: 
                 "source_anchor": hit.get("source_anchor") or hit.get("anchor"),
                 "file_name": hit.get("file_name"),
                 "anchor": hit.get("anchor") or hit.get("source_anchor"),
+                "document_id": source.get("document_id") or source.get("file_id") or hit.get("document_id"),
+                "object_key": source.get("object_key") or hit.get("object_key"),
+                "object_version_id": source.get("object_version_id") or "",
+                "qdrant_point_id": hit.get("point_id") or hit.get("id"),
+                "page": source.get("page"),
+                "sheet_name": source.get("sheet_name"),
+                "cell": source.get("cell") or source.get("cell_range"),
+                "bbox": source.get("bbox") or [],
+                "caption": source.get("caption") or "",
+                "image_object_key": source.get("image_object_key") or "",
+                "proof_attachment_ids": source.get("proof_attachment_ids") or [],
                 "reason": "retrieved related evidence, but not safe enough for direct filling",
                 "text_preview": display_text(hit.get("raw_text") or hit.get("text_for_embedding"), 180),
             }
         )
     return docs
+
+
+def hit_source(hit: Mapping[str, Any]) -> dict[str, Any]:
+    source = hit.get("source")
+    return dict(source) if isinstance(source, dict) else {}
 
 
 def has_relevant_reference_hits(top_hits: list[dict[str, Any]], *, min_reference_hits: int = 1) -> bool:
@@ -1654,7 +1683,20 @@ def build_run_manifest(
         "writeback_audit": "writeback_audit.jsonl" if writeback_enabled else None,
         "evidence_map": "evidence_map.json" if writeback_enabled else None,
     }
+    writeback_summary = summary.get("writeback_summary") or {}
+    writeback_fields = writeback_summary.get("fields") or []
+    writeback_block = {
+        "summary": {
+            "confirmed": int(writeback_summary.get("confirmed_count") or 0),
+            "uncertain": int(writeback_summary.get("uncertain_count") or 0),
+            "flagged": int(writeback_summary.get("flagged_count") or 0),
+            "written": int(writeback_summary.get("written_count") or 0),
+            "review": int(writeback_summary.get("review_count") or 0),
+        },
+        "fields": writeback_fields,
+    }
     return {
+        "schema_version": "1.1",
         "run_id": summary.get("run_id"),
         "created_at": run_state.get("started_at"),
         "finished_at": run_state.get("finished_at"),
@@ -1667,6 +1709,7 @@ def build_run_manifest(
         "retrieval_plan": summary.get("retrieval_plan", "layered"),
         "judge_enabled": judge_enabled,
         "writeback_enabled": writeback_enabled,
+        "writeback": writeback_block,
         "artifacts": artifacts,
         "counts": {
             "total_fields": total_fields,

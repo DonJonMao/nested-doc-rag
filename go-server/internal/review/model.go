@@ -34,6 +34,10 @@ type ReviewItem struct {
 	SuggestedAnswerValue              string           `json:"suggested_answer_value,omitempty"`
 	SuggestedReferenceSourceDocuments []map[string]any `json:"suggested_reference_source_documents"`
 	Reasons                           []string         `json:"reasons"`
+	WritebackStatus                   string           `json:"writeback_status,omitempty"`
+	WritebackAction                   string           `json:"writeback_action,omitempty"`
+	EvidenceRefs                      []map[string]any `json:"evidence_refs"`
+	WritebackErrorCode                string           `json:"writeback_error_code,omitempty"`
 
 	Status        string     `json:"status"`
 	ReviewerID    *uuid.UUID `json:"reviewer_id,omitempty"`

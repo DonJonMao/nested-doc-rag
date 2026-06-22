@@ -21,6 +21,7 @@ const (
 	TypeFilledForm           = "filled_form"
 	TypeWritebackAudit       = "writeback_audit"
 	TypeEvidenceMap          = "evidence_map"
+	TypeImageEvidence        = "image_evidence"
 )
 
 type RunArtifact struct {

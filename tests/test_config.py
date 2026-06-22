@@ -65,6 +65,8 @@ retrieval:
     assert config.retrieval.query_layers == ["fact", "evidence"]
     assert config.grounding.field_binding_enabled is True
     assert config.grounding.min_strength_for_answered == "E4"
+    assert config.writeback.allow_uncertain is False
+    assert config.writeback.uncertain_comment_prefix == "[UNCERTAIN]"
 
 
 def test_env_alias_and_path_resolution(tmp_path: Path, monkeypatch) -> None:
@@ -141,6 +143,8 @@ def test_show_config_command_outputs_merged_config() -> None:
     assert "retrieval_plan" not in value["retrieval"]
     assert value["qdrant"]["collection_name"] == "datacenter_chunks_v1"
     assert value["qdrant"]["url"] == ""
+    assert value["writeback"]["allow_uncertain"] is False
+    assert value["writeback"]["max_comment_chars"] == 2000
 
 
 def test_legacy_retrieval_config_normalizes_to_layered(tmp_path: Path) -> None:

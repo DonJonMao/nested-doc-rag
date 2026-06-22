@@ -276,3 +276,8 @@ func (f *fakeFillRunUseCase) DownloadSummary(ctx context.Context, runID uuid.UUI
 	f.downloadTypes = append(f.downloadTypes, artifact.TypeSummary)
 	return f.download, f.err
 }
+
+func (f *fakeFillRunUseCase) DownloadEvidenceImage(ctx context.Context, runID uuid.UUID, imageObjectKey string, actor auth.Principal) (*artifact.DownloadResult, error) {
+	f.downloadTypes = append(f.downloadTypes, artifact.TypeImageEvidence)
+	return f.download, f.err
+}

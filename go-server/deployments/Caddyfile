@@ -1,0 +1,37 @@
+{$DOMAIN} {
+  encode gzip
+  root * /srv/web
+
+  request_body {
+    max_size 200MB
+  }
+
+  header {
+    X-Content-Type-Options nosniff
+    X-Frame-Options DENY
+    Referrer-Policy no-referrer-when-downgrade
+  }
+
+  handle /api/* {
+    reverse_proxy api:8080 {
+      flush_interval -1
+    }
+  }
+
+  handle /healthz {
+    reverse_proxy api:8080
+  }
+
+  handle /readyz {
+    reverse_proxy api:8080
+  }
+
+  handle /metrics {
+    reverse_proxy api:8080
+  }
+
+  handle {
+    try_files {path} /index.html
+    file_server
+  }
+}

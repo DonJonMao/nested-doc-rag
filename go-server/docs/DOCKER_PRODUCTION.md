@@ -44,8 +44,38 @@ At minimum, replace:
 - `GONGKAN_JWT_SECRET`
 - `GONGKAN_BOOTSTRAP_ADMIN_PASSWORD`
 - `DEEPSEEK_API_KEY`
+- `REGISTRY`
+- `IMAGE_NS`
+- `IMAGE_TAG`
 
 Do not commit `deployments/.env.prod`.
+
+Dependency image versions are pinned in `deployments/.env.prod.example`:
+
+- `POSTGRES_IMAGE`
+- `REDIS_IMAGE`
+- `MINIO_IMAGE`
+- `MINIO_MC_IMAGE`
+- `QDRANT_IMAGE`
+- `CADDY_IMAGE`
+
+Do not set these to `latest` in production.
+
+## Preflight
+
+Run preflight before first startup and before upgrades:
+
+```bash
+make preflight-prod
+```
+
+The preflight checks Docker and Compose availability, required `.env.prod` values, image tags, compose config, free disk, key ports, Python Core in the Worker image, and model endpoint reachability.
+
+If the Worker image has not been built or pulled yet, build or pull it first. For configuration-only checks:
+
+```bash
+SKIP_PYTHON_SMOKE=1 make preflight-prod
+```
 
 ## Validate Compose Config
 
@@ -55,13 +85,42 @@ make docker-prod-config
 
 This expands `deployments/docker-compose.prod.yaml` with `deployments/.env.prod` and catches most YAML or missing variable mistakes before startup.
 
-## Start Production Stack
+## Local Build
 
 ```bash
+make docker-build IMAGE_TAG=local
+```
+
+This builds the API and Worker images from local source using the tags configured by:
+
+```text
+${REGISTRY}/${IMAGE_NS}/gongkan-api:${IMAGE_TAG}
+${REGISTRY}/${IMAGE_NS}/gongkan-worker:${IMAGE_TAG}
+```
+
+Push images to the configured registry:
+
+```bash
+make docker-push IMAGE_TAG=v0.1.0
+```
+
+## Remote Registry Deployment
+
+On a remote server, the source tree is not required. Copy only:
+
+- `deployments/docker-compose.prod.yaml`
+- `deployments/.env.prod`
+- optionally `deployments/docker-compose.edge.yaml`
+- optionally `deployments/Caddyfile`
+
+Then pull and start:
+
+```bash
+docker compose --env-file deployments/.env.prod -f deployments/docker-compose.prod.yaml pull api worker
 make docker-prod-up
 ```
 
-This builds and starts:
+`docker-prod-up` starts:
 
 - `api`
 - `worker`
@@ -72,6 +131,20 @@ This builds and starts:
 - `qdrant`
 
 The API is exposed on `0.0.0.0:8080`. Postgres, Redis, and Qdrant are not published to the host. MinIO console is bound to `127.0.0.1:9001` and should be accessed through an SSH tunnel if needed.
+
+## HTTPS Edge And Static Web
+
+Build the frontend and place it at `web/dist`, then run the optional Caddy overlay:
+
+```bash
+docker compose \
+  --env-file deployments/.env.prod \
+  -f deployments/docker-compose.prod.yaml \
+  -f deployments/docker-compose.edge.yaml \
+  up -d
+```
+
+Set `DOMAIN` in `.env.prod`. Caddy terminates HTTPS, serves static frontend files from `/srv/web`, proxies `/api/*`, `/healthz`, `/readyz`, and `/metrics` to `api:8080`, and keeps SSE proxy flushing disabled for long-running event streams.
 
 ## Health Checks
 
@@ -134,24 +207,54 @@ docker compose -f deployments/docker-compose.prod.yaml --env-file deployments/.e
 
 `-v` removes Postgres, Redis, MinIO, and Qdrant persistent volumes.
 
-## Backup Recommendations
+## Backup
 
-Back up these Docker volumes before upgrades:
+Create a backup:
 
-- `postgres_data`
-- `redis_data`
-- `minio_data`
-- `qdrant_data`
-- `api_runtime`
-- `worker_runtime`
-- `worker_python_artifacts`
+```bash
+make backup-prod BACKUP_DIR=/var/backups/gongkan/$(date +%Y%m%d_%H%M%S)
+```
 
-Recommended approach:
+The backup includes:
 
-1. Stop write traffic.
-2. Run database-native backups for Postgres.
-3. Snapshot MinIO and Qdrant volumes.
-4. Keep at least one tested restore path before deleting old volumes.
+- Postgres logical dump, when the database container is running.
+- Docker volume archives for Postgres, Redis, MinIO, Qdrant, API runtime, Worker runtime, Python artifacts, and Python tmp data.
+- `.env.prod`, compose files, Caddyfile, and resolved compose config snapshot.
+
+## Restore
+
+Restore from a backup directory:
+
+```bash
+make restore-prod BACKUP_DIR=/var/backups/gongkan/20260622_120000
+```
+
+The restore script stops the stack, restores available volume archives, and starts the stack again. Test restore on a staging host before relying on a backup plan.
+
+## Upgrade
+
+Push the new API and Worker images first, then upgrade the running server:
+
+```bash
+make backup-prod BACKUP_DIR=/var/backups/gongkan/pre-upgrade-$(date +%Y%m%d_%H%M%S)
+IMAGE_TAG=v0.2.0 make upgrade-prod
+```
+
+`upgrade-prod` pulls the configured API/Worker image tag and recreates only those services.
+
+## Rollback
+
+Rollback to a previous image tag:
+
+```bash
+IMAGE_TAG=v0.1.9 make rollback-prod
+```
+
+If data also needs to be restored, pass a backup directory:
+
+```bash
+IMAGE_TAG=v0.1.9 BACKUP_DIR=/var/backups/gongkan/pre-upgrade-20260622_120000 make rollback-prod
+```
 
 ## Common Failures
 

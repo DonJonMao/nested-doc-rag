@@ -1,5 +1,6 @@
 services:
   api:
+    image: ${REGISTRY}/${IMAGE_NS}/gongkan-api:${IMAGE_TAG}
     build:
       context: ..
       dockerfile: deployments/Dockerfile.api
@@ -15,9 +16,9 @@ services:
       redis:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
       qdrant:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
       interval: 10s
@@ -32,6 +33,7 @@ services:
         max-file: "5"
 
   worker:
+    image: ${REGISTRY}/${IMAGE_NS}/gongkan-worker:${IMAGE_TAG}
     build:
       context: ../..
       dockerfile: go-server/deployments/Dockerfile.worker
@@ -45,9 +47,9 @@ services:
       redis:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
       qdrant:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import nested_doc_rag' && test -x /app/gongkan-worker"]
       interval: 30s
@@ -64,7 +66,7 @@ services:
         max-file: "5"
 
   postgres:
-    image: postgres:16
+    image: ${POSTGRES_IMAGE}
     restart: unless-stopped
     environment:
       POSTGRES_USER: gongkan
@@ -84,7 +86,7 @@ services:
         max-file: "5"
 
   redis:
-    image: redis:7
+    image: ${REDIS_IMAGE}
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
@@ -101,7 +103,7 @@ services:
         max-file: "5"
 
   minio:
-    image: minio/minio:latest
+    image: ${MINIO_IMAGE}
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -111,6 +113,11 @@ services:
       - minio_data:/data
     ports:
       - "127.0.0.1:9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     logging:
       driver: json-file
       options:
@@ -118,10 +125,10 @@ services:
         max-file: "5"
 
   minio-init:
-    image: minio/mc:latest
+    image: ${MINIO_MC_IMAGE}
     depends_on:
       minio:
-        condition: service_started
+        condition: service_healthy
     env_file:
       - .env.prod
     entrypoint: >
@@ -133,10 +140,15 @@ services:
     restart: "no"
 
   qdrant:
-    image: qdrant/qdrant:latest
+    image: ${QDRANT_IMAGE}
     restart: unless-stopped
     volumes:
       - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     logging:
       driver: json-file
       options:

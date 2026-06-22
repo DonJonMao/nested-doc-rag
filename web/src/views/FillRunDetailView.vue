@@ -7,8 +7,9 @@ import StatusPill from '@/components/common/StatusPill.vue'
 import ArtifactDownloadPanel from '@/components/fill/ArtifactDownloadPanel.vue'
 import RunEventTimeline from '@/components/fill/RunEventTimeline.vue'
 import { subscribeRunEvents } from '@/api/events.api'
+import { downloadEvidenceImage } from '@/api/fillRuns.api'
 import { useFillRunStore } from '@/stores/fillRun.store'
-import type { RunEvent } from '@/api/types'
+import type { FillRunEvidenceRef, RunEvent } from '@/api/types'
 
 const route = useRoute()
 const fill = useFillRunStore()
@@ -28,6 +29,7 @@ const isCompletedWithFailures = computed(() => run.value?.status === 'completed_
 const isFailed = computed(() => run.value?.status === 'failed')
 const artifactInvalid = computed(() => run.value?.artifact_validation_status === 'invalid' || run.value?.manifest_status === 'invalid')
 const canCancel = computed(() => ['queued', 'running'].includes(run.value?.raw_status || run.value?.status || ''))
+const uncertainFields = computed(() => run.value?.writeback?.fields?.filter((field) => field.status === 'uncertain') ?? [])
 
 function connectEvents() {
   if (!run.value?.workspace_id) return
@@ -84,6 +86,32 @@ async function cancel() {
   ElMessage.success('已请求取消')
 }
 
+function count(value?: number) {
+  return value ?? 0
+}
+
+function displayValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return '-'
+  return String(value)
+}
+
+function evidenceSource(ref: FillRunEvidenceRef) {
+  return ref.file_name || ref.document_id || ref.object_key || ref.chunk_id || '未知来源'
+}
+
+function evidenceLocation(ref: FillRunEvidenceRef) {
+  return [ref.source_anchor, ref.sheet_name, ref.cell, ref.page ? `page ${ref.page}` : ''].filter(Boolean).join(' / ') || '-'
+}
+
+async function downloadImage(imageObjectKey: string) {
+  if (!run.value) return
+  try {
+    await downloadEvidenceImage(run.value.id, imageObjectKey)
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '图片证据下载失败')
+  }
+}
+
 onMounted(load)
 onBeforeUnmount(() => controller.value?.abort())
 </script>
@@ -125,11 +153,23 @@ onBeforeUnmount(() => controller.value?.abort())
       </div>
       <div class="detail__metric gk-card">
         <span>自动写入字段</span>
-        <strong>{{ run.summary.writeback_allowed }}</strong>
+        <strong>{{ count(run.summary.written ?? run.summary.writeback_allowed) }}</strong>
       </div>
       <div class="detail__metric gk-card">
         <span>需人工补充/复核字段</span>
         <strong>{{ run.summary.review_required }}</strong>
+      </div>
+      <div class="detail__metric gk-card">
+        <span>确认字段</span>
+        <strong>{{ count(run.summary.confirmed) }}</strong>
+      </div>
+      <div class="detail__metric gk-card">
+        <span>存疑字段</span>
+        <strong>{{ count(run.summary.uncertain) }}</strong>
+      </div>
+      <div class="detail__metric gk-card">
+        <span>标记字段</span>
+        <strong>{{ count(run.summary.flagged) }}</strong>
       </div>
       <div class="detail__metric gk-card">
         <span>未找到字段</span>
@@ -157,6 +197,33 @@ onBeforeUnmount(() => controller.value?.abort())
         </dl>
       </section>
     </div>
+
+    <section v-if="run && uncertainFields.length" class="detail__evidence gk-card">
+      <h2 class="gk-card-title">存疑字段证据</h2>
+      <p class="gk-caption">以下字段已按配置标红写入或进入人工补充清单，请下载表格后线下复核。</p>
+      <div class="detail__evidence-list">
+        <article v-for="field in uncertainFields" :key="field.field_key || field.field_id || field.target_cell" class="detail__evidence-item">
+          <div class="detail__evidence-head">
+            <strong>{{ field.field_key || field.field_id || field.target_cell }}</strong>
+            <span>{{ field.writeback_action || 'review_only' }}</span>
+          </div>
+          <div class="detail__evidence-answer">{{ displayValue(field.answer_value) }}</div>
+          <div v-for="(ref, index) in field.evidence_refs" :key="`${field.field_key || field.field_id}-${index}`" class="detail__evidence-ref">
+            <div>{{ evidenceSource(ref) }}</div>
+            <small>{{ evidenceLocation(ref) }}</small>
+            <p v-if="ref.text_preview">{{ ref.text_preview }}</p>
+            <el-button
+              v-if="ref.image_object_key"
+              link
+              type="primary"
+              @click="downloadImage(ref.image_object_key || '')"
+            >
+              下载图片证据
+            </el-button>
+          </div>
+        </article>
+      </div>
+    </section>
 
     <RunEventTimeline v-if="run" :events="events" />
   </main>
@@ -210,6 +277,54 @@ onBeforeUnmount(() => controller.value?.abort())
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
+}
+
+.detail__evidence {
+  padding: 24px;
+}
+
+.detail__evidence-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.detail__evidence-item {
+  border: 1px solid var(--gk-border);
+  border-radius: 8px;
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.detail__evidence-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.detail__evidence-head span {
+  color: var(--gk-warning);
+}
+
+.detail__evidence-answer {
+  color: var(--gk-ink-1);
+}
+
+.detail__evidence-ref {
+  border-top: 1px solid var(--gk-border);
+  padding-top: 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.detail__evidence-ref small {
+  color: var(--gk-ink-3);
+}
+
+.detail__evidence-ref p {
+  margin: 0;
+  color: var(--gk-ink-2);
 }
 
 .detail__metric {
