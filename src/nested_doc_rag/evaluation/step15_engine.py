@@ -104,7 +104,8 @@ def build_qdrant_answer_messages(
     user_prompt = (
         "下面是一个工勘单填报项、外部已知目标机房上下文和 RAG 检索结果。"
         "请只使用 external_room_context 与 retrieved_chunks 中的信息生成答案，不能使用常识，不能使用表格最后一列答案、heldout answer、expected_value 或 gold answer。\n"
-        "external_room_context 是业务流程已知的目标机房定位信息，可以用于消歧和组成机房名称；"
+        "external_room_context 是业务流程已知的目标机房定位信息，主要用于检索消歧；"
+        "除“机房名称”等字段外，不能把它当作设备参数、运行模式、容量、冗余等事实证据来源；"
         "retrieved_chunks 是事实证据来源。answer_example_format_only 只能作为格式参考，不能作为事实来源。"
         "图片附件只作为证据标记，不 OCR。\n"
         "输出口径：\n"

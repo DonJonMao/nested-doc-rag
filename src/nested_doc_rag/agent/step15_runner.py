@@ -46,6 +46,11 @@ UNSAFE_WRITEBACK_FLAGS = {
     "scope_mismatch_risk",
     "liquid_cooling_scope_mismatch",
     "field_intent_source_mismatch",
+    "field_mismatch",
+    "scope_mismatch",
+    "status_mismatch",
+    "slot_mismatch",
+    "answer_evidence_mismatch",
 }
 RISKY_ANSWERED_DOWNGRADE_FLAGS = {
     "answered_without_source",
@@ -54,6 +59,11 @@ RISKY_ANSWERED_DOWNGRADE_FLAGS = {
     "scope_mismatch_risk",
     "liquid_cooling_scope_mismatch",
     "field_intent_source_mismatch",
+    "field_mismatch",
+    "scope_mismatch",
+    "status_mismatch",
+    "slot_mismatch",
+    "answer_evidence_mismatch",
 }
 CRITICAL_OVERLAY_FLAGS = RISKY_ANSWERED_DOWNGRADE_FLAGS | {"answer_too_long"}
 
@@ -436,42 +446,14 @@ class Step15AgentRunner:
         prediction = convert_step15_generated_to_prediction(item, generated, top_hits, retrieval_mode=self.retrieval_plan)
         critic_flags = critic_check_step15_answer(item, generated, top_hits)
         overlay = build_agent_overlay_for_step15_prediction(prediction, top_hits, critic_flags)
-        grounding_result: EvidenceStrengthResult | None = None
-        if self.grounding_enabled:
-            grounding_result = EvidenceStrengthEvaluator(
-                target_namespace=self.target_namespace,
-                global_intro_answer_allowed=self.config.grounding.global_intro_answer_allowed,
-                require_target_source_for_answered=self.config.grounding.require_target_source_for_answered,
-                room_context=self.room_context,
-                field_binding_enabled=self.field_binding_enabled,
-            ).evaluate(item=item, prediction=prediction, top_hits=top_hits)
-            overlay = apply_evidence_strength_to_overlay(
-                prediction,
-                overlay,
-                grounding_result,
-                min_strength_for_answered=self.config.grounding.min_strength_for_answered,
-                min_strength_for_writeback=self.config.grounding.min_strength_for_writeback,
-                downgrade_unsupported_answer_to_partial=self.config.grounding.downgrade_unsupported_answer_to_partial,
-            )
-            self.trace.record(field_id, "grounding_evaluated", grounding_result.to_dict())
-            if self.config.grounding.write_grounding_trace:
-                self.grounding_trace_records.append(
-                    {
-                        "field_id": field_id,
-                        "query_text": query_text,
-                        "retrieval_plan": self.retrieval_plan,
-                        "answer_status": prediction.answer_status,
-                        "answer_value": prediction.answer_value,
-                        "source_chunk_ids": prediction.source_chunk_ids,
-                        **grounding_result.to_dict(),
-                        "overlay": {
-                            "review_required": overlay.review_required,
-                            "writeback_allowed": overlay.writeback_allowed,
-                            "risk_level": overlay.risk_level,
-                            "reasons": overlay.reasons,
-                        },
-                    }
-                )
+        overlay, grounding_result = self.apply_grounding_overlay(
+            item=item,
+            prediction=prediction,
+            top_hits=top_hits,
+            overlay=overlay,
+            query_text=query_text,
+        )
+        critic_flags = overlay.critic_flags
         self.trace.record(
             field_id,
             "agent_overlay_built",
@@ -612,7 +594,15 @@ class Step15AgentRunner:
         overlay_control = self.mas_controller.run_overlay_control(item, generated, prediction, top_hits)
         critic_flags = overlay_control.critic_flags
         overlay = overlay_control.overlay
-        review_item = overlay_control.review_item
+        overlay, grounding_result = self.apply_grounding_overlay(
+            item=item,
+            prediction=prediction,
+            top_hits=top_hits,
+            overlay=overlay,
+            query_text=query_text,
+        )
+        critic_flags = overlay.critic_flags
+        review_item = make_step15_review_item(item, prediction, overlay, top_hits)
         self.mas_controller.trace.record(
             field_id,
             self.mas_controller.overlay_control.name,
@@ -634,6 +624,8 @@ class Step15AgentRunner:
                 "risk_level": overlay.risk_level,
                 "reasons": overlay.reasons,
                 "critic_flags": critic_flags,
+                "evidence_strength": grounding_result.evidence_strength if grounding_result else None,
+                "field_binding": grounding_result.field_binding if grounding_result else None,
                 "suggested_reference_source_documents_count": len(overlay.suggested_reference_source_documents),
             },
         )
@@ -949,6 +941,55 @@ class Step15AgentRunner:
             neighbor_window=self.config.retrieval.parent_payload_neighbor_window,
             include_raw_parent_text=self.config.retrieval.parent_payload_include_raw_parent_text,
         )
+
+    def apply_grounding_overlay(
+        self,
+        *,
+        item: dict[str, Any],
+        prediction: FieldPrediction,
+        top_hits: list[dict[str, Any]],
+        overlay: AgentOverlay,
+        query_text: str,
+    ) -> tuple[AgentOverlay, EvidenceStrengthResult | None]:
+        if not self.grounding_enabled:
+            return overlay, None
+
+        field_id = field_id_for_item(item)
+        grounding_result = EvidenceStrengthEvaluator(
+            target_namespace=self.target_namespace,
+            global_intro_answer_allowed=self.config.grounding.global_intro_answer_allowed,
+            require_target_source_for_answered=self.config.grounding.require_target_source_for_answered,
+            room_context=self.room_context,
+            field_binding_enabled=self.field_binding_enabled,
+        ).evaluate(item=item, prediction=prediction, top_hits=top_hits)
+        grounded_overlay = apply_evidence_strength_to_overlay(
+            prediction,
+            overlay,
+            grounding_result,
+            min_strength_for_answered=self.config.grounding.min_strength_for_answered,
+            min_strength_for_writeback=self.config.grounding.min_strength_for_writeback,
+            downgrade_unsupported_answer_to_partial=self.config.grounding.downgrade_unsupported_answer_to_partial,
+        )
+        self.trace.record(field_id, "grounding_evaluated", grounding_result.to_dict())
+        if self.config.grounding.write_grounding_trace:
+            self.grounding_trace_records.append(
+                {
+                    "field_id": field_id,
+                    "query_text": query_text,
+                    "retrieval_plan": self.retrieval_plan,
+                    "answer_status": prediction.answer_status,
+                    "answer_value": prediction.answer_value,
+                    "source_chunk_ids": prediction.source_chunk_ids,
+                    **grounding_result.to_dict(),
+                    "overlay": {
+                        "review_required": grounded_overlay.review_required,
+                        "writeback_allowed": grounded_overlay.writeback_allowed,
+                        "risk_level": grounded_overlay.risk_level,
+                        "reasons": grounded_overlay.reasons,
+                    },
+                }
+            )
+        return grounded_overlay, grounding_result
 
     def write_outputs(self, predictions: list[FieldPrediction], overlays: list[AgentOverlay], run_state: dict[str, Any]) -> None:
         predictions_path = self.out_dir / "predictions.jsonl"

@@ -49,6 +49,11 @@ CRITICAL_FLAGS = {
     "scope_mismatch_risk",
     "liquid_cooling_scope_mismatch",
     "field_intent_source_mismatch",
+    "field_mismatch",
+    "scope_mismatch",
+    "status_mismatch",
+    "slot_mismatch",
+    "answer_evidence_mismatch",
 }
 SUPPORTED_EVIDENCE_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff"}
 DEFAULT_EVIDENCE_IMAGE_MAX_WIDTH = 360

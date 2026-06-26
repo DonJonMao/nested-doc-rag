@@ -239,12 +239,87 @@ def test_boolean_condition_mismatch_blocks_writeback() -> None:
     assert "status_mismatch" in blocked.reasons
 
 
+def test_room_context_does_not_create_scope_mismatch_by_itself() -> None:
+    result = evaluator().evaluate(
+        item=item("柴发配置是否满足要求？"),
+        prediction=prediction("满足", ["chunk_main"]),
+        top_hits=hits(raw_text="柴发配置满足要求。", row_header="柴发", column_header="配置情况"),
+    )
+
+    assert result.field_binding != "scope_mismatch"
+
+
+def test_oil_machine_mode_cannot_use_ups_single_mode_evidence() -> None:
+    result = evaluator().evaluate(
+        item=item("油机运行模式"),
+        prediction=prediction("单机", ["chunk_main"]),
+        top_hits=hits(
+            raw_text="IT-UPS、动力-UPS是否为并机系统：否，全部为单机系统。",
+            row_header="IT-UPS、动力-UPS是否为并机系统",
+            column_header="现状",
+        ),
+    )
+
+    assert result.field_binding == "field_mismatch"
+    assert "oil_machine_field_cited_non_oil_power_source" in result.field_binding_reasons
+
+
+def test_oil_parallel_controller_power_cannot_use_oil_route_control_evidence() -> None:
+    result = evaluator().evaluate(
+        item=item("油机并机控制器电源"),
+        prediction=prediction("一路市电，一路U电", ["chunk_main"]),
+        top_hits=hits(
+            raw_text="油路控制系统电源：一路市电，一路U电。",
+            row_header="油路控制系统电源",
+            column_header="现状",
+        ),
+    )
+
+    assert result.field_binding == "field_mismatch"
+    assert "oil_parallel_control_confused_with_oil_route_control" in result.field_binding_reasons
+
+
+def test_chiller_combo_field_requires_pressure_and_redundancy_slots() -> None:
+    result = evaluator().evaluate(
+        item=item("冰机配置情况", instruction_text="填写高压or低压/冗余情况"),
+        prediction=prediction("高压离心式水冷冷水机组", ["chunk_main"]),
+        top_hits=hits(
+            raw_text="冷水机组配置：高压离心式水冷冷水机组。",
+            row_header="冷水机组配置",
+            column_header="类型",
+        ),
+    )
+
+    assert result.field_binding == "slot_mismatch"
+    assert "missing_answer_chiller_redundancy_slot" in result.field_binding_reasons
+
+
+def test_chiller_combo_field_accepts_pressure_and_redundancy_slots() -> None:
+    result = evaluator().evaluate(
+        item=item("冰机配置情况", instruction_text="填写高压or低压/冗余情况"),
+        prediction=prediction("高压/N+1", ["chunk_main"]),
+        top_hits=hits(
+            raw_text="冷水机组配置：高压离心式水冷冷水机组，系统按N+1冗余配置。",
+            row_header="冷水机组配置",
+            column_header="类型及冗余",
+        ),
+    )
+
+    assert result.field_binding in {"exact", "parent_exact"}
+
+
 def evaluator() -> EvidenceStrengthEvaluator:
     return EvidenceStrengthEvaluator(target_namespace="xixian_4", room_context="西咸4号楼 301机房")
 
 
-def item(question_text: str) -> dict:
-    return {"form_item_id": "field_1", "row_index": 1, "target_cell": "D1", "question_text": question_text}
+def item(question_text: str, *, instruction_text: str = "") -> dict:
+    return {
+        "form_item_id": "field_1",
+        "row_index": 1,
+        "target_cell": "D1",
+        "question_text": question_text,
+        "instruction_text": instruction_text,
+    }
 
 
 def prediction(answer_value: str, sources: list[str], *, status: str = "answered") -> FieldPrediction:

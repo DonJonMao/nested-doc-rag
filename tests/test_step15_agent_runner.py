@@ -131,6 +131,20 @@ def test_risky_answered_overlay_blocks_writeback_without_mutating() -> None:
     assert "risky_answered_requires_review" in overlay.reasons
 
 
+def test_default_mas_applies_grounding_field_binding_gate(tmp_path: Path) -> None:
+    runner = make_runner(
+        tmp_path,
+        answer_caller=oil_mode_answer_caller,
+        retrieval_fn=fake_retrieval_ups_single_mode,
+    )
+
+    runner.run([make_item(39, question_text="油机运行模式", instruction_text="填写油机单机/并机运行模式", category_path=["油机"] )])
+
+    overlay = read_jsonl(tmp_path / "agent_overlays.jsonl")[0]
+    assert overlay["writeback_allowed"] is False
+    assert "field_mismatch" in overlay["critic_flags"]
+
+
 def test_not_found_without_hits_stays_not_found() -> None:
     prediction = convert_step15_generated_to_prediction(
         make_item(5),
@@ -940,6 +954,29 @@ def fake_retrieval_built_cabinet_count(query: str) -> Step15RetrievalResult:
     return Step15RetrievalResult(reranked_hits=hits, vector_hits=hits, retrieval_mode="layered")
 
 
+def fake_retrieval_ups_single_mode(query: str) -> Step15RetrievalResult:
+    del query
+    hits = [
+        {
+            "chunk_id": "chunk_ups_single_mode",
+            "namespace": "xixian_4",
+            "source_type": "main_excel_capability",
+            "corpus_layer": "fact",
+            "retrieval_layer": "target_main_fact",
+            "layer_priority": 1,
+            "rerank_score": 0.95,
+            "file_name": "main.xlsx",
+            "sheet_name": "Sheet1",
+            "row_header": "IT-UPS、动力-UPS是否为并机系统",
+            "column_header": "现状",
+            "anchor": "row 39",
+            "raw_text": "IT-UPS、动力-UPS是否为并机系统：否，全部为单机系统。",
+            "text_for_embedding": "IT-UPS 动力-UPS 是否为并机系统 否 全部为单机系统",
+        }
+    ]
+    return Step15RetrievalResult(reranked_hits=hits, vector_hits=hits, retrieval_mode="layered")
+
+
 def recording_retrieval(calls: list[str]):
     def retrieve(query: str) -> Step15RetrievalResult:
         calls.append(query)
@@ -958,6 +995,19 @@ def answered_answer_caller(**kwargs: Any) -> dict[str, Any]:
         "evidence_attachment_ids": ["att_1"],
         "reference_source_documents": [],
         "agent_resolution": {"used": True, "action": "select_source", "reason": "主表证据直接命中"},
+    }
+
+
+def oil_mode_answer_caller(**kwargs: Any) -> dict[str, Any]:
+    chunk_id = kwargs["hits"][0]["chunk_id"]
+    return {
+        "answer_value": "单机",
+        "answer_status": "answered",
+        "confidence": 0.86,
+        "source_chunk_ids": [chunk_id],
+        "evidence_attachment_ids": [],
+        "reference_source_documents": [],
+        "agent_resolution": {"used": True, "action": "select_source", "reason": "测试错引UPS证据"},
     }
 
 

@@ -20,12 +20,14 @@ FIELD_BINDING_RISK = {
     "field_mismatch": "high",
     "scope_mismatch": "high",
     "status_mismatch": "high",
+    "slot_mismatch": "high",
+    "answer_evidence_mismatch": "high",
     "unit_mismatch": "medium",
 }
 PLANNED_TERMS = {"规划", "计划", "未来", "拟建", "待建", "改造", "扩容", "设计", "目标", "建设中", "条件", "可支持"}
 CURRENT_TERMS = {"当前", "现网", "现有", "已建设", "已建", "已支持", "实际", "运行", "投产", "已投产", "生产"}
 CONDITIONAL_TERMS = {"条件", "具备", "可支持", "可接入", "预留", "改造"}
-NUMERIC_FIELD_TERMS = {"数量", "容量", "功率", "台数", "个数", "路数", "面积", "尺寸", "u位"}
+NUMERIC_FIELD_TERMS = {"数量", "容量", "功率", "台数", "个数", "路数", "面积", "尺寸", "u位", "冗余", "配置"}
 BOOLEAN_FIELD_TERMS = {"是否", "有无", "能否", "支持", "满足", "具备"}
 UNIT_ALIASES = {
     "kva": "kva",
@@ -445,6 +447,18 @@ def evaluate_field_binding(
         "matched_parent_entity_terms": parent_entity_matches,
         "matched_parent_metric_terms": parent_metric_matches,
     }
+    specific_mismatch_reasons = field_specific_mismatch_reasons(
+        question_text=display_text(item.get("question_text")),
+        instruction_text=display_text(item.get("instruction_text")),
+        category_path=item.get("category_path") or [],
+        answer_value=answer_value,
+        evidence_context=evidence_context,
+    )
+    slot_mismatch_reasons = combo_slot_mismatch_reasons(item=item, answer_value=answer_value, evidence_context=evidence_context)
+    if specific_mismatch_reasons:
+        details["answer_evidence_consistency_reasons"] = specific_mismatch_reasons
+    if slot_mismatch_reasons:
+        details["slot_mismatch_reasons"] = slot_mismatch_reasons
     if not cited_hits:
         return FieldBindingResult(
             "unsupported",
@@ -467,6 +481,36 @@ def evaluate_field_binding(
             ["no_legal_field_path"],
             field_intent=field_intent_summary(intent),
             evidence_field_path=None,
+            expected_scope=expected_scope,
+            evidence_scope=evidence_scope,
+            expected_status=expected_status,
+            evidence_status=evidence_status,
+            expected_unit=expected_unit,
+            evidence_unit=evidence_unit,
+            details=details,
+        )
+    if specific_mismatch_reasons:
+        return FieldBindingResult(
+            "field_mismatch",
+            0.1,
+            specific_mismatch_reasons,
+            field_intent=field_intent_summary(intent),
+            evidence_field_path=evidence_field_path,
+            expected_scope=expected_scope,
+            evidence_scope=evidence_scope,
+            expected_status=expected_status,
+            evidence_status=evidence_status,
+            expected_unit=expected_unit,
+            evidence_unit=evidence_unit,
+            details=details,
+        )
+    if slot_mismatch_reasons:
+        return FieldBindingResult(
+            "slot_mismatch",
+            0.1,
+            slot_mismatch_reasons,
+            field_intent=field_intent_summary(intent),
+            evidence_field_path=evidence_field_path,
             expected_scope=expected_scope,
             evidence_scope=evidence_scope,
             expected_status=expected_status,
@@ -630,7 +674,138 @@ def evaluate_field_binding(
     )
 
 
+def field_specific_mismatch_reasons(
+    *,
+    question_text: str,
+    instruction_text: str,
+    category_path: list[Any],
+    answer_value: Any,
+    evidence_context: str,
+) -> list[str]:
+    field_text = normalize_support_text(
+        " ".join([question_text, instruction_text, " ".join(display_text(part) for part in category_path)])
+    )
+    evidence_text = normalize_support_text(evidence_context)
+    answer_text = normalize_support_text(display_text(answer_value))
+    reasons: list[str] = []
+
+    if asks_oil_parallel_control(field_text) and not has_oil_parallel_control_terms(evidence_text):
+        if has_oil_route_control_terms(evidence_text):
+            reasons.append("oil_parallel_control_confused_with_oil_route_control")
+        else:
+            reasons.append("oil_parallel_control_terms_missing_from_evidence")
+    elif asks_oil_equipment(field_text) and has_non_oil_power_system_terms(evidence_text) and not has_oil_equipment_terms(evidence_text):
+        reasons.append("oil_machine_field_cited_non_oil_power_source")
+
+    if asks_warehouse_cctv(field_text) and has_monitoring_terms(evidence_text) and has_room_terms(evidence_text) and not has_warehouse_terms(evidence_text):
+        reasons.append("warehouse_monitoring_field_cited_room_monitoring_source")
+
+    if "并机" in answer_text and "单机" in evidence_text and "并机" not in evidence_text.replace("是否为并机", ""):
+        reasons.append("answer_parallel_mode_conflicts_with_single_mode_evidence")
+    if "单机" in answer_text and "并机" in evidence_text and "单机" not in evidence_text:
+        reasons.append("answer_single_mode_conflicts_with_parallel_mode_evidence")
+
+    return dedupe(reasons)
+
+
+def combo_slot_mismatch_reasons(*, item: dict[str, Any], answer_value: Any, evidence_context: str) -> list[str]:
+    field_text = normalize_support_text(
+        " ".join(
+            display_text(value)
+            for value in [
+                item.get("question_text"),
+                item.get("instruction_text"),
+                " ".join(display_text(part) for part in item.get("category_path") or []),
+            ]
+            if value
+        )
+    )
+    if not is_chiller_combo_field(field_text):
+        return []
+    answer_text = normalize_support_text(display_text(answer_value))
+    evidence_text = normalize_support_text(evidence_context)
+    reasons: list[str] = []
+    answer_has_pressure = has_chiller_pressure_slot(answer_text)
+    answer_has_redundancy = has_chiller_redundancy_slot(answer_text)
+    if not answer_has_pressure:
+        reasons.append("missing_answer_chiller_pressure_slot")
+    if not answer_has_redundancy:
+        reasons.append("missing_answer_chiller_redundancy_slot")
+    if answer_has_pressure and not has_chiller_pressure_slot(evidence_text):
+        reasons.append("missing_evidence_chiller_pressure_slot")
+    if answer_has_redundancy and not has_chiller_redundancy_slot(evidence_text):
+        reasons.append("missing_evidence_chiller_redundancy_slot")
+    return dedupe(reasons)
+
+
+def asks_oil_equipment(text: str) -> bool:
+    return has_any_term(text, ["油机", "柴油", "柴发", "发电机", "柴油发电机"])
+
+
+def asks_oil_parallel_control(text: str) -> bool:
+    return has_oil_parallel_control_terms(text) or (asks_oil_equipment(text) and "并机" in text and "控制" in text)
+
+
+def has_oil_equipment_terms(text: str) -> bool:
+    return has_any_term(text, ["油机", "柴油", "柴发", "发电机", "发电机组", "柴油发电机"])
+
+
+def has_oil_parallel_control_terms(text: str) -> bool:
+    return has_any_term(text, ["油机并机控制", "柴油发电机并机控制", "柴发并机控制", "并机控制器", "并机控制"])
+
+
+def has_oil_route_control_terms(text: str) -> bool:
+    return has_any_term(text, ["油路控制", "油路系统", "油路控制系统"])
+
+
+def has_non_oil_power_system_terms(text: str) -> bool:
+    return has_any_term(text, ["ups", "不间断电源", "hvdc", "高压直流"])
+
+
+def asks_warehouse_cctv(text: str) -> bool:
+    return has_warehouse_terms(text) and has_monitoring_terms(text)
+
+
+def has_warehouse_terms(text: str) -> bool:
+    return has_any_term(text, ["库房", "仓库"])
+
+
+def has_monitoring_terms(text: str) -> bool:
+    return has_any_term(text, ["监控", "cctv", "摄像头", "视频"])
+
+
+def has_room_terms(text: str) -> bool:
+    return has_any_term(text, ["机房", "房间"])
+
+
+def is_chiller_combo_field(text: str) -> bool:
+    return has_any_term(text, ["冰机", "冷机", "冷水机组", "冷冻机组", "制冷主机"]) and (
+        has_any_term(text, ["配置", "冗余", "高压", "低压"]) or "高压or低压" in text
+    )
+
+
+def has_chiller_pressure_slot(text: str) -> bool:
+    return has_any_term(text, ["高压", "低压"])
+
+
+def has_chiller_redundancy_slot(text: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", display_text(text)).lower()
+    compact = normalize_support_text(normalized)
+    return bool(
+        re.search(r"(?:^|[^a-z])n\s*\+\s*1", normalized)
+        or re.search(r"\d+\s*\+\s*1", normalized)
+        or "n+1" in compact
+        or "2n" in compact
+        or "主备" in compact
+    )
+
+
+def has_any_term(text: str, terms: list[str]) -> bool:
+    return any(normalize_support_text(term) in text for term in terms)
+
+
 def parse_field_intent(*, item: dict[str, Any], answer_value: Any, room_context: str | None) -> FieldIntent:
+    del room_context
     text = normalize_support_text(
         " ".join(
             display_text(value)
@@ -640,7 +815,6 @@ def parse_field_intent(*, item: dict[str, Any], answer_value: Any, room_context:
                 item.get("answer_key"),
                 item.get("field_name"),
                 " ".join(str(part) for part in item.get("category_path") or []),
-                room_context,
             ]
             if value
         )
@@ -674,11 +848,18 @@ def parse_field_intent(*, item: dict[str, Any], answer_value: Any, room_context:
 def detect_entity_terms(text: str) -> list[str]:
     groups = [
         ("ups", ["ups", "不间断电源"]),
+        ("hvdc", ["hvdc", "高压直流"]),
         ("pdu", ["pdu"]),
         ("机柜", ["机柜", "机架"]),
         ("市电", ["市电", "供电", "电源"]),
         ("双路市电", ["双路市电", "两路市电"]),
         ("变电站", ["变电站"]),
+        ("油机并机控制", ["油机并机控制", "柴油发电机并机控制", "柴发并机控制", "并机控制器", "并机控制"]),
+        ("油路控制", ["油路控制", "油路系统", "油路控制系统"]),
+        ("油机", ["油机", "柴油", "柴发", "发电机", "发电机组", "柴油发电机"]),
+        ("冰机", ["冰机", "冷机", "冷水机组", "冷冻机组", "制冷主机"]),
+        ("监控", ["监控", "cctv", "摄像头", "视频"]),
+        ("库房", ["库房", "仓库"]),
         ("端口", ["端口", "端子"]),
         ("链路", ["链路", "a/b", "a路", "b路"]),
         ("地址", ["地址", "位置"]),
@@ -697,6 +878,12 @@ def detect_metric_terms(text: str) -> list[str]:
         ("数量", ["数量", "台数", "个数", "几台", "路数"]),
         ("容量", ["容量", "kva", "kw"]),
         ("功率", ["功率", "kw", "mw"]),
+        ("配置", ["配置", "规格", "情况"]),
+        ("类型", ["类型", "型式", "高压", "低压"]),
+        ("模式", ["模式", "并机", "单机"]),
+        ("冗余", ["冗余", "n+1", "2n", "主备"]),
+        ("控制", ["控制", "控制器"]),
+        ("电源", ["电源", "u电"]),
         ("支持", ["支持", "满足", "具备", "可用"]),
         ("双路", ["双路", "两路", "2路", "a/b"]),
         ("进线", ["进线", "来源"]),
@@ -855,6 +1042,7 @@ def structured_raw_prefix(text: Any) -> str | None:
 
 
 def infer_expected_scope(*, item: dict[str, Any], room_context: str | None, target_namespace: str) -> str:
+    del room_context
     text = normalize_support_text(
         " ".join(
             display_text(value)
@@ -862,7 +1050,6 @@ def infer_expected_scope(*, item: dict[str, Any], room_context: str | None, targ
                 item.get("question_text"),
                 item.get("instruction_text"),
                 " ".join(str(part) for part in item.get("category_path") or []),
-                room_context,
                 target_namespace,
             ]
             if value
