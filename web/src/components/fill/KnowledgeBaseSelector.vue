@@ -34,20 +34,32 @@ const emit = defineEmits<{ 'update:modelValue': [id: string] }>()
 .kb-selector__item {
   min-height: 116px;
   padding: 16px;
-  border: 1px solid var(--gk-hairline-soft);
+  border: 1px solid var(--gk-glass-line);
   border-radius: var(--gk-radius-lg);
-  background: #fff;
+  background: rgba(255, 255, 255, 0.56);
   text-align: left;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 10px;
   cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.66), 0 8px 22px rgba(31, 38, 52, 0.06);
+  transition: border-color 160ms var(--gk-ease), background-color 160ms var(--gk-ease), box-shadow 160ms var(--gk-ease), transform 160ms var(--gk-ease);
+}
+
+.kb-selector__item:hover:not(:disabled) {
+  border-color: rgba(0, 102, 204, 0.24);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.kb-selector__item:active:not(:disabled) {
+  transform: scale(0.99);
 }
 
 .kb-selector__item.active {
-  border-color: var(--gk-blue);
-  box-shadow: 0 0 0 2px #d8ebff inset;
+  border-color: rgba(0, 102, 204, 0.42);
+  background: linear-gradient(135deg, rgba(234, 244, 255, 0.84), rgba(255, 255, 255, 0.58));
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.16) inset, 0 10px 24px rgba(0, 102, 204, 0.08);
 }
 
 .kb-selector__item:disabled {
@@ -63,5 +75,12 @@ const emit = defineEmits<{ 'update:modelValue': [id: string] }>()
 .kb-selector__meta {
   font-size: 13px;
   color: var(--gk-ink-3);
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .kb-selector__item {
+    -webkit-backdrop-filter: saturate(170%) blur(16px);
+    backdrop-filter: saturate(170%) blur(16px);
+  }
 }
 </style>

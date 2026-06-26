@@ -245,32 +245,50 @@ onBeforeUnmount(() => controller.value?.abort())
 
 .detail__error-card {
   color: var(--gk-danger);
+  background: rgba(255, 240, 239, 0.84);
 }
 
 .detail__summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 18px;
+  box-shadow: var(--gk-glass-shadow);
 }
 
 .detail__error {
   grid-column: 1 / -1;
   color: var(--gk-danger);
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(201, 52, 43, 0.16);
+  border-radius: var(--gk-radius-md);
+  background: rgba(255, 240, 239, 0.66);
 }
 
 .detail__warning {
   grid-column: 1 / -1;
   color: var(--gk-warning);
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(179, 107, 0, 0.16);
+  border-radius: var(--gk-radius-md);
+  background: rgba(255, 247, 232, 0.68);
 }
 
 .detail__info {
   grid-column: 1 / -1;
   color: var(--gk-info);
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(0, 102, 204, 0.14);
+  border-radius: var(--gk-radius-md);
+  background: rgba(234, 244, 255, 0.7);
 }
 
 .detail__notice {
   color: var(--gk-ink-2);
   line-height: 1.6;
+  background: linear-gradient(135deg, rgba(234, 244, 255, 0.74), rgba(255, 255, 255, 0.58));
 }
 
 .detail__cards {
@@ -281,6 +299,7 @@ onBeforeUnmount(() => controller.value?.abort())
 
 .detail__evidence {
   padding: 24px;
+  box-shadow: var(--gk-glass-shadow);
 }
 
 .detail__evidence-list {
@@ -290,11 +309,12 @@ onBeforeUnmount(() => controller.value?.abort())
 }
 
 .detail__evidence-item {
-  border: 1px solid var(--gk-border);
+  border: 1px solid var(--gk-glass-line);
   border-radius: 8px;
   padding: 16px;
   display: grid;
   gap: 10px;
+  background: rgba(255, 255, 255, 0.48);
 }
 
 .detail__evidence-head {
@@ -305,6 +325,9 @@ onBeforeUnmount(() => controller.value?.abort())
 
 .detail__evidence-head span {
   color: var(--gk-warning);
+  padding: 2px 8px;
+  border-radius: var(--gk-radius-pill);
+  background: rgba(255, 247, 232, 0.72);
 }
 
 .detail__evidence-answer {
@@ -312,7 +335,7 @@ onBeforeUnmount(() => controller.value?.abort())
 }
 
 .detail__evidence-ref {
-  border-top: 1px solid var(--gk-border);
+  border-top: 1px solid var(--gk-glass-line);
   padding-top: 10px;
   display: grid;
   gap: 4px;
@@ -331,6 +354,7 @@ onBeforeUnmount(() => controller.value?.abort())
   min-height: 104px;
   display: grid;
   align-content: space-between;
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.48));
 }
 
 .detail__metric span {
@@ -355,6 +379,16 @@ onBeforeUnmount(() => controller.value?.abort())
 
 .detail__metrics dd {
   margin: 0;
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .detail__error,
+  .detail__warning,
+  .detail__info,
+  .detail__evidence-item {
+    -webkit-backdrop-filter: saturate(170%) blur(16px);
+    backdrop-filter: saturate(170%) blur(16px);
+  }
 }
 
 @media (max-width: 980px) {

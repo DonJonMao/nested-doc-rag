@@ -38,9 +38,14 @@ async function signOut() {
 
 <style scoped>
 .global-nav {
+  position: sticky;
+  top: 0;
+  z-index: 60;
   height: var(--gk-nav-height);
-  background: var(--gk-black);
-  color: rgba(255, 255, 255, 0.82);
+  color: var(--gk-ink-2);
+  background: rgba(255, 255, 255, 0.94);
+  border-bottom: 1px solid rgba(88, 100, 120, 0.12);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset;
 }
 
 .global-nav__inner {
@@ -53,7 +58,7 @@ async function signOut() {
 }
 
 .global-nav__brand {
-  color: #fff;
+  color: var(--gk-ink);
   font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
@@ -67,30 +72,75 @@ async function signOut() {
 }
 
 .global-nav__links a {
-  color: rgba(255, 255, 255, 0.68);
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: var(--gk-radius-pill);
+  color: var(--gk-ink-3);
   font-size: 13px;
   text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  transition: color 160ms var(--gk-ease), background-color 160ms var(--gk-ease), box-shadow 160ms var(--gk-ease);
 }
 
 .global-nav__links a.active,
 .global-nav__links a:hover {
-  color: #fff;
+  color: var(--gk-ink);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(88, 100, 120, 0.1), 0 4px 12px rgba(31, 38, 52, 0.08);
 }
 
 .global-nav__logout {
   width: 30px;
   height: 30px;
-  border: 0;
+  border: 1px solid rgba(88, 100, 120, 0.1);
   border-radius: var(--gk-radius-pill);
-  color: rgba(255, 255, 255, 0.78);
-  background: transparent;
+  color: var(--gk-ink-3);
+  background: rgba(255, 255, 255, 0.54);
   display: grid;
   place-items: center;
   cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 .global-nav__logout:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.12);
+  color: var(--gk-ink);
+  background: rgba(255, 255, 255, 0.86);
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .global-nav {
+    background: rgba(255, 255, 255, 0.62);
+    -webkit-backdrop-filter: saturate(var(--gk-glass-saturate)) blur(var(--gk-glass-blur));
+    backdrop-filter: saturate(var(--gk-glass-saturate)) blur(var(--gk-glass-blur));
+  }
+
+  .global-nav__links a.active,
+  .global-nav__links a:hover,
+  .global-nav__logout {
+    -webkit-backdrop-filter: saturate(170%) blur(18px);
+    backdrop-filter: saturate(170%) blur(18px);
+  }
+}
+
+@media (max-width: 720px) {
+  .global-nav__inner {
+    width: min(100% - 24px, var(--gk-content-max));
+    gap: 12px;
+  }
+
+  .global-nav__links {
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .global-nav__links::-webkit-scrollbar {
+    display: none;
+  }
+
+  .global-nav__brand {
+    display: none;
+  }
 }
 </style>

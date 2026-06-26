@@ -197,11 +197,15 @@ Writeback artifacts are present only when writeback is enabled and completed:
 - `evidence_map.json`
 - `image_evidence.jsonl`, when fields reference `proof_attachment_ids`
 
+Knowledge ingestion and Step 11 manifest build also produce `proof_attachment_registry.jsonl` plus `evidence_images/` when source documents contain image proof attachments.
+
 Field writeback statuses:
 
 - `confirmed`: safe answer, normal writeback.
 - `uncertain`: evidence exists but manual verification is still needed. Written only when `writeback.allow_uncertain=true` and the target cell is empty; otherwise exported for review only.
 - `flagged`: never written automatically.
+
+When a value is written to the workbook, the target cell comment uses a compact evidence format: source document name plus the recalled text block. Uncertain comments use the same format with the configured `[UNCERTAIN]` prefix. Image proof references stay out of target cell comments. Knowledge ingestion and Step 11 manifest build extract workbook image proofs into stable `evidence_images/` files and `proof_attachment_registry.jsonl`; writeback resolves `attachment_id` through that registry and appends image proofs at the end of the `Evidence` sheet. Existing old indexes still fall back to source workbook `DISPIMG` media lookup.
 
 Allowed writeback actions:
 

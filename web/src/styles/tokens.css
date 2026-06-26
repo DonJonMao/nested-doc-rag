@@ -2,7 +2,11 @@
   --gk-blue: #0066cc;
   --gk-blue-hover: #0071e3;
   --gk-blue-on-dark: #2997ff;
+  --gk-cyan: #4fb7d8;
+  --gk-mint: #34c759;
+  --gk-amber: #ffb340;
   --gk-ink: #1d1d1f;
+  --gk-ink-1: var(--gk-ink);
   --gk-ink-2: #333333;
   --gk-ink-3: #6e6e73;
   --gk-ink-4: #86868b;
@@ -14,6 +18,7 @@
   --gk-surface-dark-2: #272729;
   --gk-hairline: #d2d2d7;
   --gk-hairline-soft: #e8e8ed;
+  --gk-border: var(--gk-hairline-soft);
   --gk-success: #1d7f43;
   --gk-warning: #b36b00;
   --gk-danger: #c9342b;
@@ -27,6 +32,19 @@
   --gk-nav-height: 44px;
   --gk-subnav-height: 52px;
   --gk-content-max: 1440px;
+  --gk-glass-bg: rgba(255, 255, 255, 0.68);
+  --gk-glass-bg-strong: rgba(255, 255, 255, 0.82);
+  --gk-glass-bg-soft: rgba(255, 255, 255, 0.48);
+  --gk-glass-fallback: rgba(255, 255, 255, 0.94);
+  --gk-glass-border: rgba(255, 255, 255, 0.72);
+  --gk-glass-border-strong: rgba(255, 255, 255, 0.9);
+  --gk-glass-highlight: rgba(255, 255, 255, 0.58);
+  --gk-glass-line: rgba(88, 100, 120, 0.14);
+  --gk-glass-shadow: 0 18px 50px rgba(31, 38, 52, 0.12), 0 4px 18px rgba(31, 38, 52, 0.08);
+  --gk-glass-shadow-soft: 0 10px 30px rgba(31, 38, 52, 0.08);
+  --gk-glass-blur: 24px;
+  --gk-glass-saturate: 180%;
+  --gk-focus-ring: 0 0 0 3px rgba(0, 102, 204, 0.22);
   --gk-space-1: 4px;
   --gk-space-2: 8px;
   --gk-space-3: 12px;
@@ -48,13 +66,20 @@ body,
 }
 
 html {
+  color-scheme: light;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
   color: var(--gk-ink);
-  background: var(--gk-page);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(245, 248, 255, 0.84) 48%, rgba(243, 248, 246, 0.92)),
+    linear-gradient(120deg, rgba(0, 102, 204, 0.13), rgba(79, 183, 216, 0.09) 36%, rgba(52, 199, 89, 0.08) 68%, rgba(255, 179, 64, 0.1));
+  background-attachment: fixed;
 }
 
 body {
   min-width: 320px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(245, 245, 247, 0.74)),
+    linear-gradient(115deg, rgba(0, 102, 204, 0.1), rgba(79, 183, 216, 0.08) 38%, rgba(255, 179, 64, 0.08) 78%);
 }
 
 button,

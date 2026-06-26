@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+
 const props = defineProps<{ status: string }>()
 
 const toneMap: Record<string, string> = {
@@ -18,10 +20,30 @@ const toneMap: Record<string, string> = {
   cancelled: 'muted',
   empty: 'muted',
 }
+
+const labelMap: Record<string, string> = {
+  ready: '就绪',
+  completed: '已完成',
+  succeeded: '已完成',
+  indexed: '已入库',
+  running: '运行中',
+  queued: '排队中',
+  building: '入库中',
+  uploaded: '已上传',
+  stale: '需更新',
+  completed_with_failures: '部分失败',
+  cancel_requested: '取消中',
+  failed: '失败',
+  canceled: '已取消',
+  cancelled: '已取消',
+  empty: '空',
+}
+
+const label = computed(() => labelMap[props.status] || props.status)
 </script>
 
 <template>
-  <span class="status-pill" :class="`status-pill--${toneMap[props.status] || 'muted'}`">{{ props.status }}</span>
+  <span class="status-pill" :class="`status-pill--${toneMap[props.status] || 'muted'}`">{{ label }}</span>
 </template>
 
 <style scoped>
@@ -34,35 +56,37 @@ const toneMap: Record<string, string> = {
   font-size: 12px;
   font-weight: 600;
   border: 1px solid transparent;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.64);
+  white-space: nowrap;
 }
 
 .status-pill--success {
   color: var(--gk-success);
-  background: #edf8f0;
-  border-color: #cae9d2;
+  background: rgba(237, 248, 240, 0.78);
+  border-color: rgba(202, 233, 210, 0.9);
 }
 
 .status-pill--info {
   color: var(--gk-info);
-  background: #eaf4ff;
-  border-color: #c9e2ff;
+  background: rgba(234, 244, 255, 0.78);
+  border-color: rgba(201, 226, 255, 0.9);
 }
 
 .status-pill--warning {
   color: var(--gk-warning);
-  background: #fff7e8;
-  border-color: #f1d5a8;
+  background: rgba(255, 247, 232, 0.78);
+  border-color: rgba(241, 213, 168, 0.9);
 }
 
 .status-pill--danger {
   color: var(--gk-danger);
-  background: #fff0ef;
-  border-color: #f0c8c5;
+  background: rgba(255, 240, 239, 0.8);
+  border-color: rgba(240, 200, 197, 0.9);
 }
 
 .status-pill--muted {
   color: var(--gk-ink-3);
-  background: #f1f1f4;
-  border-color: var(--gk-hairline-soft);
+  background: rgba(241, 241, 244, 0.76);
+  border-color: rgba(88, 100, 120, 0.12);
 }
 </style>

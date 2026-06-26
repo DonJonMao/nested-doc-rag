@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import zipfile
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
@@ -7,8 +9,12 @@ from openpyxl.styles import Alignment, Font, PatternFill
 
 from nested_doc_rag.excel.comments import format_source_comment
 from nested_doc_rag.excel.writeback import patch_workbook, prepare_writeback_item
-from nested_doc_rag.io import read_json, read_jsonl
+from nested_doc_rag.io import read_json, read_jsonl, write_jsonl
 from nested_doc_rag.schemas.eval import FieldPrediction
+
+TINY_PNG = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
 
 
 def make_prediction(
@@ -55,6 +61,16 @@ def make_template(path: Path) -> None:
     worksheet.merge_cells("E1:F1")
     worksheet["E1"] = "merged"
     workbook.save(path)
+
+
+def write_tiny_png(path: Path) -> None:
+    path.write_bytes(base64.b64decode(TINY_PNG))
+
+
+def assert_adjacent_evidence_layout(workbook, *, evidence_cell: str = "D6", image_count: int = 0) -> None:
+    assert "Evidence" not in workbook.sheetnames
+    assert workbook["Sheet1"][evidence_cell].value
+    assert len(workbook["Sheet1"]._images) == image_count
 
 
 def test_prepare_writeback_item() -> None:
@@ -117,7 +133,7 @@ def test_preserve_style(tmp_path: Path) -> None:
     assert cell.font.color.rgb == "00FF0000"
     assert cell.alignment.horizontal == "center"
     assert worksheet.column_dimensions["C"].width == 28
-    assert worksheet.row_dimensions[4].height == 30
+    assert worksheet.row_dimensions[4].height >= 30
     assert "E1:F1" in {str(item) for item in worksheet.merged_cells.ranges}
 
 
@@ -128,7 +144,21 @@ def test_comment_contains_evidence(tmp_path: Path) -> None:
 
     patch_workbook(
         template,
-        [make_prediction("field_1", "C4", "new answer", confidence=0.91234)],
+        [
+            make_prediction(
+                "field_1",
+                "C4",
+                "new answer",
+                confidence=0.91234,
+                reference_docs=[
+                    {
+                        "chunk_id": "chunk_1",
+                        "file_name": "能力清单.xlsx",
+                        "text_preview": "机房供电采用双路市电，配备 UPS。",
+                    }
+                ],
+            )
+        ],
         output,
         trace_by_field={"field_1": "trace_001"},
     )
@@ -136,11 +166,11 @@ def test_comment_contains_evidence(tmp_path: Path) -> None:
     workbook = load_workbook(output)
     comment = workbook["Sheet1"]["C4"].comment
     assert comment is not None
-    assert "confidence: 0.9123" in comment.text
-    assert "source_chunk_ids: chunk_1" in comment.text
-    assert "evidence_attachment_ids: img_1" in comment.text
-    assert "answer_status: answered" in comment.text
-    assert "trace_id: trace_001" in comment.text
+    assert "document: 能力清单.xlsx" in comment.text
+    assert "text: 机房供电采用双路市电，配备 UPS。" in comment.text
+    assert "source_chunk_ids" not in comment.text
+    assert "evidence_attachment_ids" not in comment.text
+    assert "trace_id" not in comment.text
     evidence_map = read_json(tmp_path / "evidence_map.json")
     assert evidence_map["fields"]["field_1"]["source_chunk_ids"] == ["chunk_1"]
 
@@ -277,7 +307,7 @@ def test_uncertain_allowed_writes_red_comment_and_evidence(tmp_path: Path) -> No
     assert cell.fill.fgColor.rgb == "FFFFCCCC"
     assert cell.comment is not None
     assert "[UNCERTAIN]" in cell.comment.text
-    assert "能力清单!H42" in cell.comment.text
+    assert "document: doc_1" in cell.comment.text
     assert "市电配置为双路" in cell.comment.text
     audit = read_jsonl(tmp_path / "writeback_audit.jsonl")
     review_items = read_jsonl(tmp_path / "review_items.jsonl")
@@ -288,7 +318,8 @@ def test_uncertain_allowed_writes_red_comment_and_evidence(tmp_path: Path) -> No
     assert summary.uncertain_count == 1
     assert summary.written_count == 1
     assert summary.review_count == 1
-    assert "Evidence" in workbook.sheetnames
+    assert_adjacent_evidence_layout(workbook)
+    assert "市电配置为双路" in workbook["Sheet1"]["D6"].value
 
 
 def test_uncertain_comment_is_truncated_to_configured_limit(tmp_path: Path) -> None:
@@ -392,3 +423,283 @@ def test_proof_attachment_ids_generate_image_evidence_artifact(tmp_path: Path) -
     audit = read_jsonl(tmp_path / "writeback_audit.jsonl")
     assert audit[0]["image_evidence_count"] == 1
     assert audit[0]["evidence_refs"][0]["image_object_key"] == "runs/run_1/evidence/field_1/proof_img_1"
+    workbook = load_workbook(output)
+    assert_adjacent_evidence_layout(workbook)
+    assert "runs/run_1/evidence/field_1/proof_img_1" in workbook["Sheet1"]["D6"].value
+    assert "图片不可用" in workbook["Sheet1"]["E6"].value
+
+
+def test_adjacent_columns_append_local_image_proof(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    output = tmp_path / "filled_form.xlsx"
+    image_path = tmp_path / "proof.png"
+    make_template(template)
+    write_tiny_png(image_path)
+
+    prediction = make_prediction(
+        "field_1",
+        "C6",
+        "双路市电",
+        status="partial_clue",
+        reference_docs=[
+            {
+                "chunk_id": "chunk_1",
+                "file_name": "能力清单.xlsx",
+                "text_preview": "供电采用双路市电。",
+                "proof_attachment_ids": ["proof_img_1"],
+                "proof_attachments": [
+                    {
+                        "attachment_id": "proof_img_1",
+                        "image_path": str(image_path),
+                        "media_content_type": "image/png",
+                    }
+                ],
+            }
+        ],
+        evidence_ids=[],
+    )
+
+    patch_workbook(
+        template,
+        [prediction],
+        output,
+        overlays_by_field_id={"field_1": {"writeback_allowed": False, "critic_flags": [], "review_required": True}},
+        writeback_config={"allow_uncertain": True},
+        run_id="run_1",
+    )
+
+    workbook = load_workbook(output)
+    assert_adjacent_evidence_layout(workbook, image_count=1)
+    assert "供电采用双路市电" in workbook["Sheet1"]["D6"].value
+
+
+def test_adjacent_columns_extracts_xlsx_media_image(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    source_workbook = tmp_path / "source.xlsx"
+    output = tmp_path / "filled_form.xlsx"
+    make_template(template)
+    with zipfile.ZipFile(source_workbook, "w") as archive:
+        archive.writestr("xl/media/proof.png", base64.b64decode(TINY_PNG))
+
+    prediction = make_prediction(
+        "field_1",
+        "C6",
+        "双路市电",
+        status="partial_clue",
+        reference_docs=[
+            {
+                "chunk_id": "chunk_1",
+                "file_name": "source.xlsx",
+                "relative_path": "source.xlsx",
+                "text_preview": "供电采用双路市电。",
+                "proof_attachment_ids": ["proof_img_1"],
+                "proof_attachments": [
+                    {
+                        "attachment_id": "proof_img_1",
+                        "media_path": "xl/media/proof.png",
+                        "media_content_type": "image/png",
+                    }
+                ],
+            }
+        ],
+        evidence_ids=[],
+    )
+
+    patch_workbook(
+        template,
+        [prediction],
+        output,
+        overlays_by_field_id={"field_1": {"writeback_allowed": False, "critic_flags": [], "review_required": True}},
+        writeback_config={"allow_uncertain": True},
+        run_id="run_1",
+    )
+
+    workbook = load_workbook(output)
+    assert_adjacent_evidence_layout(workbook, image_count=1)
+    assert "source.xlsx" in workbook["Sheet1"]["D6"].value
+
+
+def test_adjacent_columns_resolves_dispimg_media_from_attachment_id(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    source_workbook = tmp_path / "source.xlsx"
+    output = tmp_path / "filled_form.xlsx"
+    make_template(template)
+
+    source = Workbook()
+    source_sheet = source.active
+    source_sheet.title = "Source"
+    source_sheet["E3"] = '=_xlfn.DISPIMG("ID_TEST_IMAGE",1)'
+    source.save(source_workbook)
+    with zipfile.ZipFile(source_workbook, "a") as archive:
+        archive.writestr("xl/media/proof.png", base64.b64decode(TINY_PNG))
+        archive.writestr(
+            "xl/cellimages.xml",
+            """
+            <etc:cellImages xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+              xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+              xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+              xmlns:etc="http://www.wps.cn/officeDocument/2017/etCustomData">
+              <etc:cellImage>
+                <xdr:pic>
+                  <xdr:nvPicPr><xdr:cNvPr id="1" name="ID_TEST_IMAGE"/></xdr:nvPicPr>
+                  <xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill>
+                </xdr:pic>
+              </etc:cellImage>
+            </etc:cellImages>
+            """,
+        )
+        archive.writestr(
+            "xl/_rels/cellimages.xml.rels",
+            """
+            <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+              <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/proof.png"/>
+            </Relationships>
+            """,
+        )
+
+    prediction = make_prediction(
+        "field_1",
+        "C6",
+        "双路市电",
+        status="partial_clue",
+        reference_docs=[
+            {
+                "chunk_id": "chunk_1",
+                "file_name": "source.xlsx",
+                "relative_path": "source.xlsx",
+                "sheet_name": "Source",
+                "cell": "A3:L3",
+                "text_preview": "供电采用双路市电。",
+                "proof_attachment_ids": ["att_file_abc_E3_dispimg"],
+            }
+        ],
+        evidence_ids=[],
+    )
+
+    patch_workbook(
+        template,
+        [prediction],
+        output,
+        overlays_by_field_id={"field_1": {"writeback_allowed": False, "critic_flags": [], "review_required": True}},
+        writeback_config={"allow_uncertain": True},
+        run_id="run_1",
+    )
+
+    workbook = load_workbook(output)
+    assert_adjacent_evidence_layout(workbook, image_count=1)
+    assert "A3:L3" in workbook["Sheet1"]["D6"].value
+
+
+def test_adjacent_columns_uses_proof_attachment_registry_for_attachment_only_prediction(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    output = tmp_path / "filled_form.xlsx"
+    image_path = tmp_path / "registry-proof.png"
+    make_template(template)
+    write_tiny_png(image_path)
+    write_jsonl(
+        tmp_path / "proof_attachment_registry.jsonl",
+        [
+            {
+                "attachment_id": "att_registry_img",
+                "image_path": str(image_path),
+                "file_name": "能力清单.xlsx",
+                "sheet_name": "能力清单",
+                "source_cell": "E3",
+            }
+        ],
+    )
+
+    prediction = make_prediction(
+        "field_1",
+        "C6",
+        "双路市电",
+        status="partial_clue",
+        reference_docs=[],
+        evidence_ids=["att_registry_img"],
+    )
+
+    patch_workbook(
+        template,
+        [prediction],
+        output,
+        overlays_by_field_id={"field_1": {"writeback_allowed": False, "critic_flags": [], "review_required": True}},
+        writeback_config={"allow_uncertain": True},
+        run_id="run_1",
+    )
+
+    workbook = load_workbook(output)
+    assert_adjacent_evidence_layout(workbook, image_count=1)
+    assert "att_registry_img" in workbook["Sheet1"]["D6"].value
+
+
+def test_adjacent_columns_resolves_attachment_only_dispimg_from_manifest(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    source_workbook = tmp_path / "source.xlsx"
+    output = tmp_path / "filled_form.xlsx"
+    make_template(template)
+
+    source = Workbook()
+    source_sheet = source.active
+    source_sheet.title = "Source"
+    source_sheet["E3"] = '=_xlfn.DISPIMG("ID_TEST_IMAGE",1)'
+    source.save(source_workbook)
+    with zipfile.ZipFile(source_workbook, "a") as archive:
+        archive.writestr("xl/media/proof.png", base64.b64decode(TINY_PNG))
+        archive.writestr(
+            "xl/cellimages.xml",
+            """
+            <etc:cellImages xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+              xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+              xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+              xmlns:etc="http://www.wps.cn/officeDocument/2017/etCustomData">
+              <etc:cellImage>
+                <xdr:pic>
+                  <xdr:nvPicPr><xdr:cNvPr id="1" name="ID_TEST_IMAGE"/></xdr:nvPicPr>
+                  <xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill>
+                </xdr:pic>
+              </etc:cellImage>
+            </etc:cellImages>
+            """,
+        )
+        archive.writestr(
+            "xl/_rels/cellimages.xml.rels",
+            """
+            <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+              <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/proof.png"/>
+            </Relationships>
+            """,
+        )
+    manifest_dir = tmp_path / "03_format_probe"
+    manifest_dir.mkdir()
+    write_jsonl(
+        manifest_dir / "probed_manifest.jsonl",
+        [
+            {
+                "file_id": "file_abc",
+                "source_path": str(source_workbook),
+                "file_name": "source.xlsx",
+            }
+        ],
+    )
+
+    prediction = make_prediction(
+        "field_1",
+        "C6",
+        "双路市电",
+        status="partial_clue",
+        reference_docs=[],
+        evidence_ids=["att_file_abc_E3_dispimg"],
+    )
+
+    patch_workbook(
+        template,
+        [prediction],
+        output,
+        overlays_by_field_id={"field_1": {"writeback_allowed": False, "critic_flags": [], "review_required": True}},
+        writeback_config={"allow_uncertain": True},
+        run_id="run_1",
+    )
+
+    workbook = load_workbook(output)
+    assert_adjacent_evidence_layout(workbook, image_count=1)
+    assert "att_file_abc_E3_dispimg" in workbook["Sheet1"]["D6"].value

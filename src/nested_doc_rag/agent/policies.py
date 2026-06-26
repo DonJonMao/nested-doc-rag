@@ -634,6 +634,10 @@ def reference_source_documents(chunks: list[dict[str, Any]]) -> list[dict[str, A
                 "corpus_layer": chunk.get("corpus_layer"),
                 "retrieval_layer": chunk.get("retrieval_layer"),
                 "source_anchor": chunk.get("source_anchor") or chunk.get("anchor") or chunk.get("source") or {},
+                "file_name": chunk.get("file_name"),
+                "relative_path": chunk.get("relative_path"),
+                "proof_attachment_ids": chunk.get("proof_attachment_ids") or chunk.get("evidence_attachment_ids") or [],
+                "proof_attachments": chunk.get("proof_attachments") or [],
                 "text_preview": display_text(text, 180),
             }
         )

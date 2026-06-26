@@ -50,9 +50,24 @@ async function submit() {
 .login-card {
   width: min(420px, calc(100vw - 32px));
   padding: 34px;
-  border: 1px solid var(--gk-hairline-soft);
+  border: 1px solid var(--gk-glass-line);
   border-radius: var(--gk-radius-lg);
-  background: var(--gk-white);
+  background: var(--gk-glass-fallback);
+  box-shadow: var(--gk-glass-shadow);
+  position: relative;
+  overflow: hidden;
+}
+
+.login-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.54), transparent 38%);
+}
+
+.login-card > * {
+  position: relative;
 }
 
 .login-card h1 {
@@ -70,5 +85,14 @@ async function submit() {
 .login-card__button {
   width: 100%;
   margin: 8px 0 18px;
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .login-card {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.52));
+    border-color: var(--gk-glass-border);
+    -webkit-backdrop-filter: saturate(var(--gk-glass-saturate)) blur(var(--gk-glass-blur));
+    backdrop-filter: saturate(var(--gk-glass-saturate)) blur(var(--gk-glass-blur));
+  }
 }
 </style>

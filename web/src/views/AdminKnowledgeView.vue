@@ -165,6 +165,7 @@ onBeforeUnmount(() => ingestionController.value?.abort())
 .admin-knowledge__ingestion,
 .admin-knowledge__table {
   padding: 20px;
+  box-shadow: var(--gk-glass-shadow-soft);
 }
 
 .admin-knowledge__rail {
@@ -176,18 +177,30 @@ onBeforeUnmount(() => ingestionController.value?.abort())
 .admin-knowledge__kb {
   min-height: 82px;
   padding: 14px;
-  border: 1px solid var(--gk-hairline-soft);
+  border: 1px solid var(--gk-glass-line);
   border-radius: var(--gk-radius-md);
-  background: #fff;
+  background: rgba(255, 255, 255, 0.56);
   text-align: left;
   display: grid;
   gap: 6px;
   cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.66);
+  transition: border-color 160ms var(--gk-ease), background-color 160ms var(--gk-ease), box-shadow 160ms var(--gk-ease), transform 160ms var(--gk-ease);
+}
+
+.admin-knowledge__kb:hover {
+  background: rgba(255, 255, 255, 0.76);
+  border-color: rgba(0, 102, 204, 0.2);
+}
+
+.admin-knowledge__kb:active {
+  transform: scale(0.99);
 }
 
 .admin-knowledge__kb.active {
-  border-color: var(--gk-blue);
-  box-shadow: 0 0 0 2px #d8ebff inset;
+  border-color: rgba(0, 102, 204, 0.4);
+  background: linear-gradient(135deg, rgba(234, 244, 255, 0.82), rgba(255, 255, 255, 0.58));
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.16) inset, 0 8px 20px rgba(0, 102, 204, 0.08);
 }
 
 .admin-knowledge__kb small {
@@ -216,6 +229,13 @@ onBeforeUnmount(() => ingestionController.value?.abort())
 .admin-knowledge__upload h2,
 .admin-knowledge__table h2 {
   margin-bottom: 16px;
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .admin-knowledge__kb {
+    -webkit-backdrop-filter: saturate(170%) blur(16px);
+    backdrop-filter: saturate(170%) blur(16px);
+  }
 }
 
 @media (max-width: 900px) {

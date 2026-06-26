@@ -96,6 +96,8 @@ class QdrantRetriever:
             "parent_text",
             "neighbor_text",
             "parent_payload",
+            "relative_path",
+            "proof_attachments",
         ]
         for rank, point in enumerate(response.points, 1):
             payload = point.payload or {}
@@ -108,9 +110,11 @@ class QdrantRetriever:
                 "corpus_layer": payload.get("corpus_layer"),
                 "anchor": payload.get("anchor"),
                 "file_name": payload.get("file_name"),
+                "relative_path": payload.get("relative_path"),
                 "raw_text": payload.get("raw_text"),
                 "text_for_embedding": payload.get("text_for_embedding") or payload.get("raw_text"),
                 "proof_attachment_ids": payload.get("proof_attachment_ids") or [],
+                "proof_attachments": payload.get("proof_attachments") or [],
                 "source": payload.get("source") or {},
             }
             for key in metadata_keys:

@@ -1,6 +1,9 @@
 .gk-page {
   min-height: 100vh;
-  background: var(--gk-page);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(246, 249, 252, 0.72) 42%, rgba(245, 245, 247, 0.9)),
+    linear-gradient(120deg, rgba(0, 102, 204, 0.12), rgba(79, 183, 216, 0.08) 36%, rgba(52, 199, 89, 0.07) 64%, rgba(255, 179, 64, 0.09));
+  background-attachment: fixed;
 }
 
 .gk-shell {
@@ -14,7 +17,7 @@
 
 .gk-page-title {
   margin: 0;
-  font-size: clamp(32px, 3vw, 48px);
+  font-size: 44px;
   line-height: 1.08;
   font-weight: 600;
   letter-spacing: 0;
@@ -48,9 +51,47 @@
 }
 
 .gk-card {
-  border: 1px solid var(--gk-hairline-soft);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--gk-glass-line);
   border-radius: var(--gk-radius-lg);
-  background: var(--gk-white);
+  background: var(--gk-glass-fallback);
+  box-shadow: var(--gk-glass-shadow-soft);
+}
+
+.gk-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gk-glass-highlight), transparent);
+  pointer-events: none;
+}
+
+.gk-glass {
+  border: 1px solid var(--gk-glass-line);
+  background: var(--gk-glass-fallback);
+  box-shadow: var(--gk-glass-shadow-soft);
+}
+
+.gk-liquid-panel {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--gk-glass-line);
+  border-radius: var(--gk-radius-lg);
+  background: var(--gk-glass-fallback);
+  box-shadow: var(--gk-glass-shadow);
+}
+
+.gk-liquid-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.5), transparent 38%),
+    linear-gradient(120deg, rgba(255, 255, 255, 0.34), transparent 34%, rgba(255, 255, 255, 0.16) 72%, transparent);
+  opacity: 0.75;
 }
 
 .gk-grid-two {
@@ -64,7 +105,26 @@
     width: min(100% - 32px, var(--gk-content-max));
   }
 
+  .gk-page-title {
+    font-size: 34px;
+  }
+
   .gk-grid-two {
     grid-template-columns: 1fr;
+  }
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .gk-card,
+  .gk-glass,
+  .gk-liquid-panel {
+    background: var(--gk-glass-bg);
+    border-color: var(--gk-glass-border);
+    -webkit-backdrop-filter: saturate(var(--gk-glass-saturate)) blur(var(--gk-glass-blur));
+    backdrop-filter: saturate(var(--gk-glass-saturate)) blur(var(--gk-glass-blur));
+  }
+
+  .gk-liquid-panel {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.76), rgba(255, 255, 255, 0.5));
   }
 }

@@ -181,13 +181,15 @@ writeback:
   allow_uncertain: true
   uncertain_style: red_fill
   uncertain_comment_prefix: "[UNCERTAIN]"
-  embed_evidence_images: false
-  evidence_image_mode: hyperlink
+  embed_evidence_images: true
+  evidence_image_mode: append_sheet
   max_evidence_images_per_field: 3
   max_comment_chars: 2000
+  evidence_image_max_width_px: 360
+  evidence_image_max_height_px: 240
 ```
 
-When enabled, uncertain cells are marked red, comments include document/location evidence, and image proof links are listed through the `Evidence` sheet and `image_evidence.jsonl` artifact when `proof_attachment_ids` are present.
+Written cells include a compact evidence comment with only the source document name and recalled text block. When uncertain writeback is enabled, uncertain cells are also marked red and use the same evidence comment format with the `[UNCERTAIN]` prefix. Image proofs are extracted during knowledge ingestion or Step 11 manifest build into `evidence_images/` plus `proof_attachment_registry.jsonl`; writeback resolves `attachment_id` through that registry and appends the image proofs at the end of the `Evidence` sheet. If an old index has not been rebuilt yet, writeback still falls back to the source workbook `DISPIMG` media lookup.
 
 Validate an output directory:
 

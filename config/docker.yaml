@@ -103,10 +103,12 @@ writeback:
   allow_uncertain: false
   uncertain_style: red_fill
   uncertain_comment_prefix: "[UNCERTAIN]"
-  embed_evidence_images: false
-  evidence_image_mode: hyperlink
+  embed_evidence_images: true
+  evidence_image_mode: adjacent_columns
   max_evidence_images_per_field: 3
   max_comment_chars: 2000
+  evidence_image_max_width_px: 360
+  evidence_image_max_height_px: 240
 
 agent:
   retrieval_backend: mini

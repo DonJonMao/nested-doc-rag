@@ -100,6 +100,7 @@ onMounted(load)
 
 .history__table {
   padding: 20px;
+  box-shadow: var(--gk-glass-shadow);
 }
 
 .history__id {
@@ -110,5 +111,13 @@ onMounted(load)
 .history__name {
   font-weight: 600;
   color: var(--gk-ink-1);
+}
+
+.history__table :deep(.el-table) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.history__table :deep(.el-table__row) {
+  transition: background-color 160ms var(--gk-ease);
 }
 </style>

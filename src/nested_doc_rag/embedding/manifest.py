@@ -7,11 +7,19 @@ import math
 import time
 from array import array
 from collections import Counter, defaultdict
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from nested_doc_rag.config import load_app_config
 from nested_doc_rag.embedding import QUERY_INSTRUCTION, EmbeddingClient, RerankClient
+from nested_doc_rag.evidence_images import (
+    SUPPORTED_IMAGE_SUFFIXES,
+    enrich_attachment_with_registry,
+    materialize_xlsx_media,
+    registry_by_attachment_id,
+    safe_key_part,
+)
 
 DEFAULT_CONFIG = load_app_config()
 PROJECT_ROOT = DEFAULT_CONFIG.paths.project_root
@@ -121,6 +129,27 @@ def proof_attachment_ids(segment: dict[str, Any]) -> list[str]:
     return ids
 
 
+def proof_attachments(segment: dict[str, Any], registry: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    attachments: list[dict[str, Any]] = []
+    for attachment in segment.get("proof_attachments") or []:
+        if not isinstance(attachment, dict):
+            continue
+        normalized = {
+            "attachment_id": attachment.get("attachment_id") or "",
+            "file_id": attachment.get("file_id") or "",
+            "sheet_name": attachment.get("sheet_name") or "",
+            "source_cell": attachment.get("source_cell") or "",
+            "media_path": attachment.get("media_path") or "",
+            "media_content_type": attachment.get("media_content_type") or "",
+            "attachment_type": attachment.get("attachment_type") or "",
+            "image_id": attachment.get("image_id") or "",
+            "relationship_id": attachment.get("relationship_id") or "",
+            "mapping_status": attachment.get("mapping_status") or "",
+        }
+        attachments.append(enrich_attachment_with_registry(normalized, registry or {}))
+    return attachments
+
+
 def corpus_layer_for_policy(policy: str) -> str:
     if policy == "metadata_only":
         return "meta"
@@ -141,10 +170,11 @@ def rank_boost_for_policy(policy: str) -> float:
     return 1.0
 
 
-def make_main_excel_manifest_record(segment: dict[str, Any]) -> dict[str, Any]:
+def make_main_excel_manifest_record(segment: dict[str, Any], registry: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     namespace = normalize_namespace(segment.get("data_center_id"))
     source_anchor = segment.get("source_anchor") or {}
     chunk_id = "rag_" + stable_id("main_excel_capability", segment.get("segment_id"))
+    attachments = proof_attachments(segment, registry)
     return {
         "chunk_id": chunk_id,
         "source_type": "main_excel_capability",
@@ -167,6 +197,7 @@ def make_main_excel_manifest_record(segment: dict[str, Any]) -> dict[str, Any]:
         "parent_attachment_id": None,
         "embedded_file_name": None,
         "proof_attachment_ids": proof_attachment_ids(segment),
+        "proof_attachments": attachments,
         "proof_attachment_count": segment.get("proof_attachment_count", 0),
         "proof_cell_refs": segment.get("proof_cell_refs") or [],
         "semantic_flags": [],
@@ -183,6 +214,8 @@ def make_main_excel_manifest_record(segment: dict[str, Any]) -> dict[str, Any]:
             "row_index": segment.get("row_index"),
             "cell_range": source_anchor.get("cell_range"),
             "proof_cells": source_anchor.get("proof_cells") or [],
+            "relative_path": segment.get("relative_path"),
+            "proof_attachments": attachments,
         },
     }
 
@@ -190,6 +223,7 @@ def make_main_excel_manifest_record(segment: dict[str, Any]) -> dict[str, Any]:
 def make_embedded_table_manifest_record(
     segment: dict[str, Any],
     audit: dict[str, Any],
+    registry: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     policy = audit.get("embedding_policy") or "embed"
     namespace = normalize_namespace(segment.get("data_center_id"))
@@ -199,6 +233,7 @@ def make_embedded_table_manifest_record(
     proof_ids: list[str] = []
     if parent_attachment_id and ("image" in policy or "needs_image_evidence" in semantic_flags):
         proof_ids.append(str(parent_attachment_id))
+    attachments = proof_attachments(segment, registry)
 
     chunk_id = "rag_" + stable_id("embedded_word_table", segment.get("segment_id"))
     return {
@@ -223,6 +258,7 @@ def make_embedded_table_manifest_record(
         "parent_attachment_id": parent_attachment_id,
         "embedded_file_name": segment.get("embedded_file_name"),
         "proof_attachment_ids": proof_ids,
+        "proof_attachments": attachments,
         "proof_attachment_count": len(proof_ids),
         "proof_cell_refs": [segment.get("parent_source_cell")] if segment.get("parent_source_cell") else [],
         "semantic_flags": semantic_flags,
@@ -246,8 +282,82 @@ def make_embedded_table_manifest_record(
             "embedded_file_name": segment.get("embedded_file_name"),
             "semantic_status": audit.get("semantic_status"),
             "semantic_issue": audit.get("semantic_issue"),
+            "relative_path": segment.get("relative_path") or segment.get("file_name"),
+            "proof_attachments": attachments,
         },
     }
+
+
+def build_proof_attachment_registry(
+    segments: list[dict[str, Any]],
+    *,
+    source_root: Path,
+    image_output_dir: Path,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for segment in segments:
+        source_path = resolve_source_document_path(segment, source_root)
+        for attachment in segment.get("proof_attachments") or []:
+            if not isinstance(attachment, dict):
+                continue
+            attachment_id = str(attachment.get("attachment_id") or "")
+            if not attachment_id or attachment_id in seen:
+                continue
+            seen.add(attachment_id)
+            media_path = str(attachment.get("media_path") or "")
+            image_path = str(attachment.get("image_path") or "")
+            if source_path and media_path and not image_path:
+                image_path = materialize_xlsx_media(source_path, media_path, output_dir=image_output_dir, attachment_id=attachment_id)
+            if image_path:
+                mapping_status = "mapped"
+            elif media_path and Path(media_path).suffix.lower() not in SUPPORTED_IMAGE_SUFFIXES:
+                mapping_status = "unsupported_media_type"
+            else:
+                mapping_status = attachment.get("mapping_status") or "image_unavailable"
+            rows.append(
+                {
+                    "attachment_id": attachment_id,
+                    "file_id": attachment.get("file_id") or segment.get("file_id") or "",
+                    "namespace": normalize_namespace(segment.get("data_center_id")),
+                    "file_name": segment.get("file_name") or attachment.get("file_name") or "",
+                    "relative_path": segment.get("relative_path") or segment.get("file_name") or "",
+                    "source_file_path": str(source_path.resolve()) if source_path else "",
+                    "sheet_name": attachment.get("sheet_name") or segment.get("sheet_name") or segment.get("parent_sheet_name") or "",
+                    "row_index": segment.get("row_index") or "",
+                    "source_cell": attachment.get("source_cell") or segment.get("parent_source_cell") or "",
+                    "image_id": attachment.get("image_id") or "",
+                    "relationship_id": attachment.get("relationship_id") or "",
+                    "media_path": media_path,
+                    "media_content_type": attachment.get("media_content_type") or "",
+                    "attachment_type": attachment.get("attachment_type") or "image",
+                    "mapping_status": mapping_status,
+                    "image_path": image_path,
+                    "object_key": f"evidence_images/{safe_key_part(attachment_id)}{Path(image_path or media_path).suffix.lower()}",
+                }
+            )
+    return rows
+
+
+def resolve_source_document_path(segment: Mapping[str, Any], source_root: Path) -> Path | None:
+    candidates: list[Path] = []
+    for raw_value in (segment.get("relative_path"), segment.get("file_name")):
+        if not raw_value:
+            continue
+        raw = Path(str(raw_value))
+        candidates.append(raw)
+        if not raw.is_absolute():
+            candidates.append(source_root / raw)
+            candidates.append(Path.cwd() / raw)
+            candidates.append(Path.cwd() / "data" / raw)
+    for candidate in candidates:
+        try:
+            resolved = candidate.expanduser().resolve()
+        except OSError:
+            continue
+        if resolved.exists() and resolved.is_file():
+            return resolved
+    return None
 
 
 def build_manifest(
@@ -256,26 +366,38 @@ def build_manifest(
     segments_path: Path = STEP05_SEGMENTS,
     resolved_segments_path: Path = STEP09_SEGMENTS,
     semantic_audit_path: Path = STEP10_AUDIT,
+    source_root: Path = DEFAULT_CONFIG.paths.data_dir,
 ) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
+    image_output_dir = out_dir / "evidence_images"
 
     audit_by_segment_id = {
         record.get("segment_id"): record
         for record in read_jsonl(semantic_audit_path)
         if record.get("segment_id")
     }
+    main_segments = read_jsonl(segments_path)
+    resolved_segments = read_jsonl(resolved_segments_path)
+    registry_rows = build_proof_attachment_registry(
+        [*main_segments, *resolved_segments],
+        source_root=source_root,
+        image_output_dir=image_output_dir,
+    )
+    registry = registry_by_attachment_id(registry_rows)
+    if registry_rows:
+        write_jsonl(out_dir / "proof_attachment_registry.jsonl", registry_rows)
 
     records: list[dict[str, Any]] = []
-    for segment in read_jsonl(segments_path):
-        records.append(make_main_excel_manifest_record(segment))
+    for segment in main_segments:
+        records.append(make_main_excel_manifest_record(segment, registry))
 
     missing_audit = 0
-    for segment in read_jsonl(resolved_segments_path):
+    for segment in resolved_segments:
         audit = audit_by_segment_id.get(segment.get("segment_id"))
         if not audit:
             missing_audit += 1
             audit = {"embedding_policy": "exclude_until_fixed", "semantic_status": "missing_step10_audit"}
-        records.append(make_embedded_table_manifest_record(segment, audit))
+        records.append(make_embedded_table_manifest_record(segment, audit, registry))
 
     write_jsonl(out_dir / "ingestion_manifest.jsonl", records)
 
@@ -289,6 +411,8 @@ def build_manifest(
         "default_counts_by_namespace": dict(Counter(record["namespace"] for record in records if record["default_index"])),
         "counts_by_corpus_layer": dict(Counter(record["corpus_layer"] for record in records)),
         "counts_by_embedding_policy": dict(Counter(record["embedding_policy"] for record in records)),
+        "proof_attachment_count": len(registry_rows),
+        "materialized_image_count": sum(1 for row in registry_rows if row.get("image_path")),
         "embedding_input_rule": {
             "document": "直接使用 text_for_embedding，不加查询 instruction。",
             "query": f"使用前缀：{QUERY_INSTRUCTION!r}",
@@ -544,9 +668,11 @@ def search_index(
                 "embedding_policy": record["embedding_policy"],
                 "anchor": record.get("anchor"),
                 "file_name": record.get("file_name"),
+                "relative_path": record.get("relative_path"),
                 "raw_text": record.get("raw_text"),
                 "text_for_embedding": record.get("text_for_embedding"),
                 "proof_attachment_ids": record.get("proof_attachment_ids") or [],
+                "proof_attachments": record.get("proof_attachments") or [],
                 "source": record.get("source") or {},
             }
         )
@@ -638,12 +764,14 @@ def run_all(
     segments_path: Path = STEP05_SEGMENTS,
     resolved_segments_path: Path = STEP09_SEGMENTS,
     semantic_audit_path: Path = STEP10_AUDIT,
+    source_root: Path = DEFAULT_CONFIG.paths.data_dir,
 ) -> dict[str, Any]:
     manifest_summary = build_manifest(
         out_dir,
         segments_path=segments_path,
         resolved_segments_path=resolved_segments_path,
         semantic_audit_path=semantic_audit_path,
+        source_root=source_root,
     )
     index_meta = build_index(
         out_dir / "ingestion_manifest.jsonl",
@@ -715,6 +843,7 @@ def main() -> None:
             segments_path=segments_path,
             resolved_segments_path=resolved_segments_path,
             semantic_audit_path=semantic_audit_path,
+            source_root=config.paths.data_dir,
         )
         print(f"built ingestion manifest: {summary['total_records']} records -> {out_dir}")
     elif args.command == "index":
@@ -754,6 +883,7 @@ def main() -> None:
             segments_path=segments_path,
             resolved_segments_path=resolved_segments_path,
             semantic_audit_path=semantic_audit_path,
+            source_root=config.paths.data_dir,
         )
         print(
             "step 11 complete: "

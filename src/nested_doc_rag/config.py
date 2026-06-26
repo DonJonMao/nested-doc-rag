@@ -147,10 +147,12 @@ class WritebackConfig:
     allow_uncertain: bool = False
     uncertain_style: str = "red_fill"
     uncertain_comment_prefix: str = "[UNCERTAIN]"
-    embed_evidence_images: bool = False
-    evidence_image_mode: str = "hyperlink"
+    embed_evidence_images: bool = True
+    evidence_image_mode: str = "append_sheet"
     max_evidence_images_per_field: int = 3
     max_comment_chars: int = 2000
+    evidence_image_max_width_px: int = 360
+    evidence_image_max_height_px: int = 240
 
 
 @dataclass(frozen=True)
@@ -237,6 +239,8 @@ def load_app_config(
     """Load app config with priority: CLI > env > YAML > code defaults."""
 
     root_hint = Path(project_root).expanduser().resolve() if project_root else discover_project_root()
+    if env is None:
+        load_dotenv_file(root_hint / ".env")
     merged = code_defaults(root_hint)
     project_root_base = root_hint
 
@@ -266,6 +270,26 @@ def load_app_config(
 
 
 load_config = load_app_config
+
+
+def load_dotenv_file(path: Path, *, override: bool = False) -> None:
+    if not path.exists() or not path.is_file():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or (not override and key in os.environ):
+            continue
+        os.environ[key] = _parse_dotenv_value(value.strip())
+
+
+def _parse_dotenv_value(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
 
 
 def _normalize_step15_retrieval_plan(retrieval_data: Mapping[str, Any]) -> str:
@@ -375,10 +399,12 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         allow_uncertain=_as_bool(writeback_data.get("allow_uncertain", False)),
         uncertain_style=str(writeback_data.get("uncertain_style", "red_fill")),
         uncertain_comment_prefix=str(writeback_data.get("uncertain_comment_prefix", "[UNCERTAIN]")),
-        embed_evidence_images=_as_bool(writeback_data.get("embed_evidence_images", False)),
-        evidence_image_mode=str(writeback_data.get("evidence_image_mode", "hyperlink")),
+        embed_evidence_images=_as_bool(writeback_data.get("embed_evidence_images", True)),
+        evidence_image_mode=str(writeback_data.get("evidence_image_mode", "append_sheet")),
         max_evidence_images_per_field=_as_int(writeback_data.get("max_evidence_images_per_field", 3)),
         max_comment_chars=_as_int(writeback_data.get("max_comment_chars", 2000)),
+        evidence_image_max_width_px=_as_int(writeback_data.get("evidence_image_max_width_px", 360)),
+        evidence_image_max_height_px=_as_int(writeback_data.get("evidence_image_max_height_px", 240)),
     )
     agent_data = _section(data, "agent", AgentConfig())
     agent = AgentConfig(

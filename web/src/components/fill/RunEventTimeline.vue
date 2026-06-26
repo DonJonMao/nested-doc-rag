@@ -29,6 +29,7 @@ function message(event: RunEvent) {
 <style scoped>
 .timeline {
   padding: 24px;
+  box-shadow: var(--gk-glass-shadow-soft);
 }
 
 .timeline__empty {
@@ -46,6 +47,12 @@ function message(event: RunEvent) {
   display: grid;
   grid-template-columns: 14px 1fr;
   gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--gk-glass-line);
+}
+
+.timeline__item:last-child {
+  border-bottom: 0;
 }
 
 .timeline__dot {
@@ -53,7 +60,8 @@ function message(event: RunEvent) {
   height: 8px;
   margin-top: 7px;
   border-radius: 50%;
-  background: var(--gk-blue);
+  background: linear-gradient(180deg, var(--gk-cyan), var(--gk-blue));
+  box-shadow: 0 0 0 4px rgba(0, 102, 204, 0.1);
 }
 
 .timeline__title {

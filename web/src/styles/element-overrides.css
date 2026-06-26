@@ -7,52 +7,201 @@
   --el-border-radius-base: var(--gk-radius-sm);
   --el-font-size-base: 17px;
   --el-text-color-primary: var(--gk-ink);
+  --el-text-color-regular: var(--gk-ink-2);
+  --el-text-color-secondary: var(--gk-ink-3);
   --el-bg-color-page: var(--gk-page);
+  --el-bg-color: rgba(255, 255, 255, 0.92);
+  --el-bg-color-overlay: rgba(255, 255, 255, 0.96);
+  --el-border-color: var(--gk-glass-line);
+  --el-border-color-light: rgba(88, 100, 120, 0.12);
+  --el-fill-color-blank: rgba(255, 255, 255, 0.7);
+  --el-fill-color-light: rgba(255, 255, 255, 0.52);
+  --el-mask-color: rgba(20, 24, 32, 0.24);
 }
 
 .el-button {
   border-radius: var(--gk-radius-pill);
   font-weight: 400;
-  box-shadow: none;
-  transition: transform 160ms var(--gk-ease), background-color 160ms var(--gk-ease), border-color 160ms var(--gk-ease);
+  border-color: var(--gk-glass-line);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 4px 14px rgba(31, 38, 52, 0.06);
+  transition:
+    transform 160ms var(--gk-ease),
+    background-color 160ms var(--gk-ease),
+    border-color 160ms var(--gk-ease),
+    box-shadow 160ms var(--gk-ease);
+}
+
+.el-button:hover {
+  border-color: rgba(0, 102, 204, 0.28);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 8px 20px rgba(31, 38, 52, 0.1);
 }
 
 .el-button--primary {
   padding: 10px 22px;
-  border-color: var(--gk-blue);
-  background: var(--gk-blue);
+  border-color: rgba(0, 102, 204, 0.3);
+  background: linear-gradient(180deg, rgba(0, 113, 227, 0.94), rgba(0, 92, 190, 0.94));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), 0 10px 24px rgba(0, 102, 204, 0.24);
 }
 
 .el-button--primary:hover {
-  background: var(--gk-blue-hover);
-  border-color: var(--gk-blue-hover);
+  background: linear-gradient(180deg, rgba(20, 131, 239, 0.96), rgba(0, 102, 204, 0.96));
+  border-color: rgba(0, 102, 204, 0.4);
 }
 
 .el-button:active {
   transform: scale(0.96);
 }
 
+.el-button.is-disabled,
+.el-button.is-disabled:hover {
+  background: rgba(255, 255, 255, 0.48);
+  border-color: rgba(88, 100, 120, 0.1);
+  color: var(--gk-ink-4);
+  box-shadow: none;
+}
+
+.el-button--primary.is-disabled,
+.el-button--primary.is-disabled:hover {
+  background: rgba(0, 102, 204, 0.16);
+  border-color: rgba(0, 102, 204, 0.14);
+  color: rgba(0, 74, 153, 0.62);
+}
+
 .el-card {
   border-radius: var(--gk-radius-lg);
-  border: 1px solid var(--gk-hairline-soft);
-  box-shadow: none;
+  border: 1px solid var(--gk-glass-line);
+  background: var(--gk-glass-fallback);
+  box-shadow: var(--gk-glass-shadow-soft);
 }
 
 .el-input__wrapper,
 .el-select__wrapper,
 .el-textarea__inner {
   border-radius: var(--gk-radius-md);
-  box-shadow: 0 0 0 1px var(--gk-hairline-soft) inset;
+  background: rgba(255, 255, 255, 0.64);
+  box-shadow: 0 0 0 1px var(--gk-glass-line) inset, inset 0 1px 0 rgba(255, 255, 255, 0.66);
 }
 
 .el-input__wrapper.is-focus,
 .el-select__wrapper.is-focused {
-  box-shadow: 0 0 0 2px var(--gk-blue) inset;
+  box-shadow: 0 0 0 1px rgba(0, 102, 204, 0.72) inset, var(--gk-focus-ring);
+}
+
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px rgba(0, 102, 204, 0.72) inset, var(--gk-focus-ring);
 }
 
 .el-table {
-  --el-table-border-color: var(--gk-hairline-soft);
-  --el-table-header-bg-color: #fbfbfd;
+  --el-table-border-color: rgba(88, 100, 120, 0.11);
+  --el-table-header-bg-color: rgba(255, 255, 255, 0.56);
+  --el-table-row-hover-bg-color: rgba(0, 102, 204, 0.06);
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: rgba(255, 255, 255, 0.3);
   border-radius: var(--gk-radius-lg);
   overflow: hidden;
+  background: transparent;
+}
+
+.el-table th.el-table__cell {
+  font-weight: 600;
+  color: var(--gk-ink-2);
+}
+
+.el-table tr,
+.el-table__inner-wrapper,
+.el-table__body-wrapper,
+.el-table__header-wrapper {
+  background: transparent;
+}
+
+.el-table .el-table__cell {
+  background-color: transparent;
+}
+
+.el-table__fixed-right,
+.el-table__fixed,
+.el-table__fixed-right-patch {
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.el-table .el-table__cell.el-table-fixed-column--right,
+.el-table .el-table__cell.el-table-fixed-column--left {
+  background: rgba(255, 255, 255, 0.98) !important;
+  box-shadow: -8px 0 18px rgba(31, 38, 52, 0.06);
+}
+
+.el-progress-bar__outer {
+  background-color: rgba(255, 255, 255, 0.52);
+  box-shadow: inset 0 0 0 1px rgba(88, 100, 120, 0.1);
+}
+
+.el-progress-bar__inner {
+  background: linear-gradient(90deg, var(--gk-blue), var(--gk-cyan));
+}
+
+.el-form-item__label {
+  color: var(--gk-ink-2);
+}
+
+.el-popper.is-light,
+.el-select__popper.el-popper,
+.el-dropdown__popper .el-dropdown-menu,
+.el-message,
+.el-dialog,
+.el-popover.el-popper {
+  border: 1px solid var(--gk-glass-line);
+  background: var(--gk-glass-fallback);
+  box-shadow: var(--gk-glass-shadow);
+}
+
+.el-select-dropdown__item.hover,
+.el-select-dropdown__item:hover,
+.el-dropdown-menu__item:hover {
+  background: rgba(0, 102, 204, 0.08);
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --el-bg-color: rgba(255, 255, 255, 0.74);
+    --el-bg-color-overlay: rgba(255, 255, 255, 0.76);
+  }
+
+  .el-card,
+  .el-input__wrapper,
+  .el-select__wrapper,
+  .el-textarea__inner,
+  .el-button,
+  .el-popper.is-light,
+  .el-select__popper.el-popper,
+  .el-dropdown__popper .el-dropdown-menu,
+  .el-message,
+  .el-dialog,
+  .el-popover.el-popper {
+    -webkit-backdrop-filter: saturate(var(--gk-glass-saturate)) blur(var(--gk-glass-blur));
+    backdrop-filter: saturate(var(--gk-glass-saturate)) blur(var(--gk-glass-blur));
+  }
+
+  .el-card {
+    background: var(--gk-glass-bg);
+    border-color: var(--gk-glass-border);
+  }
+
+  .el-popper.is-light,
+  .el-select__popper.el-popper,
+  .el-dropdown__popper .el-dropdown-menu,
+  .el-message,
+  .el-dialog,
+  .el-popover.el-popper {
+    background: rgba(255, 255, 255, 0.76);
+    border-color: var(--gk-glass-border);
+  }
+
+  .el-table .el-table__cell.el-table-fixed-column--right,
+  .el-table .el-table__cell.el-table-fixed-column--left {
+    background: rgba(255, 255, 255, 0.96) !important;
+    -webkit-backdrop-filter: saturate(160%) blur(12px);
+    backdrop-filter: saturate(160%) blur(12px);
+  }
 }

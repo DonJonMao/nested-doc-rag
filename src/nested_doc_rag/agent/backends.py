@@ -383,7 +383,10 @@ def normalize_hit(hit: dict[str, Any]) -> dict[str, Any]:
         "source_anchor": payload.get("source_anchor") or payload.get("anchor") or hit.get("source_anchor") or hit.get("anchor") or payload.get("source") or hit.get("source") or {},
         "anchor": payload.get("anchor") or hit.get("anchor"),
         "file_name": payload.get("file_name") or hit.get("file_name"),
+        "relative_path": payload.get("relative_path") or hit.get("relative_path"),
         "evidence_attachment_ids": payload.get("evidence_attachment_ids") or payload.get("proof_attachment_ids") or hit.get("evidence_attachment_ids") or [],
+        "proof_attachment_ids": payload.get("proof_attachment_ids") or hit.get("proof_attachment_ids") or [],
+        "proof_attachments": payload.get("proof_attachments") or hit.get("proof_attachments") or [],
     }
 
 

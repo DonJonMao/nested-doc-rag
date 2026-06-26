@@ -97,6 +97,7 @@ onMounted(ensureData)
 <style scoped>
 .fill-create__hero {
   margin-bottom: 32px;
+  padding: 8px 2px;
 }
 
 .fill-create__hero p {
@@ -108,6 +109,7 @@ onMounted(ensureData)
 
 .fill-create__panel {
   padding: 24px;
+  box-shadow: var(--gk-glass-shadow);
 }
 
 .fill-create__panel h2 {
@@ -116,6 +118,10 @@ onMounted(ensureData)
 
 .fill-create__uploaded {
   margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--gk-glass-line);
+  border-radius: var(--gk-radius-md);
+  background: rgba(255, 255, 255, 0.46);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -129,6 +135,7 @@ onMounted(ensureData)
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 14px;
   align-items: start;
+  box-shadow: var(--gk-glass-shadow);
 }
 
 .fill-create__start-fields {
@@ -139,6 +146,13 @@ onMounted(ensureData)
 @media (max-width: 760px) {
   .fill-create__start {
     grid-template-columns: 1fr;
+  }
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .fill-create__uploaded {
+    -webkit-backdrop-filter: saturate(170%) blur(16px);
+    backdrop-filter: saturate(170%) blur(16px);
   }
 }
 </style>

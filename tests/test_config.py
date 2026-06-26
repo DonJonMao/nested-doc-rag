@@ -144,6 +144,8 @@ def test_show_config_command_outputs_merged_config() -> None:
     assert value["qdrant"]["collection_name"] == "datacenter_chunks_v1"
     assert value["qdrant"]["url"] == ""
     assert value["writeback"]["allow_uncertain"] is False
+    assert value["writeback"]["embed_evidence_images"] is True
+    assert value["writeback"]["evidence_image_mode"] == "adjacent_columns"
     assert value["writeback"]["max_comment_chars"] == 2000
 
 

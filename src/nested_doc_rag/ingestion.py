@@ -14,6 +14,11 @@ from qdrant_client import QdrantClient, models
 
 from nested_doc_rag.config import AppConfig
 from nested_doc_rag.embedding import EmbeddingClient
+from nested_doc_rag.evidence_images import (
+    attachment_from_registry,
+    materialize_xlsx_dispimg_registry,
+    registry_by_sheet_row,
+)
 from nested_doc_rag.io import display_text, write_json, write_jsonl
 from nested_doc_rag.retrieval.qdrant_client import build_qdrant_client
 
@@ -45,12 +50,16 @@ def run_knowledge_ingestion(options: IngestionOptions) -> dict[str, Any]:
         options.input_dir,
         namespace=namespace,
         knowledge_base_id=options.knowledge_base_id,
+        image_output_dir=out_dir / "evidence_images",
     )
     if not records:
         raise RuntimeError(f"no supported text records found in {options.input_dir}")
 
     manifest_path = out_dir / "ingestion_manifest.jsonl"
+    registry_rows = proof_attachment_registry_from_records(records)
     write_jsonl(manifest_path, records)
+    if registry_rows:
+        write_jsonl(out_dir / "proof_attachment_registry.jsonl", registry_rows)
     if skipped:
         write_jsonl(out_dir / "skipped_files.jsonl", skipped)
 
@@ -101,6 +110,8 @@ def run_knowledge_ingestion(options: IngestionOptions) -> dict[str, Any]:
         "summary": "summary.json",
         "run_summary": "run_summary.md",
     }
+    if registry_rows:
+        manifest_artifacts["proof_attachment_registry"] = "proof_attachment_registry.jsonl"
     if skipped:
         manifest_artifacts["skipped_files"] = "skipped_files.jsonl"
     manifest = build_run_manifest(
@@ -113,7 +124,13 @@ def run_knowledge_ingestion(options: IngestionOptions) -> dict[str, Any]:
     return summary
 
 
-def build_ingestion_records(input_dir: Path, *, namespace: str, knowledge_base_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def build_ingestion_records(
+    input_dir: Path,
+    *,
+    namespace: str,
+    knowledge_base_id: str,
+    image_output_dir: Path | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     input_dir = input_dir.resolve()
     if not input_dir.exists():
         raise RuntimeError(f"input_dir does not exist: {input_dir}")
@@ -126,7 +143,15 @@ def build_ingestion_records(input_dir: Path, *, namespace: str, knowledge_base_i
             skipped.append({"path": relative_path(path, input_dir), "reason": "unsupported_suffix"})
             continue
         try:
-            chunks = list(extract_file_chunks(path, input_dir))
+            chunks = list(
+                extract_file_chunks(
+                    path,
+                    input_dir,
+                    namespace=namespace,
+                    knowledge_base_id=knowledge_base_id,
+                    image_output_dir=image_output_dir,
+                )
+            )
         except Exception as exc:  # pragma: no cover - defensive path reports the real parser failure to ops.
             skipped.append({"path": relative_path(path, input_dir), "reason": f"parse_failed: {exc}"})
             continue
@@ -154,45 +179,83 @@ def build_ingestion_records(input_dir: Path, *, namespace: str, knowledge_base_i
                         "raw_text": part,
                         "file_name": path.name,
                         "relative_path": chunk["relative_path"],
+                        "sheet_name": chunk.get("sheet_name"),
+                        "row_index": chunk.get("row_index"),
                         "anchor": anchor,
+                        "proof_attachment_ids": chunk.get("proof_attachment_ids") or [],
+                        "proof_attachments": chunk.get("proof_attachments") or [],
                         "source": {
                             "knowledge_base_id": knowledge_base_id,
                             "relative_path": chunk["relative_path"],
                             "anchor": anchor,
+                            "sheet_name": chunk.get("sheet_name"),
+                            "row_index": chunk.get("row_index"),
+                            "proof_attachments": chunk.get("proof_attachments") or [],
                         },
                     }
                 )
     return records, skipped
 
 
-def extract_file_chunks(path: Path, root: Path) -> Iterable[dict[str, str]]:
+def extract_file_chunks(
+    path: Path,
+    root: Path,
+    *,
+    namespace: str = "",
+    knowledge_base_id: str = "",
+    image_output_dir: Path | None = None,
+) -> Iterable[dict[str, Any]]:
     suffix = path.suffix.lower()
     if suffix in {".xlsx", ".xlsm"}:
-        yield from extract_xlsx_chunks(path, root)
+        yield from extract_xlsx_chunks(path, root, namespace=namespace, knowledge_base_id=knowledge_base_id, image_output_dir=image_output_dir)
     elif suffix == ".docx":
         yield from extract_docx_chunks(path, root)
     else:
         yield from extract_text_chunks(path, root)
 
 
-def extract_xlsx_chunks(path: Path, root: Path) -> Iterable[dict[str, str]]:
+def extract_xlsx_chunks(
+    path: Path,
+    root: Path,
+    *,
+    namespace: str = "",
+    knowledge_base_id: str = "",
+    image_output_dir: Path | None = None,
+) -> Iterable[dict[str, Any]]:
     from openpyxl import load_workbook
 
-    workbook = load_workbook(path, read_only=True, data_only=True)
+    registry_rows = (
+        materialize_xlsx_dispimg_registry(
+            path,
+            root=root,
+            output_dir=image_output_dir,
+            namespace=namespace,
+            knowledge_base_id=knowledge_base_id,
+        )
+        if image_output_dir
+        else []
+    )
+    attachments_by_row = registry_by_sheet_row(registry_rows)
+    workbook = load_workbook(path, read_only=True, data_only=False)
     try:
         rel = relative_path(path, root)
         for sheet in workbook.worksheets:
-            for row_index, row in enumerate(sheet.iter_rows(values_only=True), 1):
-                values = [display_text(value) for value in row]
+            for row_index, row in enumerate(sheet.iter_rows(), 1):
+                values = [display_text(cell.value) for cell in row if not is_dispimg_formula(cell.value)]
                 values = [value for value in values if value]
                 if not values:
                     continue
+                row_attachments = [attachment_from_registry(item) for item in attachments_by_row.get((sheet.title, row_index), [])]
                 text = f"文件：{path.name}。Sheet：{sheet.title}。行：{row_index}。内容：" + " / ".join(values)
                 yield {
                     "text": text,
                     "relative_path": rel,
                     "anchor": f"{sheet.title}!row {row_index}",
                     "source_type": "uploaded_excel_row",
+                    "sheet_name": sheet.title,
+                    "row_index": row_index,
+                    "proof_attachment_ids": [str(item["attachment_id"]) for item in row_attachments if item.get("attachment_id")],
+                    "proof_attachments": row_attachments,
                 }
     finally:
         workbook.close()
@@ -237,6 +300,44 @@ def extract_text_chunks(path: Path, root: Path) -> Iterable[dict[str, str]]:
                 "anchor": f"text chunk {index}",
                 "source_type": "uploaded_text_chunk",
             }
+
+
+def is_dispimg_formula(value: Any) -> bool:
+    return isinstance(value, str) and "DISPIMG(" in value
+
+
+def proof_attachment_registry_from_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for record in records:
+        for attachment in record.get("proof_attachments") or []:
+            if not isinstance(attachment, dict):
+                continue
+            attachment_id = str(attachment.get("attachment_id") or "")
+            if not attachment_id or attachment_id in seen:
+                continue
+            seen.add(attachment_id)
+            rows.append(
+                {
+                    "attachment_id": attachment_id,
+                    "file_id": attachment.get("file_id") or "",
+                    "knowledge_base_id": record.get("knowledge_base_id") or "",
+                    "namespace": record.get("namespace") or "",
+                    "file_name": record.get("file_name") or "",
+                    "relative_path": attachment.get("relative_path") or record.get("relative_path") or "",
+                    "source_file_path": attachment.get("source_file_path") or "",
+                    "sheet_name": attachment.get("sheet_name") or "",
+                    "row_index": record.get("source", {}).get("row_index") or "",
+                    "source_cell": attachment.get("source_cell") or "",
+                    "image_id": attachment.get("image_id") or "",
+                    "media_path": attachment.get("media_path") or "",
+                    "media_content_type": attachment.get("media_content_type") or "",
+                    "attachment_type": attachment.get("attachment_type") or "image",
+                    "mapping_status": attachment.get("mapping_status") or "",
+                    "image_path": attachment.get("image_path") or "",
+                }
+            )
+    return rows
 
 
 def upsert_records(
@@ -310,6 +411,7 @@ def build_summary(
         "embedding_endpoint": embedding_endpoint,
         "embedding_model": embedding_model,
         "elapsed_seconds": elapsed_seconds,
+        "image_proof_count": sum(len(record.get("proof_attachments") or []) for record in records),
         "counts_by_source_type": dict(Counter(record["source_type"] for record in records)),
         "counts_by_corpus_layer": dict(Counter(record["corpus_layer"] for record in records)),
         "counts_by_file": dict(Counter(record["relative_path"] for record in records)),

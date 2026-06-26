@@ -40,9 +40,11 @@ function onFileList(files: FileList | null) {
 .dropzone {
   width: 100%;
   min-height: 214px;
-  border: 1px dashed var(--gk-hairline);
+  border: 1px dashed rgba(88, 100, 120, 0.24);
   border-radius: var(--gk-radius-xl);
-  background: var(--gk-page-soft);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0.38)),
+    rgba(255, 255, 255, 0.54);
   color: var(--gk-ink);
   display: flex;
   flex-direction: column;
@@ -50,13 +52,17 @@ function onFileList(files: FileList | null) {
   justify-content: center;
   gap: 10px;
   cursor: pointer;
-  transition: border-color 160ms var(--gk-ease), background-color 160ms var(--gk-ease), transform 160ms var(--gk-ease);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76), 0 10px 24px rgba(31, 38, 52, 0.06);
+  transition: border-color 160ms var(--gk-ease), background-color 160ms var(--gk-ease), transform 160ms var(--gk-ease), box-shadow 160ms var(--gk-ease);
 }
 
 .dropzone:hover,
 .dropzone--dragging {
-  border-color: var(--gk-blue);
-  background: #f0f7ff;
+  border-color: rgba(0, 102, 204, 0.56);
+  background:
+    linear-gradient(135deg, rgba(234, 244, 255, 0.78), rgba(255, 255, 255, 0.48)),
+    rgba(255, 255, 255, 0.7);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 14px 30px rgba(0, 102, 204, 0.1);
 }
 
 .dropzone:active {
@@ -80,5 +86,12 @@ function onFileList(files: FileList | null) {
 
 .dropzone__input {
   display: none;
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dropzone {
+    -webkit-backdrop-filter: saturate(170%) blur(18px);
+    backdrop-filter: saturate(170%) blur(18px);
+  }
 }
 </style>

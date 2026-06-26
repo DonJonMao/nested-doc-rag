@@ -60,6 +60,7 @@ async function runDownload(action: () => Promise<void>) {
 <style scoped>
 .download-panel {
   padding: 24px;
+  box-shadow: var(--gk-glass-shadow);
 }
 
 .download-panel__actions {

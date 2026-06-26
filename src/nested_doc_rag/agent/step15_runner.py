@@ -11,6 +11,7 @@ from time import perf_counter, sleep
 from typing import Any, Literal
 from uuid import uuid4
 
+from nested_doc_rag import model_gateway
 from nested_doc_rag.config import AppConfig
 from nested_doc_rag.embedding import RerankClient
 from nested_doc_rag.evaluation.step15_engine import (
@@ -25,7 +26,6 @@ from nested_doc_rag.gongkan_eval import build_judge_messages, build_masked_query
 from nested_doc_rag.grounding import EvidenceStrengthEvaluator, EvidenceStrengthResult, apply_evidence_strength_to_overlay
 from nested_doc_rag.io import display_text, read_jsonl, write_json, write_jsonl
 from nested_doc_rag.llm import JsonRepairError
-from nested_doc_rag import model_gateway
 from nested_doc_rag.retrieval import QdrantRetriever, attach_parent_payloads
 from nested_doc_rag.schemas.eval import FieldPrediction
 
@@ -1379,6 +1379,7 @@ def normalize_reference_source_documents(generated: dict[str, Any], top_hits: li
                 "retrieval_layer": item.get("retrieval_layer") or hit.get("retrieval_layer"),
                 "source_anchor": item.get("source_anchor") or item.get("anchor") or hit.get("anchor"),
                 "file_name": item.get("file_name") or hit.get("file_name"),
+                "relative_path": item.get("relative_path") or hit.get("relative_path") or source.get("relative_path"),
                 "anchor": item.get("anchor") or hit.get("anchor"),
                 "document_id": item.get("document_id") or source.get("document_id") or source.get("file_id") or hit.get("document_id"),
                 "object_key": item.get("object_key") or source.get("object_key") or hit.get("object_key"),
@@ -1390,7 +1391,8 @@ def normalize_reference_source_documents(generated: dict[str, Any], top_hits: li
                 "bbox": item.get("bbox") or source.get("bbox") or [],
                 "caption": item.get("caption") or source.get("caption") or "",
                 "image_object_key": item.get("image_object_key") or source.get("image_object_key") or "",
-                "proof_attachment_ids": item.get("proof_attachment_ids") or source.get("proof_attachment_ids") or [],
+                "proof_attachment_ids": item.get("proof_attachment_ids") or hit.get("proof_attachment_ids") or source.get("proof_attachment_ids") or [],
+                "proof_attachments": item.get("proof_attachments") or hit.get("proof_attachments") or source.get("proof_attachments") or [],
                 "reason": item.get("reason") or "",
                 "text_preview": item.get("text_preview") or display_text(hit.get("raw_text") or hit.get("text_for_embedding"), 180),
             }
@@ -1414,6 +1416,7 @@ def reference_source_documents_from_hits(top_hits: list[dict[str, Any]], limit: 
                 "retrieval_layer": hit.get("retrieval_layer"),
                 "source_anchor": hit.get("source_anchor") or hit.get("anchor"),
                 "file_name": hit.get("file_name"),
+                "relative_path": hit.get("relative_path") or source.get("relative_path"),
                 "anchor": hit.get("anchor") or hit.get("source_anchor"),
                 "document_id": source.get("document_id") or source.get("file_id") or hit.get("document_id"),
                 "object_key": source.get("object_key") or hit.get("object_key"),
@@ -1425,7 +1428,8 @@ def reference_source_documents_from_hits(top_hits: list[dict[str, Any]], limit: 
                 "bbox": source.get("bbox") or [],
                 "caption": source.get("caption") or "",
                 "image_object_key": source.get("image_object_key") or "",
-                "proof_attachment_ids": source.get("proof_attachment_ids") or [],
+                "proof_attachment_ids": hit.get("proof_attachment_ids") or source.get("proof_attachment_ids") or [],
+                "proof_attachments": hit.get("proof_attachments") or source.get("proof_attachments") or [],
                 "reason": "retrieved related evidence, but not safe enough for direct filling",
                 "text_preview": display_text(hit.get("raw_text") or hit.get("text_for_embedding"), 180),
             }
