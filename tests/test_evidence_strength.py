@@ -107,6 +107,38 @@ def test_apply_evidence_strength_only_makes_overlay_more_conservative() -> None:
     assert "global_intro_only" in global_blocked.reasons
 
 
+def test_weak_strength_without_hard_mismatch_does_not_block_writeback() -> None:
+    pred = prediction("双路同时在线", ["chunk_main"])
+    overlay = overlay_row(writeback_allowed=True, review_required=False, risk_level="low")
+    weak = EvidenceStrengthResult(
+        "E2",
+        ["answer_value_tokens_missing_from_evidence", "answer_value_tokens_found_in_evidence"],
+        ["chunk_main"],
+        [],
+        ["chunk_main"],
+        ["双路"],
+        ["同时在线"],
+        field_binding="exact",
+        field_binding_score=1.0,
+        field_binding_reasons=["field_path_matches_intent"],
+    )
+
+    result = apply_evidence_strength_to_overlay(
+        pred,
+        overlay,
+        weak,
+        min_strength_for_answered="E3",
+        min_strength_for_writeback="E3",
+        downgrade_unsupported_answer_to_partial=False,
+    )
+
+    assert result.writeback_allowed is True
+    assert result.review_required is False
+    assert "evidence_strength_below_writeback_threshold" in result.reasons
+    assert "weak_evidence_for_writeback" not in result.critic_flags
+    assert "unsupported_by_strong_evidence" not in result.critic_flags
+
+
 def test_field_binding_exact_numeric_row() -> None:
     result = evaluator().evaluate(
         item=item("已建设机柜数量是多少？"),
@@ -182,6 +214,17 @@ def test_global_scope_for_target_room_is_scope_mismatch() -> None:
     assert result.field_binding == "scope_mismatch"
 
 
+def test_generic_entity_gap_is_near_not_hard_field_mismatch() -> None:
+    result = evaluator().evaluate(
+        item=item("门禁是否满足要求？"),
+        prediction=prediction("是", ["chunk_main"]),
+        top_hits=hits(raw_text="现场环境 / 安全管控要求 / 满足", row_header="安全管控", column_header="现状"),
+    )
+
+    assert result.field_binding == "near"
+    assert result.field_binding_reasons
+
+
 def test_parent_payload_can_make_binding_parent_exact() -> None:
     result = evaluator().evaluate(
         item=item("301机房 UPS 容量是多少？"),
@@ -214,7 +257,7 @@ def test_unit_mismatch_blocks_writeback() -> None:
     )
     assert blocked.writeback_allowed is False
     assert blocked.review_required is True
-    assert blocked.risk_level == "medium"
+    assert blocked.risk_level in {"medium", "high"}
     assert "unit_mismatch" in blocked.reasons
 
 

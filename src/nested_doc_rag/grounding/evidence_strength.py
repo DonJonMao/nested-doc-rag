@@ -24,6 +24,8 @@ FIELD_BINDING_RISK = {
     "answer_evidence_mismatch": "high",
     "unit_mismatch": "medium",
 }
+HARD_BLOCK_BINDINGS = set(FIELD_BINDING_RISK)
+HARD_STRENGTH_REASONS = {"missing_numeric_or_unit_support"}
 PLANNED_TERMS = {"规划", "计划", "未来", "拟建", "待建", "改造", "扩容", "设计", "目标", "建设中", "条件", "可支持"}
 CURRENT_TERMS = {"当前", "现网", "现有", "已建设", "已建", "已支持", "实际", "运行", "投产", "已投产", "生产"}
 CONDITIONAL_TERMS = {"条件", "具备", "可支持", "可接入", "预留", "改造"}
@@ -307,18 +309,16 @@ def apply_evidence_strength_to_overlay(
     field_binding = str(evidence.field_binding or "unsupported")
 
     if current_rank < required_answer_rank:
-        review_required = True
-        writeback_allowed = False
-        risk_level = max_risk_level(risk_level, "medium")
-        reasons.append("unsupported_by_strong_evidence")
-        critic_flags.append("unsupported_by_strong_evidence")
+        reasons.append("evidence_strength_below_answer_threshold")
         if downgrade_unsupported_answer_to_partial:
+            review_required = True
+            writeback_allowed = False
+            risk_level = max_risk_level(risk_level, "medium")
+            critic_flags.append("unsupported_by_strong_evidence")
             suggested_status = "partial_clue"
             suggested_answer_value = "检索到相关线索，但证据强度不足以安全直接填写；请人工复核。"
     if current_rank < required_writeback_rank:
-        writeback_allowed = False
-        review_required = True
-        risk_level = max_risk_level(risk_level, "medium")
+        reasons.append("evidence_strength_below_writeback_threshold")
     if global_intro_only:
         review_required = True
         writeback_allowed = False
@@ -330,14 +330,20 @@ def apply_evidence_strength_to_overlay(
         risk_level = "high"
         reasons.append("no_valid_evidence_support")
         critic_flags.append("no_valid_evidence_support")
-    if field_binding != "disabled" and field_binding not in SUPPORTED_BINDINGS:
+    if HARD_STRENGTH_REASONS.intersection(evidence.reasons):
         writeback_allowed = False
         review_required = True
+        risk_level = max_risk_level(risk_level, "high")
+        reasons.append("answer_evidence_mismatch")
+        critic_flags.append("answer_evidence_mismatch")
+    if field_binding != "disabled" and field_binding not in SUPPORTED_BINDINGS:
         reasons.append("field_binding_not_exact")
-        risk_level = max_risk_level(risk_level, FIELD_BINDING_RISK.get(field_binding, "medium"))
-        if field_binding in FIELD_BINDING_RISK:
+        if field_binding in HARD_BLOCK_BINDINGS:
+            writeback_allowed = False
+            review_required = True
             reasons.append(field_binding)
             critic_flags.append(field_binding)
+            risk_level = max_risk_level(risk_level, FIELD_BINDING_RISK.get(field_binding, "medium"))
 
     return replace(
         overlay,
@@ -583,8 +589,8 @@ def evaluate_field_binding(
         )
     if has_entity_intent and not entity_ok:
         return FieldBindingResult(
-            "field_mismatch",
-            0.2,
+            "near",
+            0.55,
             ["entity_terms_not_bound_to_evidence_field"],
             field_intent=field_intent_summary(intent),
             evidence_field_path=evidence_field_path,

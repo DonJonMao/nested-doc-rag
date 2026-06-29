@@ -75,6 +75,7 @@ def build_qdrant_answer_messages(
     *,
     room_context: str | None = None,
     prompt_version: str = "step15_compat",
+    slot_schema: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     evidence = [normalize_hit_for_prompt(hit) for hit in hits]
     item_view = {
@@ -88,9 +89,18 @@ def build_qdrant_answer_messages(
         "instruction_text": item.get("instruction_text"),
         "answer_example_format_only": item.get("answer_example"),
         "needs_evidence": item.get("needs_evidence"),
-        "external_room_context": display_text(room_context),
     }
+    del room_context
     schema = build_answer_schema(prompt_version)
+    slot_rules = ""
+    if slot_schema:
+        slot_rules = (
+            "组合字段拆槽规则：slot_schema 描述当前字段需要分别取证的事实槽。"
+            "如果 slot_schema.is_composite=true，必须在 slot_values 中逐槽输出 raw_value、normalized_value、source_chunk_ids 和 evidence_attachment_ids。"
+            "canonical_hints 只是归一化提示，不是硬白名单；不要因为证据原文不在 hints 中就排除它。"
+            "raw_value 必须优先保留 retrieved_chunks 中的原始表达，normalized_value 才可使用 hints 做短标签归一化。"
+            "如果任一 required/evidence_required 槽没有直接证据，不要把该槽脑补进 answer_value，应输出 partial_clue。\n"
+        )
     agent_v2_rules = ""
     if prompt_version == "agent_v2":
         agent_v2_rules = (
@@ -102,11 +112,9 @@ def build_qdrant_answer_messages(
     elif prompt_version != "step15_compat":
         raise ValueError(f"unsupported prompt_version: {prompt_version}")
     user_prompt = (
-        "下面是一个工勘单填报项、外部已知目标机房上下文和 RAG 检索结果。"
-        "请只使用 external_room_context 与 retrieved_chunks 中的信息生成答案，不能使用常识，不能使用表格最后一列答案、heldout answer、expected_value 或 gold answer。\n"
-        "external_room_context 是业务流程已知的目标机房定位信息，主要用于检索消歧；"
-        "除“机房名称”等字段外，不能把它当作设备参数、运行模式、容量、冗余等事实证据来源；"
-        "retrieved_chunks 是事实证据来源。answer_example_format_only 只能作为格式参考，不能作为事实来源。"
+        "下面是一个工勘单填报项和 RAG 检索结果。"
+        "请只使用 retrieved_chunks 中的信息生成答案，不能使用常识，不能使用表格最后一列答案、heldout answer、expected_value 或 gold answer。\n"
+        "retrieved_chunks 是唯一事实证据来源。answer_example_format_only 只能作为格式参考，不能作为事实来源。"
         "图片附件只作为证据标记，不 OCR。\n"
         "输出口径：\n"
         "1. 如果 retrieved_chunks 中有可直接回答当前指标的证据，answer_status=answered，并填写 answer_value、source_chunk_ids 和 evidence_attachment_ids。\n"
@@ -123,12 +131,13 @@ def build_qdrant_answer_messages(
         "6. 如果 retrieved_chunks 带有 retrieval_layer/layer_priority，请按 layer_priority 从小到大审阅。"
         "target_main_fact 和 main_excel_capability raw_text 是强证据；上层不足时再看下层；下层可补充上层缺口，但不能无理由覆盖上层直接证据。"
         "global/intro 相关但不直接的内容应该保留为 reference_source_documents。\n"
-        "字段规则：如果 question_text 是“机房名称”，answer_value 必须保留 external_room_context 中的具体房间/机房编号；"
-        "如果 retrieved_chunks 给出正式数据中心或楼栋名称，可与该房间/机房编号组合成完整名称。"
+        f"{slot_rules}"
+        "字段规则：如果 question_text 是“机房名称”，必须以 retrieved_chunks 中的机房名称证据为准。"
         "如果 question_text 是“机房地址”，只返回物理地址，不追加房间号。\n"
-        "如果 external_room_context 与 retrieved_chunks 合起来仍没有明确证据，answer_value 必须是“未找到”。\n\n"
+        "如果 retrieved_chunks 中没有明确证据，answer_value 必须是“未找到”。\n\n"
         f"masked_query:\n{query_text}\n\n"
         f"form_item_without_heldout_answer:\n{json.dumps(item_view, ensure_ascii=False, indent=2)}\n\n"
+        f"slot_schema:\n{json.dumps(slot_schema or {'is_composite': False, 'slots': []}, ensure_ascii=False, indent=2)}\n\n"
         f"retrieved_chunks:\n{json.dumps(evidence, ensure_ascii=False, indent=2)}\n\n"
         "请只输出严格 JSON，schema 如下：\n"
         f"{json.dumps(schema, ensure_ascii=False, indent=2)}\n"
@@ -169,6 +178,15 @@ def build_answer_schema(prompt_version: str) -> dict[str, Any]:
         "source_chunk_ids": ["直接支撑 answer_value 的 chunk id；partial_clue/not_found 时为空数组"],
         "evidence_attachment_ids": ["直接支撑 answer_value 的附件 id；partial_clue/not_found 时为空数组"],
         "reference_source_documents": [reference_doc_schema],
+        "slot_values": [
+            {
+                "name": "slot name from slot_schema",
+                "raw_value": "evidence-backed original expression for this slot",
+                "normalized_value": "optional normalized value; may equal raw_value",
+                "source_chunk_ids": ["chunk ids directly supporting this slot"],
+                "evidence_attachment_ids": ["attachment ids directly supporting this slot"],
+            }
+        ],
         "agent_resolution": {
             "used": "是否进行了智能体仲裁/格式转换/冲突处理",
             "action": "none | select_source | format_transform | conflict_marked | clue_only",

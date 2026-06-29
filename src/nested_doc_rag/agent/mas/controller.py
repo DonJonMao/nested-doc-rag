@@ -35,15 +35,23 @@ class Step15MASController:
             lambda: self.evidence_retrieval.run(query_text),
         )
 
-    def run_answer_arbitration(self, item: dict[str, Any], query_text: str, top_hits: list[dict[str, Any]]) -> Any:
+    def run_answer_arbitration(
+        self,
+        item: dict[str, Any],
+        query_text: str,
+        top_hits: list[dict[str, Any]],
+        *,
+        slot_schema: dict[str, Any] | None = None,
+    ) -> Any:
         return self.runtime.run_role(
             self.answer_arbitration.name,
             {
                 **_role_payload(item, stage="answer_arbitration"),
                 "query_length": len(query_text),
                 "top_hit_count": len(top_hits),
+                "slot_count": len((slot_schema or {}).get("slots") or []),
             },
-            lambda: self.answer_arbitration.run(item, query_text, top_hits),
+            lambda: self.answer_arbitration.run(item, query_text, top_hits, slot_schema=slot_schema),
         )
 
     def run_overlay_control(self, item: dict[str, Any], generated: dict[str, Any], prediction: Any, top_hits: list[dict[str, Any]]) -> Any:
@@ -65,7 +73,12 @@ class Step15MASController:
         self.trace.record(field_id, "controller", "field_started", {"mode": self.mode, "agentscope_available": self.runtime.available})
 
         query_plan = self.run_query_planner(item)
-        self.trace.record(field_id, self.query_planner.name, "query_planned", {"base_query": query_plan.base_query, "query_text": query_plan.query_text})
+        self.trace.record(
+            field_id,
+            self.query_planner.name,
+            "query_planned",
+            {"base_query": query_plan.base_query, "query_text": query_plan.query_text},
+        )
 
         retrieval = self.run_evidence_retrieval(item, query_plan.query_text)
         self.trace.record(

@@ -116,6 +116,9 @@ class RetrievalConfig:
 class GroundingConfig:
     evidence_strength_enabled: bool = True
     field_binding_enabled: bool = True
+    field_binding_agent_enabled: bool = True
+    slot_decomposition_enabled: bool = True
+    pre_writeback_consistency_enabled: bool = True
     min_strength_for_answered: str = "E3"
     min_strength_for_writeback: str = "E3"
     require_target_source_for_answered: bool = True
@@ -371,6 +374,9 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
     grounding = GroundingConfig(
         evidence_strength_enabled=_as_bool(grounding_data.get("evidence_strength_enabled", True)),
         field_binding_enabled=_as_bool(grounding_data.get("field_binding_enabled", True)),
+        field_binding_agent_enabled=_as_bool(grounding_data.get("field_binding_agent_enabled", True)),
+        slot_decomposition_enabled=_as_bool(grounding_data.get("slot_decomposition_enabled", True)),
+        pre_writeback_consistency_enabled=_as_bool(grounding_data.get("pre_writeback_consistency_enabled", True)),
         min_strength_for_answered=str(grounding_data.get("min_strength_for_answered", "E3")),
         min_strength_for_writeback=str(grounding_data.get("min_strength_for_writeback", "E3")),
         require_target_source_for_answered=_as_bool(grounding_data.get("require_target_source_for_answered", True)),

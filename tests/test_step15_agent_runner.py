@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -252,11 +253,43 @@ def test_grounding_blocks_unsupported_answer_without_mutating_raw(tmp_path: Path
     assert "evidence_strength" not in raw
     assert overlays[0]["writeback_allowed"] is False
     assert overlays[0]["review_required"] is True
-    assert "unsupported_by_strong_evidence" in overlays[0]["reasons"]
+    assert "answer_evidence_mismatch" in overlays[0]["reasons"]
+    assert any(flag in overlays[0]["critic_flags"] for flag in ["answer_evidence_mismatch", "unit_mismatch", "field_mismatch"])
     assert (tmp_path / "grounding_trace.jsonl").exists()
     grounding_trace = read_jsonl(tmp_path / "grounding_trace.jsonl")
     assert grounding_trace[0]["retrieval_plan"] == "layered"
     assert read_jsonl(tmp_path / "review_items.jsonl")
+
+
+def test_room_context_stays_in_query_not_external_prompt_context(tmp_path: Path) -> None:
+    retrieval_queries: list[str] = []
+    answer_queries: list[str] = []
+    prompts: list[str] = []
+
+    def retrieval(query: str) -> Step15RetrievalResult:
+        retrieval_queries.append(query)
+        return fake_retrieval(query)
+
+    def caller(**kwargs: Any) -> dict[str, Any]:
+        answer_queries.append(kwargs["query_text"])
+        prompts.append("\n".join(message["content"] for message in kwargs["messages"]))
+        return answered_answer_caller(**kwargs)
+
+    runner = make_runner(
+        tmp_path,
+        answer_caller=caller,
+        retrieval_fn=retrieval,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    runner.run([make_item(14, question_text="单机柜设计功率")])
+
+    assert retrieval_queries
+    assert answer_queries
+    assert "301机房" in retrieval_queries[0]
+    assert "301机房" in answer_queries[0]
+    assert "external_room_context" not in prompts[0]
+    assert "301机房" in prompts[0]
 
 
 def test_grounding_blocks_answered_without_source(tmp_path: Path) -> None:
@@ -376,6 +409,75 @@ def test_field_binding_exact_allows_existing_safe_overlay(tmp_path: Path) -> Non
     assert captured == [1]
 
 
+def test_field_binding_agent_blocks_writeback_without_mutating_raw(tmp_path: Path) -> None:
+    def binding_caller(**kwargs: Any) -> dict[str, Any]:
+        assert "Field Binding Verification Agent" in kwargs["messages"][0]["content"]
+        return {
+            "passed": False,
+            "label": "field_mismatch",
+            "confidence": 0.91,
+            "reasons": ["cited evidence is a neighboring field"],
+            "evidence_chunk_ids": ["chunk_main"],
+        }
+
+    runner = make_runner(
+        tmp_path,
+        answer_caller=answered_answer_caller,
+        retrieval_fn=fake_retrieval,
+        grounding_enabled=True,
+        field_binding_enabled=True,
+        field_binding_judge_caller=binding_caller,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    predictions = runner.run([make_item(4)])
+
+    assert predictions[0].answer_status == "answered"
+    assert predictions[0].answer_value == "2路市电，来自同一变电站"
+    overlay = read_jsonl(tmp_path / "agent_overlays.jsonl")[0]
+    assert overlay["writeback_allowed"] is False
+    assert overlay["review_required"] is True
+    assert overlay["risk_level"] == "high"
+    assert "field_binding_agent_mismatch" in overlay["critic_flags"]
+    assert "field_binding_agent_failed_writeback_check" in overlay["reasons"]
+    trace = [row for row in read_jsonl(tmp_path / "trace.jsonl") if row["step"] == "field_binding_agent_checked"][0]
+    assert trace["payload"]["label"] == "field_mismatch"
+    summary = load_json_file(tmp_path / "summary.json")
+    assert summary["field_binding_agent_distribution"] == {"field_mismatch": 1}
+    assert summary["field_binding_agent_flag_counts"] == {"field_mismatch": 1}
+
+
+def test_field_binding_agent_pass_keeps_writeback_allowed(tmp_path: Path) -> None:
+    def binding_caller(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "passed": True,
+            "label": "exact",
+            "confidence": 0.95,
+            "reasons": ["field and evidence match"],
+            "evidence_chunk_ids": ["chunk_main"],
+        }
+
+    runner = make_runner(
+        tmp_path,
+        answer_caller=answered_answer_caller,
+        retrieval_fn=fake_retrieval,
+        grounding_enabled=True,
+        field_binding_enabled=True,
+        field_binding_judge_caller=binding_caller,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    runner.run([make_item(4)])
+
+    overlay = read_jsonl(tmp_path / "agent_overlays.jsonl")[0]
+    assert overlay["writeback_allowed"] is True
+    trace = [row for row in read_jsonl(tmp_path / "trace.jsonl") if row["step"] == "field_binding_agent_checked"][0]
+    assert trace["payload"]["label"] == "exact"
+    summary = load_json_file(tmp_path / "summary.json")
+    assert summary["field_binding_agent_distribution"] == {"exact": 1}
+    assert summary["field_binding_agent_flag_counts"] == {}
+
+
 def test_grounding_trace_includes_field_binding(tmp_path: Path) -> None:
     runner = make_runner(
         tmp_path,
@@ -474,6 +576,85 @@ def test_field_binding_disabled_keeps_prompt1_overlay_behavior(tmp_path: Path) -
     assert "field_mismatch" not in overlay["reasons"]
     assert overlay["writeback_allowed"] is True
     assert captured == [1]
+
+
+def test_slot_decomposition_schema_is_in_answer_prompt(tmp_path: Path) -> None:
+    prompts: list[str] = []
+
+    def slot_caller(**kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        return chiller_slot_schema()
+
+    def answer_caller(**kwargs: Any) -> dict[str, Any]:
+        prompts.append("\n".join(message["content"] for message in kwargs["messages"]))
+        return {
+            "answer_value": "10kV高压离心式/N+1",
+            "answer_status": "answered",
+            "confidence": 0.9,
+            "source_chunk_ids": [kwargs["hits"][0]["chunk_id"]],
+            "slot_values": [
+                {
+                    "name": "pressure_type",
+                    "raw_value": "10kV高压离心式",
+                    "normalized_value": "高压",
+                    "source_chunk_ids": [kwargs["hits"][0]["chunk_id"]],
+                },
+                {
+                    "name": "redundancy",
+                    "raw_value": "N+1",
+                    "normalized_value": "N+1",
+                    "source_chunk_ids": [kwargs["hits"][0]["chunk_id"]],
+                },
+            ],
+        }
+
+    runner = make_runner(
+        tmp_path,
+        answer_caller=answer_caller,
+        slot_decomposer_caller=slot_caller,
+        retrieval_fn=fake_retrieval_chiller_combo,
+        grounding_enabled=False,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    runner.run([make_item(53, question_text="冰机配置情况", instruction_text="填写高压or低压/冗余情况", category_path=["制冷", "冰机"])])
+
+    assert prompts
+    assert "slot_schema" in prompts[0]
+    assert "canonical_hints" in prompts[0]
+    raw = read_jsonl(tmp_path / "predictions_raw.jsonl")[0]
+    assert raw["validation"]["slot_decomposition"]["is_composite"] is True
+    assert raw["validation"]["slot_values"][0]["raw_value"] == "10kV高压离心式"
+
+
+def test_slot_consistency_blocks_missing_required_slot(tmp_path: Path) -> None:
+    captured: list[int] = []
+    template = tmp_path / "template.xlsx"
+    template.write_text("fake", encoding="utf-8")
+
+    runner = make_runner(
+        tmp_path,
+        answer_caller=chiller_missing_redundancy_answer_caller,
+        slot_decomposer_caller=lambda **kwargs: chiller_slot_schema(),
+        retrieval_fn=fake_retrieval_chiller_missing_redundancy,
+        writeback_enabled=True,
+        template_path=template,
+        writeback_fn=capturing_writeback(captured),
+        grounding_enabled=False,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    runner.run([make_item(53, question_text="冰机配置情况", instruction_text="填写高压or低压/冗余情况", category_path=["制冷", "冰机"])])
+
+    overlay = read_jsonl(tmp_path / "agent_overlays.jsonl")[0]
+    slot_trace = read_jsonl(tmp_path / "slot_trace.jsonl")[0]
+    assert captured == [1]
+    assert overlay["writeback_allowed"] is False
+    assert overlay["review_required"] is True
+    assert "slot_mismatch" in overlay["critic_flags"]
+    assert slot_trace["checked"] is True
+    assert slot_trace["passed"] is False
+    assert "redundancy" in slot_trace["missing_required_slots"]
 
 
 def test_parent_payload_disabled_by_default_for_step15(tmp_path: Path) -> None:
@@ -575,6 +756,70 @@ def test_chat_timeout_retry_success(tmp_path: Path) -> None:
     trace_text = (tmp_path / "trace.jsonl").read_text(encoding="utf-8")
     assert "chat_retry_started" in trace_text
     assert "chat_retry_succeeded" in trace_text
+
+
+def test_chat_json_parse_retry_success(tmp_path: Path) -> None:
+    calls = 0
+
+    def caller(**kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise json.JSONDecodeError("bad json", "{}", 1)
+        return answered_answer_caller(**kwargs)
+
+    runner = make_runner(tmp_path, answer_caller=caller, chat_max_retries=2)
+
+    predictions = runner.run([make_item(4)])
+
+    assert calls == 2
+    assert predictions[0].answer_status == "answered"
+    trace_text = (tmp_path / "trace.jsonl").read_text(encoding="utf-8")
+    assert "json_parse_failed" in trace_text
+    assert "chat_retry_started" in trace_text
+    assert "chat_retry_succeeded" in trace_text
+
+
+def test_chat_empty_reply_retry_success(tmp_path: Path) -> None:
+    calls = 0
+
+    def caller(**kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("curl failed with exit code 52: curl: (52) Empty reply from server")
+        return answered_answer_caller(**kwargs)
+
+    runner = make_runner(tmp_path, answer_caller=caller, chat_max_retries=2)
+
+    predictions = runner.run([make_item(4)])
+
+    assert calls == 2
+    assert predictions[0].answer_status == "answered"
+    trace_text = (tmp_path / "trace.jsonl").read_text(encoding="utf-8")
+    assert "chat_retry_started" in trace_text
+    assert "chat_retry_succeeded" in trace_text
+
+
+def test_retrieval_empty_reply_retry_success(tmp_path: Path) -> None:
+    calls = 0
+
+    def retrieval(query: str) -> Step15RetrievalResult:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("curl failed with exit code 52: curl: (52) Empty reply from server")
+        return fake_retrieval(query)
+
+    runner = make_runner(tmp_path, answer_caller=answered_answer_caller, retrieval_fn=retrieval, chat_max_retries=2)
+
+    predictions = runner.run([make_item(4)])
+
+    assert calls == 2
+    assert predictions[0].answer_status == "answered"
+    trace_text = (tmp_path / "trace.jsonl").read_text(encoding="utf-8")
+    assert "retrieval_retry_started" in trace_text
+    assert "retrieval_retry_succeeded" in trace_text
 
 
 def test_chat_timeout_retry_failure_writes_failed_prediction(tmp_path: Path) -> None:
@@ -793,6 +1038,8 @@ def make_runner(
     writeback_enabled: bool = False,
     template_path: Path | None = None,
     writeback_fn=None,
+    slot_decomposer_caller=None,
+    field_binding_judge_caller=None,
     chat_max_retries: int = 2,
     prompt_version: str = "step15_compat",
     judge_cache_path: Path | None = None,
@@ -817,6 +1064,8 @@ def make_runner(
         retrieval_fn=retrieval_fn or fake_retrieval,
         answer_caller=answer_caller,
         judge_caller=judge_caller,
+        slot_decomposer_caller=slot_decomposer_caller,
+        field_binding_judge_caller=field_binding_judge_caller,
         writeback_fn=writeback_fn or fake_writeback([]),
         chat_max_retries=chat_max_retries,
         chat_retry_backoff_seconds=0,
@@ -977,6 +1226,50 @@ def fake_retrieval_ups_single_mode(query: str) -> Step15RetrievalResult:
     return Step15RetrievalResult(reranked_hits=hits, vector_hits=hits, retrieval_mode="layered")
 
 
+def fake_retrieval_chiller_combo(query: str) -> Step15RetrievalResult:
+    del query
+    hits = [
+        {
+            "chunk_id": "chunk_chiller_combo",
+            "namespace": "xixian_4",
+            "source_type": "main_excel_capability",
+            "corpus_layer": "fact",
+            "retrieval_layer": "target_main_fact",
+            "layer_priority": 1,
+            "rerank_score": 0.95,
+            "file_name": "main.xlsx",
+            "row_header": "冷水机组配置",
+            "column_header": "类型及冗余",
+            "anchor": "row 53",
+            "raw_text": "冷水机组配置：10kV高压离心式冷水机组，系统按N+1冗余配置。",
+            "text_for_embedding": "冷水机组 配置 10kV 高压 离心式 N+1 冗余",
+        }
+    ]
+    return Step15RetrievalResult(reranked_hits=hits, vector_hits=hits, retrieval_mode="layered")
+
+
+def fake_retrieval_chiller_missing_redundancy(query: str) -> Step15RetrievalResult:
+    del query
+    hits = [
+        {
+            "chunk_id": "chunk_chiller_type_only",
+            "namespace": "xixian_4",
+            "source_type": "main_excel_capability",
+            "corpus_layer": "fact",
+            "retrieval_layer": "target_main_fact",
+            "layer_priority": 1,
+            "rerank_score": 0.95,
+            "file_name": "main.xlsx",
+            "row_header": "冷水机组配置",
+            "column_header": "类型",
+            "anchor": "row 53",
+            "raw_text": "冷水机组配置：10kV高压离心式冷水机组。",
+            "text_for_embedding": "冷水机组 配置 10kV 高压 离心式",
+        }
+    ]
+    return Step15RetrievalResult(reranked_hits=hits, vector_hits=hits, retrieval_mode="layered")
+
+
 def recording_retrieval(calls: list[str]):
     def retrieve(query: str) -> Step15RetrievalResult:
         calls.append(query)
@@ -1076,6 +1369,56 @@ def built_cabinet_answer_caller(**kwargs: Any) -> dict[str, Any]:
         "source_chunk_ids": [kwargs["hits"][0]["chunk_id"]],
         "evidence_attachment_ids": [],
         "reference_source_documents": [],
+    }
+
+
+def chiller_missing_redundancy_answer_caller(**kwargs: Any) -> dict[str, Any]:
+    return {
+        "answer_value": "10kV高压离心式冷水机组",
+        "answer_status": "answered",
+        "confidence": 0.9,
+        "source_chunk_ids": [kwargs["hits"][0]["chunk_id"]],
+        "evidence_attachment_ids": [],
+        "reference_source_documents": [],
+        "slot_values": [
+            {
+                "name": "pressure_type",
+                "raw_value": "10kV高压离心式",
+                "normalized_value": "高压",
+                "source_chunk_ids": [kwargs["hits"][0]["chunk_id"]],
+            }
+        ],
+    }
+
+
+def chiller_slot_schema() -> dict[str, Any]:
+    return {
+        "is_composite": True,
+        "slots": [
+            {
+                "name": "pressure_type",
+                "label": "高压或低压",
+                "required": True,
+                "value_type": "short_text",
+                "canonical_hints": ["高压", "低压"],
+                "closed_set": False,
+                "allow_evidence_value": True,
+                "evidence_required": True,
+            },
+            {
+                "name": "redundancy",
+                "label": "冗余配置",
+                "required": True,
+                "value_type": "short_text",
+                "canonical_hints": ["N+1", "2N", "主备"],
+                "closed_set": False,
+                "allow_evidence_value": True,
+                "evidence_required": True,
+            },
+        ],
+        "compose_rule": "pressure_type + '/' + redundancy",
+        "confidence": 0.9,
+        "reasons": ["test_schema"],
     }
 
 

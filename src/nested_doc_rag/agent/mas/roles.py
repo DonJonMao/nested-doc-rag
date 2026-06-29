@@ -58,7 +58,14 @@ class AnswerArbitrationRole:
     def __init__(self, runner: Step15RunnerProtocol) -> None:
         self.runner = runner
 
-    def run(self, item: dict[str, Any], query_text: str, top_hits: list[dict[str, Any]]) -> AnswerArbitrationOutput:
+    def run(
+        self,
+        item: dict[str, Any],
+        query_text: str,
+        top_hits: list[dict[str, Any]],
+        *,
+        slot_schema: dict[str, Any] | None = None,
+    ) -> AnswerArbitrationOutput:
         from nested_doc_rag.agent.step15_runner import convert_step15_generated_to_prediction
 
         started = perf_counter_ms()
@@ -66,8 +73,9 @@ class AnswerArbitrationRole:
             item,
             query_text,
             top_hits,
-            room_context=self.runner.room_context,
+            room_context=None,
             prompt_version=self.runner.prompt_version,
+            slot_schema=slot_schema,
         )
         generated = self.runner.call_answer(messages=messages, item=item, query_text=query_text, hits=top_hits)
         generation_latency_ms = round(perf_counter_ms() - started, 3)

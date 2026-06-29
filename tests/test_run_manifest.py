@@ -101,8 +101,8 @@ def fake_retrieval(query: str) -> Step15RetrievalResult:
             "source_type": "main_excel_capability",
             "corpus_layer": "fact",
             "retrieval_layer": "target_main_fact",
-            "raw_text": "市电进线情况：2路市电。",
-            "text_for_embedding": "市电进线情况 2路市电",
+            "raw_text": "市电进线情况：2路市电，来自同一变电站。",
+            "text_for_embedding": "市电进线情况 2路市电 来自同一变电站",
         }
     ]
     return Step15RetrievalResult(reranked_hits=hits, vector_hits=hits, retrieval_mode="layered")
@@ -110,7 +110,7 @@ def fake_retrieval(query: str) -> Step15RetrievalResult:
 
 def answered_answer_caller(**kwargs: Any) -> dict[str, Any]:
     return {
-        "answer_value": "2路市电",
+        "answer_value": "2路市电，来自同一变电站",
         "answer_status": "answered",
         "confidence": 0.9,
         "source_chunk_ids": [kwargs["hits"][0]["chunk_id"]],

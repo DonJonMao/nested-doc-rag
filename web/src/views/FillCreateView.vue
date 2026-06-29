@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import SubNav from '@/components/nav/SubNav.vue'
@@ -20,6 +20,11 @@ const busy = ref(false)
 
 const workspaceId = computed(() => workspace.currentWorkspace?.id || workspace.currentWorkspaceId)
 const selectedReady = computed(() => knowledge.options.find((item) => item.id === knowledge.selectedId && item.status === 'ready'))
+const roomContextOptions = computed(() => {
+  const selected = selectedReady.value
+  if (!selected) return []
+  return uniqueTextOptions([selected.name, selected.description])
+})
 
 async function ensureData() {
   if (!workspace.workspaces.length) await workspace.load()
@@ -59,6 +64,28 @@ async function start() {
 }
 
 onMounted(ensureData)
+
+watch(
+  selectedReady,
+  () => {
+    if (!roomContext.value.trim() && roomContextOptions.value[0]) {
+      roomContext.value = roomContextOptions.value[0]
+    }
+  },
+  { immediate: true },
+)
+
+function uniqueTextOptions(values: Array<string | undefined>) {
+  const seen = new Set<string>()
+  const output: string[] = []
+  for (const value of values) {
+    const text = (value || '').trim()
+    if (!text || seen.has(text)) continue
+    seen.add(text)
+    output.push(text)
+  }
+  return output
+}
 </script>
 
 <template>
@@ -87,7 +114,17 @@ onMounted(ensureData)
     <section class="gk-card fill-create__start">
       <div class="fill-create__start-fields">
         <el-input v-model="taskName" size="large" maxlength="120" show-word-limit placeholder="任务名称，例如：西咸4号楼301机房调研" />
-        <el-input v-model="roomContext" size="large" placeholder="机房/房间上下文，例如：西咸4号楼 301机房" />
+        <el-select
+          v-model="roomContext"
+          size="large"
+          filterable
+          allow-create
+          clearable
+          default-first-option
+          placeholder="限定机房/房间，例如：西咸4号楼 301机房"
+        >
+          <el-option v-for="item in roomContextOptions" :key="item" :label="item" :value="item" />
+        </el-select>
       </div>
       <el-button type="primary" size="large" :loading="busy" :disabled="!selectedReady || !fill.uploadedForm" @click="start">开始填写</el-button>
     </section>

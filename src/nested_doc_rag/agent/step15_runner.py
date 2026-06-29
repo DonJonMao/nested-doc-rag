@@ -24,15 +24,34 @@ from nested_doc_rag.evaluation.step15_engine import (
 from nested_doc_rag.excel.writeback import patch_workbook
 from nested_doc_rag.gongkan_eval import build_judge_messages, build_masked_query, call_deepseek_json
 from nested_doc_rag.grounding import EvidenceStrengthEvaluator, EvidenceStrengthResult, apply_evidence_strength_to_overlay
+from nested_doc_rag.grounding.evidence_strength import max_risk_level
 from nested_doc_rag.io import display_text, read_jsonl, write_json, write_jsonl
 from nested_doc_rag.llm import JsonRepairError
 from nested_doc_rag.retrieval import QdrantRetriever, attach_parent_payloads
 from nested_doc_rag.schemas.eval import FieldPrediction
 
+from .binding import (
+    FieldBindingAgentResult,
+    build_field_binding_messages,
+    normalize_field_binding_agent_result,
+    select_binding_hits,
+)
 from .mas.controller import Step15MASController
+from .slotting import (
+    EMPTY_DECOMPOSITION,
+    SlotConsistencyResult,
+    SlotDecomposition,
+    build_slot_decomposition_messages,
+    evaluate_slot_consistency,
+    heuristic_slot_decomposition,
+    normalize_slot_decomposition,
+    slot_cache_key,
+)
 
 AnswerCaller = Callable[..., dict[str, Any]]
 JudgeCaller = Callable[..., dict[str, Any]]
+SlotDecomposerCaller = Callable[..., dict[str, Any]]
+FieldBindingJudgeCaller = Callable[..., dict[str, Any]]
 RetrievalFn = Callable[[str], Step15RetrievalResult]
 WritebackFn = Callable[..., Any]
 
@@ -181,6 +200,8 @@ class Step15AgentRunner:
         retrieval_fn: RetrievalFn | None = None,
         answer_caller: AnswerCaller | None = None,
         judge_caller: JudgeCaller | None = None,
+        slot_decomposer_caller: SlotDecomposerCaller | None = None,
+        field_binding_judge_caller: FieldBindingJudgeCaller | None = None,
         writeback_fn: WritebackFn = patch_workbook,
     ) -> None:
         self.config = config
@@ -230,11 +251,16 @@ class Step15AgentRunner:
         self.field_binding_enabled = (
             bool(config.grounding.field_binding_enabled) if field_binding_enabled is None else bool(field_binding_enabled)
         )
+        self.field_binding_agent_enabled = bool(config.grounding.field_binding_agent_enabled)
+        self.slot_decomposition_enabled = bool(config.grounding.slot_decomposition_enabled)
+        self.pre_writeback_consistency_enabled = bool(config.grounding.pre_writeback_consistency_enabled)
         self.parent_payload_enabled = (
             bool(config.retrieval.expand_parent_payload) if parent_payload_enabled is None else bool(parent_payload_enabled)
         )
         self.answer_caller = answer_caller
         self.judge_caller = judge_caller
+        self.slot_decomposer_caller = slot_decomposer_caller
+        self.field_binding_judge_caller = field_binding_judge_caller
         self.writeback_fn = writeback_fn
         self.retrieval_fn = retrieval_fn
         self.run_id = f"step15_agent_{uuid4().hex[:12]}"
@@ -251,12 +277,17 @@ class Step15AgentRunner:
                 "use_judge_cache": self.use_judge_cache,
                 "judge_enabled": self.judge_enabled,
                 "writeback_enabled": self.writeback_enabled,
+                "field_binding_agent_enabled": self.field_binding_agent_enabled,
+                "slot_decomposition_enabled": self.slot_decomposition_enabled,
+                "pre_writeback_consistency_enabled": self.pre_writeback_consistency_enabled,
             },
         )
         self.review_items: list[dict[str, Any]] = []
         self.eval_results: list[dict[str, Any]] = []
         self.agent_overlays: list[AgentOverlay] = []
         self.grounding_trace_records: list[dict[str, Any]] = []
+        self.slot_trace_records: list[dict[str, Any]] = []
+        self.slot_decomposition_cache: dict[str, SlotDecomposition] = {}
         self.writeback_status = "skipped: writeback disabled"
         self.writeback_summary: dict[str, Any] | None = None
         self.mas_mode = config.agentscope.mode if config.agentscope.enabled or config.agentscope.mode != "off" else "off"
@@ -310,6 +341,7 @@ class Step15AgentRunner:
             "skipped_completed_count": skipped_completed_count,
             "judge_enabled": self.judge_enabled,
             "writeback_enabled": self.writeback_enabled,
+            "field_binding_agent_enabled": self.field_binding_agent_enabled,
             "started_at": now_iso(),
             "finished_at": "",
         }
@@ -397,19 +429,21 @@ class Step15AgentRunner:
         self.trace.record(field_id, "field_started", {"field": minimal_item_view(item), "room_context": display_text(self.room_context)})
 
         base_query = build_masked_query(item, self.target_namespace)
-        query_text = add_room_context(base_query, self.room_context)
+        retrieval_query = add_room_context(base_query, self.room_context)
         self.trace.record(
             field_id,
             "query_planned",
             {
-                "masked_query_preview": display_text(query_text, 240),
-                "masked_query": query_text,
+                "masked_query_preview": display_text(retrieval_query, 240),
+                "masked_query": retrieval_query,
+                "retrieval_query_preview": display_text(retrieval_query, 240),
+                "retrieval_query": retrieval_query,
                 "room_context": display_text(self.room_context),
             },
         )
 
         retrieval_started = perf_counter_ms()
-        retrieval_result = self.retrieve(query_text)
+        retrieval_result = self.retrieve(retrieval_query)
         retrieval_latency_ms = round(perf_counter_ms() - retrieval_started, 3)
         top_hits = self.attach_parent_payloads(retrieval_result.reranked_hits)
         vector_hits = self.attach_parent_payloads(retrieval_result.vector_hits)
@@ -426,9 +460,18 @@ class Step15AgentRunner:
             },
         )
 
+        slot_decomposition = self.decompose_slots(item)
+        self.trace.record(field_id, "slot_decomposed", slot_decomposition.to_dict())
         generation_started = perf_counter_ms()
-        messages = build_qdrant_answer_messages(item, query_text, top_hits, room_context=self.room_context, prompt_version=self.prompt_version)
-        generated = self.call_answer(messages=messages, item=item, query_text=query_text, hits=top_hits)
+        messages = build_qdrant_answer_messages(
+            item,
+            retrieval_query,
+            top_hits,
+            room_context=None,
+            prompt_version=self.prompt_version,
+            slot_schema=slot_decomposition.to_prompt_dict(),
+        )
+        generated = self.call_answer(messages=messages, item=item, query_text=retrieval_query, hits=top_hits)
         generation_latency_ms = round(perf_counter_ms() - generation_started, 3)
         self.trace.record(
             field_id,
@@ -444,6 +487,7 @@ class Step15AgentRunner:
         )
 
         prediction = convert_step15_generated_to_prediction(item, generated, top_hits, retrieval_mode=self.retrieval_plan)
+        prediction = attach_slot_validation(prediction, generated, slot_decomposition)
         critic_flags = critic_check_step15_answer(item, generated, top_hits)
         overlay = build_agent_overlay_for_step15_prediction(prediction, top_hits, critic_flags)
         overlay, grounding_result = self.apply_grounding_overlay(
@@ -451,7 +495,22 @@ class Step15AgentRunner:
             prediction=prediction,
             top_hits=top_hits,
             overlay=overlay,
-            query_text=query_text,
+            query_text=retrieval_query,
+        )
+        overlay, binding_agent_result = self.apply_field_binding_agent_overlay(
+            item=item,
+            prediction=prediction,
+            top_hits=top_hits,
+            overlay=overlay,
+            grounding_result=grounding_result,
+        )
+        overlay, slot_result = self.apply_slot_consistency_overlay(
+            item=item,
+            prediction=prediction,
+            generated=generated,
+            top_hits=top_hits,
+            overlay=overlay,
+            decomposition=slot_decomposition,
         )
         critic_flags = overlay.critic_flags
         self.trace.record(
@@ -467,6 +526,8 @@ class Step15AgentRunner:
                 "critic_flags": critic_flags,
                 "evidence_strength": grounding_result.evidence_strength if grounding_result else None,
                 "field_binding": grounding_result.field_binding if grounding_result else None,
+                "field_binding_agent": binding_agent_result.to_dict(),
+                "slot_consistency": slot_result.to_dict(),
                 "suggested_reference_source_documents_count": len(overlay.suggested_reference_source_documents),
             },
         )
@@ -497,7 +558,7 @@ class Step15AgentRunner:
                 generated=generated,
                 heldout_answer=heldout_answer,
             )
-            eval_result = make_eval_result(item, generated, judge, top_hits, vector_hits, query_text, self.room_context)
+            eval_result = make_eval_result(item, generated, judge, top_hits, vector_hits, retrieval_query, self.room_context)
             self.trace.record(
                 field_id,
                 "judge_completed",
@@ -506,7 +567,7 @@ class Step15AgentRunner:
 
         return Step15FieldResult(
             item=item,
-            masked_query=query_text,
+            masked_query=retrieval_query,
             prediction=prediction,
             generated=generated,
             top_hits=top_hits,
@@ -532,18 +593,20 @@ class Step15AgentRunner:
             "query_planned",
             {"base_query": query_plan.base_query, "query_text": query_plan.query_text},
         )
-        query_text = query_plan.query_text
+        retrieval_query = query_plan.query_text
         self.trace.record(
             field_id,
             "query_planned",
             {
-                "masked_query_preview": display_text(query_text, 240),
-                "masked_query": query_text,
+                "masked_query_preview": display_text(retrieval_query, 240),
+                "masked_query": retrieval_query,
+                "retrieval_query_preview": display_text(retrieval_query, 240),
+                "retrieval_query": retrieval_query,
                 "room_context": display_text(self.room_context),
             },
         )
 
-        retrieval = self.mas_controller.run_evidence_retrieval(item, query_text)
+        retrieval = self.mas_controller.run_evidence_retrieval(item, retrieval_query)
         top_hits = self.attach_parent_payloads(retrieval.top_hits)
         vector_hits = self.attach_parent_payloads(retrieval.vector_hits)
         self.mas_controller.trace.record(
@@ -569,9 +632,11 @@ class Step15AgentRunner:
             },
         )
 
-        arbitration = self.mas_controller.run_answer_arbitration(item, query_text, top_hits)
+        slot_decomposition = self.decompose_slots(item)
+        self.trace.record(field_id, "slot_decomposed", slot_decomposition.to_dict())
+        arbitration = self.mas_controller.run_answer_arbitration(item, retrieval_query, top_hits, slot_schema=slot_decomposition.to_prompt_dict())
         generated = arbitration.generated
-        prediction = arbitration.prediction
+        prediction = attach_slot_validation(arbitration.prediction, generated, slot_decomposition)
         self.mas_controller.trace.record(
             field_id,
             self.mas_controller.answer_arbitration.name,
@@ -599,7 +664,22 @@ class Step15AgentRunner:
             prediction=prediction,
             top_hits=top_hits,
             overlay=overlay,
-            query_text=query_text,
+            query_text=retrieval_query,
+        )
+        overlay, binding_agent_result = self.apply_field_binding_agent_overlay(
+            item=item,
+            prediction=prediction,
+            top_hits=top_hits,
+            overlay=overlay,
+            grounding_result=grounding_result,
+        )
+        overlay, slot_result = self.apply_slot_consistency_overlay(
+            item=item,
+            prediction=prediction,
+            generated=generated,
+            top_hits=top_hits,
+            overlay=overlay,
+            decomposition=slot_decomposition,
         )
         critic_flags = overlay.critic_flags
         review_item = make_step15_review_item(item, prediction, overlay, top_hits)
@@ -626,6 +706,8 @@ class Step15AgentRunner:
                 "critic_flags": critic_flags,
                 "evidence_strength": grounding_result.evidence_strength if grounding_result else None,
                 "field_binding": grounding_result.field_binding if grounding_result else None,
+                "field_binding_agent": binding_agent_result.to_dict(),
+                "slot_consistency": slot_result.to_dict(),
                 "suggested_reference_source_documents_count": len(overlay.suggested_reference_source_documents),
             },
         )
@@ -655,7 +737,7 @@ class Step15AgentRunner:
                 generated=generated,
                 heldout_answer=heldout_answer,
             )
-            eval_result = make_eval_result(item, generated, judge, top_hits, vector_hits, query_text, self.room_context)
+            eval_result = make_eval_result(item, generated, judge, top_hits, vector_hits, retrieval_query, self.room_context)
             self.trace.record(
                 field_id,
                 "judge_completed",
@@ -664,7 +746,7 @@ class Step15AgentRunner:
 
         return Step15FieldResult(
             item=item,
-            masked_query=query_text,
+            masked_query=retrieval_query,
             prediction=prediction,
             generated=generated,
             top_hits=top_hits,
@@ -750,22 +832,58 @@ class Step15AgentRunner:
         )
 
     def retrieve(self, query_text: str) -> Step15RetrievalResult:
-        if self.retrieval_fn is not None:
-            return self.retrieval_fn(query_text)
-        if self.retriever is None or self.reranker is None:
-            raise RuntimeError("Step15AgentRunner requires retriever and reranker")
-        return run_step15_retrieval(
-            query_text,
-            retriever=self.retriever,
-            reranker=self.reranker,
-            target_namespace=self.target_namespace,
-            global_namespace=self.global_namespace,
-            allowed_layers=self.allowed_layers,
-            retrieval_mode=self.retrieval_plan,
-            vector_top_k=self.vector_top_k,
-            rerank_top_n=self.rerank_top_n,
-            layered_plan=self.layered_plan,
-        )
+        attempts = self.chat_max_retries + 1
+        for attempt in range(1, attempts + 1):
+            try:
+                if self.retrieval_fn is not None:
+                    result = self.retrieval_fn(query_text)
+                else:
+                    if self.retriever is None or self.reranker is None:
+                        raise RuntimeError("Step15AgentRunner requires retriever and reranker")
+                    result = run_step15_retrieval(
+                        query_text,
+                        retriever=self.retriever,
+                        reranker=self.reranker,
+                        target_namespace=self.target_namespace,
+                        global_namespace=self.global_namespace,
+                        allowed_layers=self.allowed_layers,
+                        retrieval_mode=self.retrieval_plan,
+                        vector_top_k=self.vector_top_k,
+                        rerank_top_n=self.rerank_top_n,
+                        layered_plan=self.layered_plan,
+                    )
+            except Exception as exc:  # noqa: BLE001 - network retries wrap injected and real retrieval
+                retryable = is_retryable_service_error(exc) or is_json_parse_error(exc)
+                if not retryable or attempt >= attempts:
+                    if retryable:
+                        self.trace.record(
+                            None,
+                            "retrieval_retry_failed",
+                            {
+                                "attempt": attempt,
+                                "max_retries": self.chat_max_retries,
+                                "error": display_text(str(exc), 240),
+                            },
+                        )
+                    raise
+                self.trace.record(
+                    None,
+                    "retrieval_retry_started",
+                    {
+                        "attempt": attempt,
+                        "next_attempt": attempt + 1,
+                        "max_retries": self.chat_max_retries,
+                        "backoff_seconds": self.chat_retry_backoff_seconds,
+                        "error": display_text(str(exc), 240),
+                    },
+                )
+                if self.chat_retry_backoff_seconds:
+                    sleep(self.chat_retry_backoff_seconds)
+                continue
+            if attempt > 1:
+                self.trace.record(None, "retrieval_retry_succeeded", {"attempt": attempt, "max_retries": self.chat_max_retries})
+            return result
+        raise RuntimeError("retrieval retry loop exited unexpectedly")
 
     def call_answer(self, **kwargs: Any) -> dict[str, Any]:
         return self.call_chat_with_retries(
@@ -822,7 +940,7 @@ class Step15AgentRunner:
         *,
         call_kind: str,
         field_id: str,
-        caller: AnswerCaller | JudgeCaller | None,
+        caller: AnswerCaller | JudgeCaller | SlotDecomposerCaller | FieldBindingJudgeCaller | None,
         kwargs: dict[str, Any],
     ) -> dict[str, Any]:
         attempts = self.chat_max_retries + 1
@@ -831,10 +949,17 @@ class Step15AgentRunner:
                 if caller is not None:
                     result = caller(**kwargs)
                 else:
+                    operation = "step15_answer"
+                    if call_kind == "judge":
+                        operation = "step15_judge"
+                    elif call_kind == "slot_decomposition":
+                        operation = "step15_slot_decomposition"
+                    elif call_kind == "field_binding":
+                        operation = "step15_field_binding"
                     endpoint, headers = model_gateway.request_options(
                         model_gateway.KIND_CHAT,
                         self.chat_endpoint,
-                        "step15_judge" if call_kind == "judge" else "step15_answer",
+                        operation,
                         field_id=field_id,
                         direct_headers={"Authorization": f"Bearer {self.chat_api_key}"},
                     )
@@ -857,7 +982,7 @@ class Step15AgentRunner:
                             "error": display_text(str(exc), 240),
                         },
                     )
-                retryable = is_retryable_chat_error(exc)
+                retryable = is_retryable_service_error(exc) or is_json_parse_error(exc)
                 if not retryable or attempt >= attempts:
                     if retryable:
                         self.trace.record(
@@ -991,6 +1116,188 @@ class Step15AgentRunner:
             )
         return grounded_overlay, grounding_result
 
+    def apply_field_binding_agent_overlay(
+        self,
+        *,
+        item: dict[str, Any],
+        prediction: FieldPrediction,
+        top_hits: list[dict[str, Any]],
+        overlay: AgentOverlay,
+        grounding_result: EvidenceStrengthResult | None,
+    ) -> tuple[AgentOverlay, FieldBindingAgentResult]:
+        field_id = field_id_for_item(item)
+        if (
+            not self.field_binding_agent_enabled
+            or prediction.answer_status != "answered"
+            or not overlay.writeback_allowed
+        ):
+            result = FieldBindingAgentResult(
+                checked=False,
+                passed=True,
+                label="skipped",
+                reasons=["field_binding_agent_skipped"],
+            )
+            return overlay, result
+
+        binding_hits = select_binding_hits(prediction, top_hits)
+        evidence_chunk_ids = [str(hit.get("chunk_id")) for hit in binding_hits if hit.get("chunk_id")]
+        if self.answer_caller is not None and self.field_binding_judge_caller is None:
+            result = FieldBindingAgentResult(
+                checked=False,
+                passed=True,
+                label="skipped",
+                reasons=["field_binding_agent_skipped_for_injected_answer_caller"],
+                evidence_chunk_ids=evidence_chunk_ids,
+            )
+            return overlay, result
+
+        try:
+            generated = self.call_field_binding_judge(
+                messages=build_field_binding_messages(
+                    item=item,
+                    prediction=prediction,
+                    hits=binding_hits,
+                    room_context=self.room_context,
+                    rule_binding=grounding_result.field_binding if grounding_result else None,
+                ),
+                item=item,
+                prediction=prediction,
+                hits=binding_hits,
+                grounding_result=grounding_result.to_dict() if grounding_result else None,
+            )
+            result = normalize_field_binding_agent_result(generated, evidence_chunk_ids=evidence_chunk_ids)
+        except Exception as exc:  # noqa: BLE001 - fail closed into review, but keep raw answer unchanged
+            result = FieldBindingAgentResult(
+                checked=True,
+                passed=False,
+                label="uncertain",
+                confidence=0.0,
+                reasons=["field_binding_agent_failed", display_text(str(exc), 240)],
+                evidence_chunk_ids=evidence_chunk_ids,
+            )
+        self.trace.record(field_id, "field_binding_agent_checked", result.to_dict())
+        if result.passed:
+            return overlay, result
+
+        critic_flags = dedupe([*overlay.critic_flags, result.label, "field_binding_agent_mismatch"])
+        reasons = dedupe([*overlay.reasons, *result.reasons, result.label, "field_binding_agent_failed_writeback_check"])
+        return (
+            replace(
+                overlay,
+                critic_flags=critic_flags,
+                review_required=True,
+                writeback_allowed=False,
+                risk_level=max_risk_level(overlay.risk_level, "high"),
+                suggested_status=overlay.suggested_status or "partial_clue",
+                suggested_answer_value=overlay.suggested_answer_value
+                or "答案与引用证据的字段绑定不一致或无法确认；请人工复核。",
+                reasons=reasons,
+            ),
+            result,
+        )
+
+    def call_field_binding_judge(self, **kwargs: Any) -> dict[str, Any]:
+        return self.call_chat_with_retries(
+            call_kind="field_binding",
+            field_id=field_id_for_item(kwargs.get("item") or {}),
+            caller=self.field_binding_judge_caller,
+            kwargs=kwargs,
+        )
+
+    def decompose_slots(self, item: dict[str, Any]) -> SlotDecomposition:
+        if not self.slot_decomposition_enabled:
+            return EMPTY_DECOMPOSITION
+        cache_key = slot_cache_key(item)
+        if cache_key in self.slot_decomposition_cache:
+            return self.slot_decomposition_cache[cache_key]
+
+        field_id = field_id_for_item(item)
+        if self.answer_caller is not None and self.slot_decomposer_caller is None:
+            decomposition = heuristic_slot_decomposition(item)
+            self.slot_decomposition_cache[cache_key] = decomposition
+            return decomposition
+
+        try:
+            generated = self.call_slot_decomposition(messages=build_slot_decomposition_messages(item), item=item)
+            decomposition = normalize_slot_decomposition(generated, item)
+        except Exception as exc:  # noqa: BLE001 - slot decomposition is a safety helper, not a field fatal
+            decomposition = heuristic_slot_decomposition(item)
+            self.trace.record(
+                field_id,
+                "slot_decomposition_failed",
+                {"error": display_text(str(exc), 240), "fallback": decomposition.to_dict()},
+            )
+        self.slot_decomposition_cache[cache_key] = decomposition
+        return decomposition
+
+    def call_slot_decomposition(self, **kwargs: Any) -> dict[str, Any]:
+        return self.call_chat_with_retries(
+            call_kind="slot_decomposition",
+            field_id=field_id_for_item(kwargs.get("item") or {}),
+            caller=self.slot_decomposer_caller,
+            kwargs=kwargs,
+        )
+
+    def apply_slot_consistency_overlay(
+        self,
+        *,
+        item: dict[str, Any],
+        prediction: FieldPrediction,
+        generated: dict[str, Any],
+        top_hits: list[dict[str, Any]],
+        overlay: AgentOverlay,
+        decomposition: SlotDecomposition,
+    ) -> tuple[AgentOverlay, SlotConsistencyResult]:
+        field_id = field_id_for_item(item)
+        if not self.pre_writeback_consistency_enabled:
+            result = SlotConsistencyResult(
+                checked=False,
+                passed=True,
+                flags=[],
+                reasons=["pre_writeback_consistency_disabled"],
+                decomposition=decomposition,
+                slot_values=[],
+            )
+            return overlay, result
+
+        result = evaluate_slot_consistency(
+            item=item,
+            prediction=prediction,
+            generated=generated,
+            top_hits=top_hits,
+            decomposition=decomposition,
+        )
+        self.trace.record(field_id, "slot_consistency_checked", result.to_dict())
+        if self.config.grounding.write_grounding_trace:
+            self.slot_trace_records.append(
+                {
+                    "field_id": field_id,
+                    "answer_status": prediction.answer_status,
+                    "answer_value": prediction.answer_value,
+                    "source_chunk_ids": prediction.source_chunk_ids,
+                    **result.to_dict(),
+                }
+            )
+        if result.passed or prediction.answer_status != "answered":
+            return overlay, result
+
+        critic_flags = dedupe([*overlay.critic_flags, *result.flags])
+        reasons = dedupe([*overlay.reasons, *result.reasons, "pre_writeback_slot_consistency_failed"])
+        return (
+            replace(
+                overlay,
+                critic_flags=critic_flags,
+                review_required=True,
+                writeback_allowed=False,
+                risk_level="high",
+                suggested_status=overlay.suggested_status or "partial_clue",
+                suggested_answer_value=overlay.suggested_answer_value
+                or "答案缺少必需槽证据或槽值与证据不一致；请人工复核。",
+                reasons=reasons,
+            ),
+            result,
+        )
+
     def write_outputs(self, predictions: list[FieldPrediction], overlays: list[AgentOverlay], run_state: dict[str, Any]) -> None:
         predictions_path = self.out_dir / "predictions.jsonl"
         trace_path = self.out_dir / "trace.jsonl"
@@ -1011,6 +1318,8 @@ class Step15AgentRunner:
             self.mas_controller.write_optional_artifacts(self.out_dir)
         if self.config.grounding.write_grounding_trace and self.grounding_trace_records:
             write_jsonl(self.out_dir / "grounding_trace.jsonl", self.grounding_trace_records)
+        if self.config.grounding.write_grounding_trace and self.slot_trace_records:
+            write_jsonl(self.out_dir / "slot_trace.jsonl", self.slot_trace_records)
         output_files = sorted({path.name for path in self.out_dir.iterdir() if path.is_file()} | {"run_summary.md", "summary.json", "run_manifest.json"})
         summary = build_summary_json(
             predictions=predictions,
@@ -1035,6 +1344,8 @@ class Step15AgentRunner:
             manifest["artifacts"]["agentscope_events"] = "agentscope_events.jsonl"
         if (self.out_dir / "grounding_trace.jsonl").exists():
             manifest["artifacts"]["grounding_trace"] = "grounding_trace.jsonl"
+        if (self.out_dir / "slot_trace.jsonl").exists():
+            manifest["artifacts"]["slot_trace"] = "slot_trace.jsonl"
         if (self.out_dir / "image_evidence.jsonl").exists():
             manifest["artifacts"]["image_evidence"] = "image_evidence.jsonl"
         write_json(self.out_dir / "run_manifest.json", manifest)
@@ -1101,6 +1412,9 @@ class Step15AgentRunner:
             "retrieval_fusion_mode": "dense",
             "grounding_enabled": self.grounding_enabled,
             "field_binding_enabled": self.field_binding_enabled,
+            "field_binding_agent_enabled": self.field_binding_agent_enabled,
+            "slot_decomposition_enabled": self.slot_decomposition_enabled,
+            "pre_writeback_consistency_enabled": self.pre_writeback_consistency_enabled,
             "parent_payload_enabled": self.parent_payload_enabled,
             "vector_top_k": self.vector_top_k,
             "rerank_top_n": self.rerank_top_n,
@@ -1161,6 +1475,19 @@ def convert_step15_generated_to_prediction(
         validation=validation,
         method_name=method_name,
     )
+
+
+def attach_slot_validation(
+    prediction: FieldPrediction,
+    generated: dict[str, Any],
+    decomposition: SlotDecomposition,
+) -> FieldPrediction:
+    if not decomposition.is_composite and not generated.get("slot_values"):
+        return prediction
+    validation = dict(prediction.validation)
+    validation["slot_decomposition"] = decomposition.to_dict()
+    validation["slot_values"] = [dict(item) for item in generated.get("slot_values") or [] if isinstance(item, dict)]
+    return replace(prediction, validation=validation)
 
 
 def build_agent_overlay_for_step15_prediction(
@@ -1580,9 +1907,27 @@ def field_intent_source_mismatch(question_text: str, source_hits: list[dict[str,
     return has_equipment_terms and not has_record_terms
 
 
-def is_retryable_chat_error(exc: Exception) -> bool:
+def is_retryable_service_error(exc: Exception) -> bool:
     text = str(exc).lower()
-    return any(marker in text for marker in ["timeout", "timed out", "curl: (28)", "operation timed out", "read timed out"])
+    return any(
+        marker in text
+        for marker in [
+            "timeout",
+            "timed out",
+            "curl: (28)",
+            "curl: (52)",
+            "exit code 52",
+            "empty reply from server",
+            "operation timed out",
+            "read timed out",
+            "connection reset",
+            "temporarily unavailable",
+            "bad gateway",
+            "502",
+            "503",
+            "504",
+        ]
+    )
 
 
 def is_json_parse_error(exc: Exception) -> bool:
@@ -1644,6 +1989,27 @@ def build_trace_summary(
         for event in events
         if event.step == "grounding_evaluated" and event.payload.get("field_binding")
     )
+    field_binding_agent_labels = Counter(
+        str(event.payload.get("label"))
+        for event in events
+        if event.step == "field_binding_agent_checked" and event.payload.get("checked")
+    )
+    field_binding_agent_flags = Counter(
+        str(event.payload.get("label"))
+        for event in events
+        if event.step == "field_binding_agent_checked" and event.payload.get("checked") and not event.payload.get("passed")
+    )
+    slot_checks = Counter(
+        "passed" if event.payload.get("passed") else "failed"
+        for event in events
+        if event.step == "slot_consistency_checked" and event.payload.get("checked")
+    )
+    slot_flags = Counter(
+        flag
+        for event in events
+        if event.step == "slot_consistency_checked"
+        for flag in event.payload.get("flags") or []
+    )
     return {
         "total_fields": len(predictions),
         "answered_count": status_counts.get("answered", 0),
@@ -1661,6 +2027,10 @@ def build_trace_summary(
         "skipped_completed_count": sum(int(event.payload.get("skipped_completed_count") or 0) for event in events if event.step == "resume_started"),
         "evidence_strength_distribution": dict(evidence_strengths),
         "field_binding_distribution": dict(field_bindings),
+        "field_binding_agent_distribution": dict(field_binding_agent_labels),
+        "field_binding_agent_flag_counts": dict(field_binding_agent_flags),
+        "slot_consistency_distribution": dict(slot_checks),
+        "slot_consistency_flag_counts": dict(slot_flags),
     }
 
 
@@ -1686,6 +2056,9 @@ def build_summary_json(
         "overlay_counts": build_overlay_counts(overlays),
         "trace_summary": trace_summary,
         "field_binding_distribution": trace_summary.get("field_binding_distribution", {}),
+        "field_binding_agent_distribution": trace_summary.get("field_binding_agent_distribution", {}),
+        "field_binding_agent_flag_counts": trace_summary.get("field_binding_agent_flag_counts", {}),
+        "slot_consistency_distribution": trace_summary.get("slot_consistency_distribution", {}),
         "label_counts": dict(label_counts),
         "average_score": round(sum(numeric_scores) / len(numeric_scores), 4) if numeric_scores else 0,
         "acceptable_or_better": sum(1 for result in eval_results if result.get("judge", {}).get("label") in {"exact", "acceptable"}),
