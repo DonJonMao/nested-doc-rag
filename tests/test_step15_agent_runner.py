@@ -478,6 +478,54 @@ def test_field_binding_agent_pass_keeps_writeback_allowed(tmp_path: Path) -> Non
     assert summary["field_binding_agent_flag_counts"] == {}
 
 
+def test_rule_field_binding_near_blocks_before_agent_can_upgrade(tmp_path: Path) -> None:
+    agent_calls = 0
+
+    def binding_caller(**kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        nonlocal agent_calls
+        agent_calls += 1
+        return {
+            "passed": True,
+            "label": "exact",
+            "confidence": 0.95,
+            "reasons": ["agent would pass, but rule binding was only near"],
+            "evidence_chunk_ids": ["chunk_ups_single_mode"],
+        }
+
+    runner = make_runner(
+        tmp_path,
+        answer_caller=oil_mode_answer_caller,
+        retrieval_fn=fake_retrieval_ups_single_mode,
+        grounding_enabled=True,
+        field_binding_enabled=True,
+        field_binding_judge_caller=binding_caller,
+        config_overrides={"agentscope": {"enabled": False, "mode": "off"}},
+    )
+
+    runner.run(
+        [
+            make_item(
+                64,
+                question_text="UPS运行方式",
+                instruction_text="并机/单机",
+                category_path=["机房 概况", "动力用UPS"],
+            )
+        ]
+    )
+
+    overlay = read_jsonl(tmp_path / "agent_overlays.jsonl")[0]
+    grounding_trace = read_jsonl(tmp_path / "grounding_trace.jsonl")[0]
+    agent_trace = [row for row in read_jsonl(tmp_path / "trace.jsonl") if row["step"] == "field_binding_agent_checked"]
+    assert grounding_trace["field_binding"] == "near"
+    assert overlay["writeback_allowed"] is False
+    assert overlay["review_required"] is True
+    assert "field_binding_not_exact" in overlay["reasons"]
+    assert "field_binding_not_exact" in overlay["critic_flags"]
+    assert agent_calls == 0
+    assert agent_trace == []
+
+
 def test_grounding_trace_includes_field_binding(tmp_path: Path) -> None:
     runner = make_runner(
         tmp_path,

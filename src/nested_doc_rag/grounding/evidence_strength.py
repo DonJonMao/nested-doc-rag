@@ -319,6 +319,10 @@ def apply_evidence_strength_to_overlay(
             suggested_answer_value = "检索到相关线索，但证据强度不足以安全直接填写；请人工复核。"
     if current_rank < required_writeback_rank:
         reasons.append("evidence_strength_below_writeback_threshold")
+        writeback_allowed = False
+        review_required = True
+        risk_level = max_risk_level(risk_level, "medium")
+        critic_flags.append("weak_evidence_for_writeback")
     if global_intro_only:
         review_required = True
         writeback_allowed = False
@@ -338,9 +342,11 @@ def apply_evidence_strength_to_overlay(
         critic_flags.append("answer_evidence_mismatch")
     if field_binding != "disabled" and field_binding not in SUPPORTED_BINDINGS:
         reasons.append("field_binding_not_exact")
+        writeback_allowed = False
+        review_required = True
+        risk_level = max_risk_level(risk_level, "medium")
+        critic_flags.append("field_binding_not_exact")
         if field_binding in HARD_BLOCK_BINDINGS:
-            writeback_allowed = False
-            review_required = True
             reasons.append(field_binding)
             critic_flags.append(field_binding)
             risk_level = max_risk_level(risk_level, FIELD_BINDING_RISK.get(field_binding, "medium"))
