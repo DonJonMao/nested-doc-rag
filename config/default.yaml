@@ -73,7 +73,7 @@ retrieval:
 grounding:
   evidence_strength_enabled: true
   field_binding_enabled: true
-  field_binding_agent_enabled: true
+  field_binding_agent_enabled: false
   slot_decomposition_enabled: true
   pre_writeback_consistency_enabled: true
   min_strength_for_answered: E3
