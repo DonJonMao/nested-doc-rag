@@ -58,6 +58,7 @@ docker-prod-logs:
 docker-prod-worker-smoke:
 	$(COMPOSE_PROD) exec worker python --version
 	$(COMPOSE_PROD) exec worker python -c "import nested_doc_rag; print('python core ok')"
+	$(COMPOSE_PROD) exec worker /app/gongkan-worker --help
 	$(COMPOSE_PROD) exec worker sh -lc "cd /app/python-core && python -m nested_doc_rag.cli --help >/tmp/nested_doc_rag_help.txt && head -n 5 /tmp/nested_doc_rag_help.txt"
 	$(COMPOSE_PROD) exec worker sh -lc "cd /app/python-core && python -m nested_doc_rag.cli show-config --config config/docker.yaml --json >/tmp/nested_doc_rag_config.json && head -n 20 /tmp/nested_doc_rag_config.json"
 

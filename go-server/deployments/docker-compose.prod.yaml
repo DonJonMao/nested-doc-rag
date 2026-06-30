@@ -51,7 +51,7 @@ services:
       qdrant:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c 'import nested_doc_rag' && test -x /app/gongkan-worker"]
+      test: ["CMD-SHELL", "python -c 'import nested_doc_rag' && /app/gongkan-worker --help >/dev/null"]
       interval: 30s
       timeout: 10s
       retries: 3

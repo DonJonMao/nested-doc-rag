@@ -15,13 +15,14 @@ Worker 镜像包含：
 
 API 镜像包含 Go API 二进制、Go 配置和数据库迁移文件。
 
-本次本地交付镜像包默认生成在仓库根目录：
+本次本地交付镜像包按服务器 CPU 架构区分，默认生成在仓库根目录：
 
 ```text
-artifacts/docker/gongkan-writeback37-images.tar
+artifacts/docker/gongkan-writeback37-linux-amd64-images.tar  # 常见 x86_64 服务器
+artifacts/docker/gongkan-writeback37-linux-arm64-images.tar  # ARM64 服务器或 Apple Silicon 本地验证
 ```
 
-该文件包含：
+两个包内的镜像 tag 都是：
 
 ```text
 ghcr.io/donjonmao/nested-doc-rag/gongkan-api:writeback-37-final
@@ -99,13 +100,13 @@ IMAGE_TAG=writeback-37-final make docker-push
 docker save \
   ghcr.io/donjonmao/nested-doc-rag/gongkan-api:writeback-37-final \
   ghcr.io/donjonmao/nested-doc-rag/gongkan-worker:writeback-37-final \
-  -o artifacts/docker/gongkan-writeback37-images.tar
+  -o artifacts/docker/gongkan-writeback37-linux-<arch>-images.tar
 ```
 
 服务器上导入：
 
 ```bash
-docker load -i artifacts/docker/gongkan-writeback37-images.tar
+docker load -i artifacts/docker/gongkan-writeback37-linux-amd64-images.tar
 ```
 
 ## 4. 服务器部署文件
@@ -120,7 +121,7 @@ deployments/.env.prod
 如果不用镜像仓库，还需要把镜像包一起传到服务器：
 
 ```text
-artifacts/docker/gongkan-writeback37-images.tar
+artifacts/docker/gongkan-writeback37-linux-amd64-images.tar
 ```
 
 可选 HTTPS 静态站点：
@@ -143,14 +144,14 @@ cd /opt/gongkan
 如果使用镜像包部署，可以放到：
 
 ```text
-/opt/gongkan/artifacts/docker/gongkan-writeback37-images.tar
+/opt/gongkan/artifacts/docker/gongkan-writeback37-linux-amd64-images.tar
 ```
 
 然后在服务器上导入：
 
 ```bash
 cd /opt/gongkan
-docker load -i artifacts/docker/gongkan-writeback37-images.tar
+docker load -i artifacts/docker/gongkan-writeback37-linux-amd64-images.tar
 docker images | grep gongkan
 ```
 
@@ -215,6 +216,11 @@ docker compose \
   --env-file deployments/.env.prod \
   -f deployments/docker-compose.prod.yaml \
   exec worker python --version
+
+docker compose \
+  --env-file deployments/.env.prod \
+  -f deployments/docker-compose.prod.yaml \
+  exec worker /app/gongkan-worker --help
 
 docker compose \
   --env-file deployments/.env.prod \
