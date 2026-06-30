@@ -1,16 +1,20 @@
 # Docker Production Deployment
 
 This document describes the single-server Docker Compose production baseline for the Gongkan platform.
+For the current writeback-37 final profile and a Chinese step-by-step deployment checklist, see
+`docs/DOCKER_WRITEBACK37_DEPLOYMENT_ZH.md`.
 
 ## Scope
 
 The production baseline keeps the existing Go API plus Go Worker architecture:
 
 - API container: Go API binary, configs, migrations.
-- Worker container: Go worker binary, Python 3.11, installed `nested_doc_rag` wheel, configs, migrations, and Python Docker config.
+- Worker container: Go worker binary, Python 3.11, installed `nested_doc_rag` wheel, configs, migrations, Python Docker config, and experiment profile copies.
 - Postgres, Redis, MinIO, and Qdrant use persistent Docker volumes.
 - Redis uses AOF persistence.
 - Model Gateway remains disabled by default.
+- `config/docker.yaml` is the production default used by the Go Worker. It currently follows the writeback-37 final profile:
+  a single AnswerArbitration LLM agent plus rule-based grounding/writeback gate.
 
 The Worker image is intentionally self-contained because the worker calls Python Core through subprocess:
 
@@ -117,10 +121,10 @@ Then pull and start:
 
 ```bash
 docker compose --env-file deployments/.env.prod -f deployments/docker-compose.prod.yaml pull api worker
-make docker-prod-up
+docker compose --env-file deployments/.env.prod -f deployments/docker-compose.prod.yaml up -d
 ```
 
-`docker-prod-up` starts:
+This starts:
 
 - `api`
 - `worker`
@@ -159,7 +163,10 @@ curl http://localhost:8080/metrics
 After the stack is running:
 
 ```bash
-make docker-prod-worker-smoke
+docker compose -f deployments/docker-compose.prod.yaml --env-file deployments/.env.prod exec worker python --version
+docker compose -f deployments/docker-compose.prod.yaml --env-file deployments/.env.prod exec worker python -c "import nested_doc_rag; print('python core ok')"
+docker compose -f deployments/docker-compose.prod.yaml --env-file deployments/.env.prod exec worker sh -lc "cd /app/python-core && python -m nested_doc_rag.cli --help >/tmp/nested_doc_rag_help.txt && head -n 5 /tmp/nested_doc_rag_help.txt"
+docker compose -f deployments/docker-compose.prod.yaml --env-file deployments/.env.prod exec worker sh -lc "cd /app/python-core && python -m nested_doc_rag.cli show-config --config config/docker.yaml --json >/tmp/nested_doc_rag_config.json && head -n 20 /tmp/nested_doc_rag_config.json"
 ```
 
 The smoke test verifies:
@@ -176,7 +183,7 @@ cd /app/python-core && python -m nested_doc_rag.cli show-config --config config/
 Follow API and Worker logs:
 
 ```bash
-make docker-prod-logs
+docker compose -f deployments/docker-compose.prod.yaml --env-file deployments/.env.prod logs -f api worker
 ```
 
 For one service:
@@ -196,7 +203,7 @@ docker compose -f deployments/docker-compose.prod.yaml --env-file deployments/.e
 Stop services while retaining volumes:
 
 ```bash
-make docker-prod-down
+docker compose -f deployments/docker-compose.prod.yaml --env-file deployments/.env.prod down
 ```
 
 Do not run this in production unless you intend to delete data:

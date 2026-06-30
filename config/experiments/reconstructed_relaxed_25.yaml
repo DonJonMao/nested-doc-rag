@@ -1,6 +1,7 @@
 grounding:
-  # Reconstructs the historical writeback-25 gate: weak evidence and near
-  # field-binding are warnings, while E0/global/hard mismatches still block.
+  # Relaxed writeback gate used by the writeback-37 final Docker profile.
+  # Weak evidence and near field-binding are warnings, while E0/global/hard
+  # mismatches still block.
   relaxed_writeback_gate_enabled: true
   field_binding_enabled: true
   field_binding_agent_enabled: false

@@ -78,10 +78,12 @@ retrieval:
 grounding:
   evidence_strength_enabled: true
   field_binding_enabled: true
-  field_binding_agent_enabled: true
-  slot_decomposition_enabled: true
-  pre_writeback_consistency_enabled: true
-  relaxed_writeback_gate_enabled: false
+  # Docker production follows the writeback-37 final profile:
+  # a single AnswerArbitration LLM agent plus rule-based grounding/writeback gate.
+  field_binding_agent_enabled: false
+  slot_decomposition_enabled: false
+  pre_writeback_consistency_enabled: false
+  relaxed_writeback_gate_enabled: true
   min_strength_for_answered: E3
   min_strength_for_writeback: E3
   require_target_source_for_answered: true
