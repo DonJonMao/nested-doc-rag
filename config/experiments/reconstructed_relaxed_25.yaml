@@ -1,0 +1,13 @@
+grounding:
+  # Reconstructs the historical writeback-25 gate: weak evidence and near
+  # field-binding are warnings, while E0/global/hard mismatches still block.
+  relaxed_writeback_gate_enabled: true
+  field_binding_enabled: true
+  field_binding_agent_enabled: false
+  slot_decomposition_enabled: false
+  pre_writeback_consistency_enabled: false
+  min_strength_for_answered: E3
+  min_strength_for_writeback: E3
+  require_target_source_for_answered: true
+  global_intro_answer_allowed: false
+  downgrade_unsupported_answer_to_partial: false

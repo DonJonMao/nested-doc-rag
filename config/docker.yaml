@@ -81,6 +81,7 @@ grounding:
   field_binding_agent_enabled: true
   slot_decomposition_enabled: true
   pre_writeback_consistency_enabled: true
+  relaxed_writeback_gate_enabled: false
   min_strength_for_answered: E3
   min_strength_for_writeback: E3
   require_target_source_for_answered: true

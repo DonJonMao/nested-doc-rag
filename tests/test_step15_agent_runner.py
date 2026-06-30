@@ -940,6 +940,15 @@ def test_cli_run_step15_agent_args(tmp_path: Path) -> None:
     assert args.judge_cache == tmp_path / "judge_cache.jsonl"
 
 
+def test_cli_run_step15_agent_defaults_to_five_service_retries(tmp_path: Path) -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["run-step15-agent", "--out-dir", str(tmp_path)])
+
+    assert args.chat_max_retries == 5
+    assert args.chat_retry_backoff_seconds == 3
+
+
 def test_cli_retrieval_plan_resolves_to_layered(tmp_path: Path) -> None:
     config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml")
 

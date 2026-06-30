@@ -64,6 +64,7 @@ retrieval:
     assert config.retrieval.rerank_top_n == 6
     assert config.retrieval.query_layers == ["fact", "evidence"]
     assert config.grounding.field_binding_enabled is True
+    assert config.grounding.relaxed_writeback_gate_enabled is False
     assert config.grounding.min_strength_for_answered == "E4"
     assert config.writeback.allow_uncertain is False
     assert config.writeback.uncertain_comment_prefix == "[UNCERTAIN]"
@@ -138,6 +139,7 @@ def test_show_config_command_outputs_merged_config() -> None:
     assert value["retrieval"]["plan"] == "layered"
     assert value["retrieval"]["expand_parent_payload"] is False
     assert value["grounding"]["field_binding_enabled"] is True
+    assert value["grounding"]["relaxed_writeback_gate_enabled"] is False
     assert "mode" not in value["retrieval"]
     assert "retrieval_mode" not in value["retrieval"]
     assert "retrieval_plan" not in value["retrieval"]

@@ -254,6 +254,7 @@ class Step15AgentRunner:
         self.field_binding_agent_enabled = bool(config.grounding.field_binding_agent_enabled)
         self.slot_decomposition_enabled = bool(config.grounding.slot_decomposition_enabled)
         self.pre_writeback_consistency_enabled = bool(config.grounding.pre_writeback_consistency_enabled)
+        self.relaxed_writeback_gate_enabled = bool(config.grounding.relaxed_writeback_gate_enabled)
         self.parent_payload_enabled = (
             bool(config.retrieval.expand_parent_payload) if parent_payload_enabled is None else bool(parent_payload_enabled)
         )
@@ -280,6 +281,7 @@ class Step15AgentRunner:
                 "field_binding_agent_enabled": self.field_binding_agent_enabled,
                 "slot_decomposition_enabled": self.slot_decomposition_enabled,
                 "pre_writeback_consistency_enabled": self.pre_writeback_consistency_enabled,
+                "relaxed_writeback_gate_enabled": self.relaxed_writeback_gate_enabled,
             },
         )
         self.review_items: list[dict[str, Any]] = []
@@ -342,6 +344,7 @@ class Step15AgentRunner:
             "judge_enabled": self.judge_enabled,
             "writeback_enabled": self.writeback_enabled,
             "field_binding_agent_enabled": self.field_binding_agent_enabled,
+            "relaxed_writeback_gate_enabled": self.relaxed_writeback_gate_enabled,
             "started_at": now_iso(),
             "finished_at": "",
         }
@@ -1094,6 +1097,7 @@ class Step15AgentRunner:
             min_strength_for_answered=self.config.grounding.min_strength_for_answered,
             min_strength_for_writeback=self.config.grounding.min_strength_for_writeback,
             downgrade_unsupported_answer_to_partial=self.config.grounding.downgrade_unsupported_answer_to_partial,
+            relaxed_writeback_gate_enabled=self.relaxed_writeback_gate_enabled,
         )
         self.trace.record(field_id, "grounding_evaluated", grounding_result.to_dict())
         if self.config.grounding.write_grounding_trace:
@@ -1415,6 +1419,7 @@ class Step15AgentRunner:
             "field_binding_agent_enabled": self.field_binding_agent_enabled,
             "slot_decomposition_enabled": self.slot_decomposition_enabled,
             "pre_writeback_consistency_enabled": self.pre_writeback_consistency_enabled,
+            "relaxed_writeback_gate_enabled": self.relaxed_writeback_gate_enabled,
             "parent_payload_enabled": self.parent_payload_enabled,
             "vector_top_k": self.vector_top_k,
             "rerank_top_n": self.rerank_top_n,

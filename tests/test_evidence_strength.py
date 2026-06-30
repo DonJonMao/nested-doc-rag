@@ -140,6 +140,39 @@ def test_weak_strength_without_hard_mismatch_blocks_writeback_only() -> None:
     assert "unsupported_by_strong_evidence" not in result.critic_flags
 
 
+def test_relaxed_writeback_gate_keeps_weak_strength_as_warning_only() -> None:
+    pred = prediction("双路同时在线", ["chunk_main"])
+    overlay = overlay_row(writeback_allowed=True, review_required=False, risk_level="low")
+    weak = EvidenceStrengthResult(
+        "E2",
+        ["answer_value_tokens_missing_from_evidence", "answer_value_tokens_found_in_evidence"],
+        ["chunk_main"],
+        [],
+        ["chunk_main"],
+        ["双路"],
+        ["同时在线"],
+        field_binding="exact",
+        field_binding_score=1.0,
+        field_binding_reasons=["field_path_matches_intent"],
+    )
+
+    result = apply_evidence_strength_to_overlay(
+        pred,
+        overlay,
+        weak,
+        min_strength_for_answered="E3",
+        min_strength_for_writeback="E3",
+        downgrade_unsupported_answer_to_partial=False,
+        relaxed_writeback_gate_enabled=True,
+    )
+
+    assert result.writeback_allowed is True
+    assert result.review_required is False
+    assert result.risk_level == "low"
+    assert "evidence_strength_below_writeback_threshold" in result.reasons
+    assert "weak_evidence_for_writeback" not in result.critic_flags
+
+
 def test_field_binding_exact_numeric_row() -> None:
     result = evaluator().evaluate(
         item=item("已建设机柜数量是多少？"),
@@ -238,6 +271,29 @@ def test_generic_entity_gap_is_near_not_hard_field_mismatch() -> None:
     assert "field_binding_not_exact" in blocked.critic_flags
 
 
+def test_relaxed_writeback_gate_keeps_near_binding_as_warning_only() -> None:
+    result = evaluator().evaluate(
+        item=item("门禁是否满足要求？"),
+        prediction=prediction("是", ["chunk_main"]),
+        top_hits=hits(raw_text="现场环境 / 安全管控要求 / 满足", row_header="安全管控", column_header="现状"),
+    )
+
+    assert result.field_binding == "near"
+    relaxed = apply_evidence_strength_to_overlay(
+        prediction("是", ["chunk_main"]),
+        overlay_row(writeback_allowed=True, review_required=False, risk_level="low"),
+        result,
+        min_strength_for_answered="E3",
+        min_strength_for_writeback="E3",
+        downgrade_unsupported_answer_to_partial=False,
+        relaxed_writeback_gate_enabled=True,
+    )
+    assert relaxed.writeback_allowed is True
+    assert relaxed.review_required is False
+    assert "field_binding_not_exact" in relaxed.reasons
+    assert "field_binding_not_exact" not in relaxed.critic_flags
+
+
 def test_parent_payload_can_make_binding_parent_exact() -> None:
     result = evaluator().evaluate(
         item=item("301机房 UPS 容量是多少？"),
@@ -271,6 +327,28 @@ def test_unit_mismatch_blocks_writeback() -> None:
     assert blocked.writeback_allowed is False
     assert blocked.review_required is True
     assert blocked.risk_level in {"medium", "high"}
+    assert "unit_mismatch" in blocked.reasons
+
+
+def test_relaxed_writeback_gate_still_blocks_hard_binding_mismatch() -> None:
+    result = evaluator().evaluate(
+        item=item("UPS 容量 kVA 是多少？"),
+        prediction=prediction("500kVA", ["chunk_main"]),
+        top_hits=hits(raw_text="UPS 功率 500kW。", row_header="UPS", column_header="功率", unit="kW"),
+    )
+
+    assert result.field_binding == "unit_mismatch"
+    blocked = apply_evidence_strength_to_overlay(
+        prediction("500kVA", ["chunk_main"]),
+        overlay_row(writeback_allowed=True, review_required=False, risk_level="low"),
+        result,
+        min_strength_for_answered="E3",
+        min_strength_for_writeback="E3",
+        downgrade_unsupported_answer_to_partial=False,
+        relaxed_writeback_gate_enabled=True,
+    )
+    assert blocked.writeback_allowed is False
+    assert blocked.review_required is True
     assert "unit_mismatch" in blocked.reasons
 
 
