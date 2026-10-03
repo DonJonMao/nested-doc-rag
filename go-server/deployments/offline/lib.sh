@@ -91,10 +91,11 @@ verify_loaded_images() {
     reference="$(manifest_image_value "$key" reference)"
     config_digest="$(manifest_image_value "$key" config_digest)"
     [[ "$reference" == "${!key}" && "$expected" =~ ^sha256:[a-f0-9]{64}$ ]] || fail "invalid manifest image identity: $key"
-    actual="$(docker image inspect "${!key}" --format '{{.Id}} {{.Architecture}} {{.Os}} {{index .Config.Labels "org.opencontainers.image.revision"}}')" || fail "bundled image is missing: $key"
-    read -r local_id image_arch image_os revision <<< "$actual"
+    actual="$(docker image inspect "${!key}" --format '{{.Id}} {{.Architecture}} {{.Os}}')" || fail "bundled image is missing: $key"
+    read -r local_id image_arch image_os <<< "$actual"
     [[ "$image_os" == linux && "$(normalize_arch "$image_arch")" == "$BUNDLE_ARCH" ]] || fail "loaded image platform differs: $key"
     case "$key" in API_IMAGE|WORKER_IMAGE|WEB_IMAGE)
+      revision="$(docker image inspect "${!key}" --format '{{with index .Config "Labels"}}{{index . "org.opencontainers.image.revision"}}{{end}}')" || fail "cannot read application source revision: $key"
       [[ "$revision" == "$(manifest_value source_commit)" ]] || fail "application image source revision differs: $key";;
     esac
     rootfs_expected="$(manifest_image_value "$key" rootfs_sha256)"
