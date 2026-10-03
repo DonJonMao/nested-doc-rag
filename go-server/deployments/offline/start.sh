@@ -12,9 +12,21 @@ verify_bundle_architecture
 mkdir -p "$OFFLINE_DIR/runtime-logs"
 docker load --input "$OFFLINE_DIR/images/all-images.tar" > "$OFFLINE_DIR/runtime-logs/image-load.log" 2>&1 || fail "image load failed; see runtime-logs/image-load.log"
 verify_loaded_images
+# Only a successful inventory establishes absence. A failed inspect/list must
+# never be interpreted as a new database or cause fresh credentials/markers.
+volume_inventory="$(docker volume ls --format '{{.Name}}')" || fail "cannot enumerate Docker volumes; no fresh-install state was created"
+volume_exists() {
+  local volume_name
+  while IFS= read -r volume_name; do
+    [[ "$volume_name" == "$1" ]] && return 0
+  done <<< "$volume_inventory"
+  return 1
+}
 random_secret() { od -An -N32 -tx1 /dev/urandom | tr -d ' \n'; }
 if [[ ! -e "$OFFLINE_DIR/.env" ]]; then
-  docker volume inspect datacenter-vnext_postgres_data >/dev/null 2>&1 && fail "existing default database volume has no local .env; restore its original credentials"
+  if volume_exists datacenter-vnext_postgres_data; then
+    fail "existing default database volume has no local .env; restore its original credentials"
+  fi
   db_password="$(random_secret)"; minio_password="$(random_secret)"
   jwt_secret="$(random_secret)"; admin_password="$(random_secret)"
   (set -o noclobber; cat > "$OFFLINE_DIR/.env" <<EOF
@@ -68,7 +80,7 @@ fi
 if [[ -e "$OFFLINE_DIR/.fresh-install-pending" ]]; then
   [[ "$(cat "$OFFLINE_DIR/.fresh-install-pending")" == "$PROJECT" ]] || fail "fresh-install marker belongs to another project"
 elif [[ ! -e "$OFFLINE_DIR/.initialized" ]]; then
-  if ! docker volume inspect "${PROJECT}_postgres_data" >/dev/null 2>&1; then
+  if ! volume_exists "${PROJECT}_postgres_data"; then
     (set -o noclobber; printf '%s\n' "$PROJECT" > "$OFFLINE_DIR/.fresh-install-pending")
   else
     printf 'Existing database volume retained; fresh-install metadata cleanup is disabled.\n'
