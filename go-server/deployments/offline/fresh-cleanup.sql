@@ -17,8 +17,8 @@ CREATE TEMP TABLE offline_seed_files(id uuid PRIMARY KEY) ON COMMIT DROP;
 INSERT INTO offline_seed_files VALUES
   ('638cb027-36f1-524d-afde-fc8752fd6608'), ('b916fbd0-6c0e-5229-b2b0-9d07bb0ac8e8'),
   ('7ed8a8cd-6f9e-50cd-a7d9-49745688f6b1'), ('256c8f6e-5c01-5de9-81a2-77d81eb93797'),
-  ('ca70634a-3ed3-5e9c-8fd9-08ad1c07ac2b'), ('9c05f806-51bc-5693-a5bf-59cb0c79b2b7'),
-  ('2c0e1725-50dd-549d-9e60-0a20e10f70cf'), ('3bc35206-b57d-5854-9307-9854e1782645'),
+  ('ca70634a-3ed3-5e9c-8fd9-08ad1c07ac2b'), ('2e43d37c-5e32-5879-b990-db2f278a7633'),
+  ('2c0e1725-50dd-549d-9e60-0a20e10f70cf'), ('d1c62abd-63d4-542f-b517-033b4bb683a4'),
   ('13515794-1668-511d-b443-b821f59b2e74'), ('b709e6b0-4a19-5773-b363-96b648272547'),
   ('89372d61-3950-5fc3-8456-884d30fe52ac'), ('4df28f30-872d-5541-a8b8-08a35b49372a'),
   ('05ff2255-2dd8-593a-bd17-9a0de96a8594'), ('200e3b67-1482-555e-9653-f57ff841ce92');
