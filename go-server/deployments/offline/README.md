@@ -9,6 +9,8 @@ PYTHONPATH=src python scripts/build_vnext_offline_bundle.py \
   --architecture amd64 --models-env /path/private.env
 ```
 
+若构建机已缓存指定版本的官方 MinIO 镜像，而上游仓库不可访问，可追加 `--local-minio`。打包器要求固定官方 repository digest、匹配目标平台及 release label，并实际核对 `minio --version`；它不会把任意本地 tag 当作可信来源。来源与核对记录保存在包内 `build-evidence/`，服务器启动不访问镜像仓库。
+
 ARM64 服务器使用 `--architecture arm64` 的独立包。上传并解压对应的包，在包目录运行：
 
 ```sh

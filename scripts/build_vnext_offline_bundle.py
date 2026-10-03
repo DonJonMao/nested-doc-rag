@@ -21,6 +21,8 @@ DEPENDENCIES = {
     "MINIO_IMAGE": ("minio/minio:RELEASE.2024-10-13T13-34-11Z", "minio", "2024-10-13"),
     "QDRANT_IMAGE": ("qdrant/qdrant:v1.12.4", "qdrant", "1.12.4"),
 }
+# Preserve the official multi-platform identity when its registry is unavailable.
+LOCAL_MINIO_SOURCE = "minio/minio@sha256:9535594ad4122b7a78c6632788a989b96d9199b483d3bd71a5ceae73a922cdfa"
 
 
 def digest(path: Path) -> str:
@@ -107,6 +109,8 @@ def main() -> int:
     parser.add_argument("--architecture", choices=["amd64", "arm64"], required=True)
     parser.add_argument("--source-commit", default="HEAD")
     parser.add_argument("--models-env", type=Path)
+    parser.add_argument("--local-minio", action="store_true",
+                        help="Use the already cached, pinned official MinIO release without pulling")
     parser.add_argument("--output-root", type=Path, default=ROOT / "artifacts/release-vnext/bundles")
     args = parser.parse_args()
     status = subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True)
@@ -173,24 +177,45 @@ def main() -> int:
         images.append({"variable": variable, **builder.inspect(reference)})
         print(json.dumps({"built": service, "architecture": args.architecture}), flush=True)
     for variable, (upstream, service, version) in DEPENDENCIES.items():
-        raw = json.loads(builder.run(
-            ["docker", "buildx", "imagetools", "inspect", upstream, "--raw"],
-            "manifest-" + service, capture=True,
-        ))
-        if "manifests" in raw:
-            selected = [item for item in raw["manifests"]
-                        if item.get("platform", {}).get("os") == "linux"
-                        and item.get("platform", {}).get("architecture") == args.architecture]
-            if len(selected) != 1:
-                raise ValueError("Could not uniquely resolve dependency architecture: " + service)
-            repository = upstream.rsplit(":", 1)[0]
-            pinned = repository + "@" + selected[0]["digest"]
+        local_minio = service == "minio" and args.local_minio
+        if local_minio:
+            pinned = LOCAL_MINIO_SOURCE
+            cached = json.loads(builder.run(
+                ["docker", "image", "inspect", "--platform", platform, pinned],
+                "verify-local-minio", capture=True,
+            ))[0]
+            if pinned not in cached.get("RepoDigests", []):
+                raise ValueError("Cached MinIO has no matching official repository digest")
+            if cached["Config"].get("Labels", {}).get("version") != "RELEASE.2024-10-13T13-34-11Z":
+                raise ValueError("Cached MinIO release label differs")
+            actual_version = builder.run(
+                ["docker", "run", "--rm", "--read-only", "--network", "none", "--pull", "never",
+                 "--platform", platform, "--entrypoint", "minio", pinned, "--version"],
+                "verify-local-minio-version", capture=True,
+            )
+            if "minio version RELEASE.2024-10-13T13-34-11Z " not in actual_version:
+                raise ValueError("Cached MinIO executable release differs")
+            (evidence / "minio-version.txt").write_text(actual_version)
         else:
-            pinned = upstream
-        builder.run(["docker", "pull", "--platform", platform, pinned], "pull-" + service)
+            raw = json.loads(builder.run(
+                ["docker", "buildx", "imagetools", "inspect", upstream, "--raw"],
+                "manifest-" + service, capture=True,
+            ))
+            if "manifests" in raw:
+                selected = [item for item in raw["manifests"]
+                            if item.get("platform", {}).get("os") == "linux"
+                            and item.get("platform", {}).get("architecture") == args.architecture]
+                if len(selected) != 1:
+                    raise ValueError("Could not uniquely resolve dependency architecture: " + service)
+                repository = upstream.rsplit(":", 1)[0]
+                pinned = repository + "@" + selected[0]["digest"]
+            else:
+                pinned = upstream
+            builder.run(["docker", "pull", "--platform", platform, pinned], "pull-" + service)
         reference = f"nested-doc-rag-{service}:{version}-{args.architecture}"
         builder.run(["docker", "tag", pinned, reference], "tag-" + service)
         images.append({"variable": variable, "upstream": upstream, "resolved_source": pinned,
+                       "source_kind": "verified-local-official-digest" if local_minio else "registry",
                        **builder.inspect(reference)})
     (output / "images.env").write_text(f"BUNDLE_ARCH={args.architecture}\n" + "".join(
         f"{item['variable']}={item['reference']}\n" for item in images
