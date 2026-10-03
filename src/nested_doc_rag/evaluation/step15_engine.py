@@ -7,6 +7,7 @@ from typing import Any
 
 from nested_doc_rag.config import load_app_config
 from nested_doc_rag.embedding import RerankClient
+from nested_doc_rag.evidence_record import EvidenceAddress, infer_evidence_kind
 from nested_doc_rag.gongkan_eval import BASE_CLOUD_FILE
 from nested_doc_rag.io import display_text, read_jsonl
 from nested_doc_rag.retrieval import QdrantRetriever, layered_rerank_hits
@@ -52,10 +53,14 @@ def run_step15_retrieval(
     vector_top_k: int,
     rerank_top_n: int,
     layered_plan: list[dict[str, Any]],
+    schema_first_enabled: bool = False,
+    schema_queries: list[str] | None = None,
 ) -> Step15RetrievalResult:
     del vector_top_k, rerank_top_n
     if retrieval_mode != "layered":
         raise ValueError(f"unsupported retrieval_mode: {retrieval_mode}")
+    calls_before = getattr(retriever, "qdrant_query_calls", None)
+    schema_selections: list[dict[str, Any]] = []
     reranked_hits, vector_hits = layered_rerank_hits(
         query_text,
         retriever=retriever,
@@ -64,8 +69,21 @@ def run_step15_retrieval(
         allowed_layers=allowed_layers,
         reranker=reranker,
         layered_plan=layered_plan,
+        schema_first_enabled=schema_first_enabled,
+        schema_queries=schema_queries,
+        schema_selections=schema_selections,
     )
-    return Step15RetrievalResult(reranked_hits=reranked_hits, vector_hits=vector_hits, retrieval_mode="layered")
+    calls_after = getattr(retriever, "qdrant_query_calls", None)
+    observed_calls = (
+        calls_after - calls_before
+        if type(calls_before) is int and type(calls_after) is int and 0 <= calls_before <= calls_after
+        else None
+    )
+    return Step15RetrievalResult(
+        reranked_hits=reranked_hits, vector_hits=vector_hits, retrieval_mode="layered",
+        metadata={"qdrant_query_calls": observed_calls,
+                  "schema_first": {"enabled": schema_first_enabled, "selections": schema_selections}},
+    )
 
 
 def build_qdrant_answer_messages(
@@ -102,34 +120,51 @@ def build_qdrant_answer_messages(
             "如果任一 required/evidence_required 槽没有直接证据，不要把该槽脑补进 answer_value，应输出 partial_clue。\n"
         )
     agent_v2_rules = ""
-    if prompt_version == "agent_v2":
+    if prompt_version in {"agent_v2", "agentic_v1"}:
         agent_v2_rules = (
             "not_found strict rule: Use not_found only when the retrieved evidence pack contains no relevant information for the field. "
             "If any retrieved evidence is related but insufficient for direct filling, output partial_clue.\n"
-            "partial source rule: For partial_clue, always include reference_source_documents with chunk_id, namespace, source_type, retrieval_layer, "
-            "source_anchor, and a short evidence preview.\n"
+            "partial source rule: For partial_clue, include reference_source_documents with chunk_id, quote and reason. "
+            "Source addresses are resolved by the system from retrieval metadata.\n"
         )
-    elif prompt_version != "step15_compat":
+    agentic_rules = ""
+    if prompt_version == "agentic_v1":
+        agentic_rules = (
+            "evidence diagnosis rule: Always output evidence_diagnosis. Diagnose only from retrieved_chunks, not outside knowledge. "
+            "Use sufficient only when the current evidence directly supports the answer. Use missing_info for partial_clue when more slot-level evidence is needed. "
+            "Use not_found_recovery for not_found when an alias, layer expansion, or source-specific search may still recover evidence. "
+            "Use wrong_answer_risk for answered outputs with weak grounding, invalid source alignment, entity/scope mismatch, or risky conflict. "
+            "Use uncertainty_conflict for unresolved competing candidates, and include candidate_answers with supporting/refuting chunk ids.\n"
+        )
+    elif prompt_version not in {"step15_compat", "agent_v2"}:
         raise ValueError(f"unsupported prompt_version: {prompt_version}")
     user_prompt = (
         "下面是一个工勘单填报项和 RAG 检索结果。"
         "请只使用 retrieved_chunks 中的信息生成答案，不能使用常识，不能使用表格最后一列答案、heldout answer、expected_value 或 gold answer。\n"
         "retrieved_chunks 是唯一事实证据来源。answer_example_format_only 只能作为格式参考，不能作为事实来源。"
         "图片附件只作为证据标记，不 OCR。\n"
+        "引用定位规则：对采用的 source_chunk_ids 和参考线索，在 reference_source_documents 中提供 chunk_id 与 quote。"
+        "只能选择当前 retrieved_chunks 中已有的 evidence_id/chunk_id；不得生成新编号、来源文件名或地址。"
+        "文件、单元格、表行和段落位置由系统从 retrieval metadata 解析。"
+        "quote 必须逐字摘录对应 chunk 的 raw_source_text；没有 raw_source_text 时才使用 raw_text。"
+        "保留原文空格、换行、标点，不改写、不拼接多处文字，不从 text_for_embedding 摘录，也不自动复制整个段落。"
+        "没有可引用原文时 quote 留空。quote 仅用于原文定位；定位成功不代表答案正确或可以自动回写。\n"
         "输出口径：\n"
         "1. 如果 retrieved_chunks 中有可直接回答当前指标的证据，answer_status=answered，并填写 answer_value、source_chunk_ids 和 evidence_attachment_ids。\n"
         "2. 如果只命中相关信息，但粒度不够、缺少台数/实测值/房间粒度，或格式口径不足以直接填表，answer_status=partial_clue，answer_value 必须是“未找到”，"
-        "只在 reference_source_documents 中列出参考来源文件、位置和原因，不把它当直接证据。\n"
+        "只在 reference_source_documents 中列出已有 chunk_id、quote 和原因。\n"
         "3. 如果没有相关信息，answer_status=not_found，answer_value 必须是“未找到”。not_found 只应在没有相关证据时使用。\n"
         f"{agent_v2_rules}"
-        "4. 如果多个 retrieved_chunks 都像可用证据但互相冲突，交给你做智能体仲裁：优先同 namespace 的 main_excel_capability，"
+        f"{agentic_rules}"
+        "4. 如果多个 retrieved_chunks 都像可用证据但互相冲突，交给你做智能体仲裁：优先同 namespace 且字段、范围匹配的 structured_field，"
         "其次精确指标行，最后才是 global/intro_doc 长段说明；无法裁决时 answer_status=conflict_unresolved，answer_value 必须是“未找到”。\n"
         "5. 对 main_excel_capability 的 raw_text，斜杠前后的能力描述也是证据的一部分，不只看最后的现状/答案。"
         "例如 raw_text 包含“几路/两路进线/是否来自不同变电站”等指标描述，且现状/答案给出“来自同一个变电站”，"
         "可以组合成“2路市电，同一变电站”这类答案。"
         "如果同 namespace 精确指标行与 global/intro_doc 泛说明冲突，优先采用同 namespace 精确指标行，并在 agent_resolution.reason 说明低优先级来源被忽略。\n"
         "6. 如果 retrieved_chunks 带有 retrieval_layer/layer_priority，请按 layer_priority 从小到大审阅。"
-        "target_main_fact 和 main_excel_capability raw_text 是强证据；上层不足时再看下层；下层可补充上层缺口，但不能无理由覆盖上层直接证据。"
+        "target_structured_fact 提供明确字段和值，仍须检查字段、范围、状态与原文支持，不能仅凭 evidence_kind 或层名确认答案。"
+        "上层不足时再看下层；下层可补充上层缺口，但不能无理由覆盖上层直接证据。"
         "global/intro 相关但不直接的内容应该保留为 reference_source_documents。\n"
         f"{slot_rules}"
         "字段规则：如果 question_text 是“机房名称”，必须以 retrieved_chunks 中的机房名称证据为准。"
@@ -156,22 +191,11 @@ def build_qdrant_answer_messages(
 
 def build_answer_schema(prompt_version: str) -> dict[str, Any]:
     reference_doc_schema = {
-        "file_name": "仅作参考线索的来源文件名",
-        "anchor": "来源位置",
-        "chunk_id": "来源 chunk id",
-        "reason": "为什么只是参考线索而不是可填证据",
+        "chunk_id": "只能从 retrieved_chunks 中选择已有 evidence_id/chunk_id",
+        "reason": "采用该来源的原因；线索不足时说明不能直接填写的原因",
+        "quote": "对应 chunk 原文中的逐字短引用；优先 raw_source_text，其次 raw_text；没有则留空",
     }
-    if prompt_version == "agent_v2":
-        reference_doc_schema.update(
-            {
-                "namespace": "来源 namespace",
-                "source_type": "来源 source_type",
-                "retrieval_layer": "来源 retrieval_layer",
-                "source_anchor": "来源锚点",
-                "text_preview": "短证据预览",
-            }
-        )
-    return {
+    schema = {
         "answer_value": "可直接填入工勘单的短答案；没有足够直接证据时填“未找到”",
         "answer_status": "answered | partial_clue | not_found | conflict_unresolved",
         "confidence": "0-1",
@@ -195,22 +219,74 @@ def build_answer_schema(prompt_version: str) -> dict[str, Any]:
         "missing_fields": ["缺失字段"],
         "notes": "边界说明",
     }
+    if prompt_version == "agentic_v1":
+        schema["evidence_diagnosis"] = {
+            "state_kind": "sufficient | missing_info | wrong_answer_risk | not_found_recovery | uncertainty_conflict | unresolved",
+            "failure_modes": [
+                "slot_missing | granularity_gap | entity_mismatch | attribute_mismatch | scope_mismatch | format_gap | temporal_gap | source_conflict | candidate_conflict | evidence_absence | weak_grounding"
+            ],
+            "sufficiency": "sufficient | insufficient | contradictory | risky",
+            "missing_information_need": "string|null",
+            "candidate_answers": [
+                {
+                    "value": "string",
+                    "supporting_chunk_ids": [],
+                    "refuting_chunk_ids": [],
+                    "scope": "string|null",
+                    "reason": "string|null",
+                }
+            ],
+            "risk_reason": "string|null",
+            "recommended_next_actions": [
+                {
+                    "action_type": "slot_targeted_retrieval | alias_retrieval | layer_expansion | source_specific_retrieval | contrastive_retrieval | disambiguation_retrieval | stop | mark_unresolved",
+                    "query_text": "string",
+                    "target_slot": "string|null",
+                    "target_layer": "string|null",
+                    "source_type_preference": "string|null",
+                    "purpose": "string|null",
+                    "semantic_invariant": {},
+                    "expected_gain_type": "string|null",
+                }
+            ],
+        }
+    return schema
 
 
 def normalize_hit_for_prompt(hit: dict[str, Any]) -> dict[str, Any]:
+    raw_source_text = hit.get("raw_source_text")
+    has_raw_source = isinstance(raw_source_text, str) and bool(raw_source_text)
+    try:
+        kind = infer_evidence_kind(hit)
+    except ValueError:
+        kind = hit.get("evidence_kind")
+    address = EvidenceAddress.from_payload(hit).to_dict()
     normalized = {
         "chunk_id": hit.get("chunk_id"),
+        "evidence_id": hit.get("evidence_id") or hit.get("chunk_id"),
+        "evidence_kind": kind,
+        "kind": kind,
+        "field_name": hit.get("field_name"),
+        "field_value": hit.get("field_value"),
+        "address": address,
+        "location": address,
+        "text": raw_source_text if has_raw_source else hit.get("raw_text"),
         "rank": hit.get("final_rank", hit.get("rerank_rank", hit.get("vector_rank"))),
         "score": hit.get("rerank_score", hit.get("vector_score")),
         "retrieval_layer": hit.get("retrieval_layer"),
         "layer_priority": hit.get("layer_priority"),
         "layer_description": hit.get("layer_description"),
+        "retrieval_round": hit.get("retrieval_round"),
+        "triggered_by": hit.get("triggered_by"),
         "namespace": hit.get("namespace"),
         "source_type": hit.get("source_type"),
         "corpus_layer": hit.get("corpus_layer"),
         "file_name": hit.get("file_name"),
         "anchor": hit.get("anchor") or hit.get("source_anchor"),
         "raw_text": hit.get("raw_text"),
+        "raw_source_text": raw_source_text if has_raw_source else None,
+        "quote_text_space": "raw_source_text" if has_raw_source else ("raw_text" if hit.get("raw_text") else "unavailable"),
+        "index_version": hit.get("index_version") or "unknown",
         "text_for_embedding": hit.get("text_for_embedding"),
         "proof_attachment_ids": hit.get("proof_attachment_ids") or hit.get("evidence_attachment_ids") or [],
     }

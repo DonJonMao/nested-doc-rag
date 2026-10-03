@@ -1,0 +1,222 @@
+{
+  "schema_version": "vnext-evaluation-corrections-results-v1",
+  "recorded_at": "2026-10-02T22:57:51.683954+00:00",
+  "exact_base_commit": "030300065e0d5041f581f573e772f7756e54abd6",
+  "prior_delivery_commit": "c14a7e65d406769ea257949d73b609f535074f4a",
+  "gold_assessment_fix_commit": "c439e70cb9e65e2bec5c66c17b2bd2ed1ab8ead0",
+  "strict_primary_fix_commit": "b61049edf47deca56dcd25ad4c8691751e1cf224",
+  "latest_engineering_commit": "b61049edf47deca56dcd25ad4c8691751e1cf224",
+  "full_objective_complete": false,
+  "resumed_blocked_audit_turn": 1,
+  "previous_goal_turn_classification": "progress",
+  "fixes": [
+    {
+      "problem": "Unverified/candidate declarations were scored by some quality metrics and could inherit gold_verified=true.",
+      "behavior": "Explicit eligible declaration plus metric-specific annotations; unverified remains unknown; telemetry and independently verified protections remain observable.",
+      "direct_tests_passed": 46,
+      "schema_compatibility": "The fixed versioned synthetic domain-rule gold remains eligible; no additional all-141 human signoff gate.",
+      "source_audit": "artifacts/vnext/phase5/gold-assessment-audit-01/audit_summary.json"
+    },
+    {
+      "problem": "Primary-only deleted a first-round evidence layer and bypassed sufficiency, invalidating attribution to supplement.",
+      "behavior": "Same full config, first retrieval/decision/prompt/gate; explicit adapter omits only supplement and propagates primary subprocess failure.",
+      "direct_tests_passed": 5,
+      "injected_io_probe_assertions_passed": 14,
+      "probe_scope": "Actual pinned historical class with controlled IO; distinct from real Qdrant/HTTP execution.",
+      "source_audit": "artifacts/vnext/phase5/primary-counterfactual-audit-01/verification.json"
+    }
+  ],
+  "python": {
+    "tests": 909,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "elapsed_seconds": 163.813,
+    "exit_code": 0,
+    "command": "PYTHONPATH=src /Users/mao/miniconda3/bin/python -m pytest tests -q --junitxml=artifacts/vnext/phase5/resume-01/full-python.xml",
+    "source_scope": "Current complete Python suite after gold assessment and strict primary counterfactual corrections"
+  },
+  "static_checks": {
+    "ruff_touched_four_files_exit_code": 0,
+    "git_diff_check_exit_code": 0
+  },
+  "unchanged_scope": {
+    "go_and_frontend_sources_unchanged_since_previous_verification": true,
+    "go_race_leaf_passes_reused": 523,
+    "frontend_passes_reused": 39,
+    "not_reexecuted_this_turn": true
+  },
+  "corrected_ablation": {
+    "output": "artifacts/vnext/phase5/ablation-stub-04",
+    "runtime_kind": "native_local_qdrant",
+    "models_kind": "stub",
+    "historical_method_runs": 12,
+    "corrected_primary_runs": 3,
+    "offline_evaluations": 12,
+    "main_validators_passed": 12,
+    "primary_validators_passed": 3,
+    "all_fourteen_metrics_reported": true,
+    "raw_artifacts_unchanged_by_scoring": true,
+    "control_contract": "A3-primary-only-no-supplement-v1",
+    "same_full_config_bytes_all_three": true,
+    "primary_fields_with_one_round_and_same_first_query_calls": 30,
+    "offline_scorer_model_requests": 0,
+    "real_quality_claimed": false,
+    "source_and_control_evidence": "artifacts/vnext/phase5/resume-01/corrected-ablation-evaluation.json",
+    "older003_answer_gain_attribution_valid": false
+  },
+  "protocol_execution": {
+    "schema_version": "vnext-resume-owned-stub-cleanup-v1",
+    "recorded_at": "2026-10-02T22:52:33.465877+00:00",
+    "targeted_sigint_pid": 25640,
+    "port": 18768,
+    "docker_mutations_this_turn": 0,
+    "original_deployment_touched": false,
+    "protocol_request_count": 809,
+    "protocol_request_paths": {
+      "/v1/embeddings": 199,
+      "/v1/chat/completions": 198,
+      "/rerank": 412
+    },
+    "protocol_http_statuses": {
+      "200": 809
+    },
+    "protocol_error_types": {
+      "None": 809
+    },
+    "models_kind": "stub",
+    "usage_cost": "unknown; no real-model output or quality claim"
+  },
+  "real_model_preflight": {
+    "schema_version": "vnext-model-preflight-v1",
+    "timestamp": "2026-10-02T22:29:59.946014+00:00",
+    "config_sha256": "32d458f13047b85aa908f197881010e9a7c7562a28d7efd4d4263a747e1a6eca",
+    "credentials_available": {
+      "DEEPSEEK_API_KEY": true
+    },
+    "models_kind": "real",
+    "probes": [
+      {
+        "kind": "embedding",
+        "endpoint": "http://111.19.156.74:8001/v1/embeddings",
+        "requested_model": "qwen3-embedding-8b",
+        "request_sha256": "2724165c9ee192fa4b297351ea6b3c0ea5967c13a2df99495be540c4cde9c944",
+        "models_kind": "real",
+        "passed": false,
+        "error_type": "RemoteDisconnected",
+        "elapsed_seconds": 5.019
+      },
+      {
+        "kind": "rerank",
+        "endpoint": "http://111.19.156.74:8002/rerank",
+        "requested_model": null,
+        "request_sha256": "60abf4c050ce1b036127c03e72da0a45cb021c942a0e06df2e1c66d9709831f4",
+        "models_kind": "real",
+        "passed": false,
+        "error_type": "RemoteDisconnected",
+        "elapsed_seconds": 5.019
+      },
+      {
+        "kind": "chat",
+        "endpoint": "http://111.19.156.30:8006/v1/chat/completions",
+        "requested_model": "deepseek-v4-flash",
+        "request_sha256": "8a39aab5a9dad6ee37ba790d3c839a68d66e847743ff7d98167bc5d974a75d8a",
+        "models_kind": "real",
+        "passed": false,
+        "error_type": "RemoteDisconnected",
+        "elapsed_seconds": 5.019
+      }
+    ],
+    "passed": false,
+    "cost": "unknown; service pricing is not declared",
+    "service_weight_fingerprints": "unknown"
+  },
+  "transport_diagnostic": {
+    "schema_version": "vnext-service-transport-diagnostic-v1",
+    "recorded_at": "2026-10-02T22:31:46.177659+00:00",
+    "tcp_checks": [
+      {
+        "kind": "embedding",
+        "host": "111.19.156.74",
+        "port": 8001,
+        "application_model_request_sent": false,
+        "tcp_connected": true,
+        "elapsed_seconds": 0.004
+      },
+      {
+        "kind": "rerank",
+        "host": "111.19.156.74",
+        "port": 8002,
+        "application_model_request_sent": false,
+        "tcp_connected": true,
+        "elapsed_seconds": 0.004
+      },
+      {
+        "kind": "chat",
+        "host": "111.19.156.30",
+        "port": 8006,
+        "application_model_request_sent": false,
+        "tcp_connected": true,
+        "elapsed_seconds": 0.004
+      }
+    ],
+    "scope": "TCP handshake only, no authentication or application payload; does not prove model/service health.",
+    "related_model_preflight": "artifacts/vnext/phase5/resume-01/model-preflight.json"
+  },
+  "preservation": {
+    "original_frozen_files": 103,
+    "original_changes": [],
+    "old003_immutable_file_count": 382,
+    "old003_unchanged": true,
+    "prior_delivery_bound_evidence_count": 31,
+    "prior_delivery_evidence_unchanged": true,
+    "historical_reports_rewritten": false
+  },
+  "remaining_required_execution": [
+    "Three real fresh Docker knowledge/form pairs, new image/project/storage identities",
+    "Real challenge A0-A3 and valid primary-only controls, fixed model services and full metrics",
+    "Current-source old141 blank/preserve live compatibility/baseline on independent copies; native gold before quality claims"
+  ],
+  "limitations": [
+    "Protocol substitute does not establish model accuracy, semantic sufficiency quality or business improvement",
+    "Counterfactual adapter is an explicit experimental control; historical src unchanged",
+    "old141 native partial/candidate review remains zero verified gold and cannot serve as a quality benchmark",
+    "TCP success is not model health; real POST requests still disconnect; provider usage/cost unknown"
+  ],
+  "source_sha256": {
+    "scripts/vnext_evaluate.py": "925cac925146d0f2d575e99e0a3f6771d6217d6828ced4f88ae271b8197a7776",
+    "scripts/vnext_ablation.py": "34dcad3cc68b127ca32c2030c5a7e6a0449eb05b5d087cea86cdfd00d7c7f94e",
+    "tests/test_vnext_evaluation.py": "cd636d96ea619c21ec79d6381afef9dbfefc659798aa73a6fa6858a0765d6401",
+    "tests/test_vnext_ablation_primary.py": "c32d9a1e2836c1f9e35b512eea3102e356d4610a5c2f6aec67732aa70df8e773"
+  },
+  "evidence_sha256": {
+    "artifacts/vnext/phase5/gold-assessment-audit-01/audit_summary.json": "37f0d8a10d389bafbffbb8d4cd667aabd3edfece720be59378f6ff1001c97e53",
+    "artifacts/vnext/phase5/primary-counterfactual-audit-01/verification.json": "661f851b3a594c3363e849d18c24a203ad175d29ab8433e13452f2369a22a057",
+    "artifacts/vnext/phase5/resume-01/model-preflight.json": "782fdba367f98241a7805d69380e0a5bc188d3d985f59f7ef6b5d63c3e9390f6",
+    "artifacts/vnext/phase5/resume-01/model-preflight.log": "bb55ba60338cbc72bda03dd28db5a153e7debde7f67dc2a265d4aedbadf230b6",
+    "artifacts/vnext/phase5/resume-01/model-preflight-command.json": "88211b635dd8e26e288f6b8ca5c2250e440721654bba27351ce35cf10788531f",
+    "artifacts/vnext/phase5/resume-01/transport-diagnostic.json": "b9c8b15dbd36307577bc64a11ab0b8c479451d81e591e28cf81456255827c9c4",
+    "artifacts/vnext/phase5/resume-01/full-python.xml": "607424b4ff29a67a887860b3d44c5661c430e6a4e418f9ca50e2709e13296459",
+    "artifacts/vnext/phase5/resume-01/full-python.log": "a8cee3ded2cb6019c116db333ea1652757cee6355ad55ce122607161debf6f3c",
+    "artifacts/vnext/phase5/resume-01/full-python-summary.json": "ee326ef60359f876e3eb44753c901f0e6dc324512a396f242e30833c4b953abe",
+    "artifacts/vnext/phase5/resume-01/corrected-ablation-evaluation.json": "16cf49de56904b399b709fc155bee4cd1d83e90af89692e956a7cc4e8506f09a",
+    "artifacts/vnext/phase5/resume-01/preservation-before.json": "ae6652d2907014d7cc6677b8eace7e15466537d19e2b1cd144db0be63982ef61",
+    "artifacts/vnext/phase5/resume-01/ablation-stub-04.log": "3e143b70c76a6da2e9b706017570c4dc7a1ed285c3b90c271d77555dae6679ff",
+    "artifacts/vnext/phase5/resume-01/stub-identity.json": "7d124bd1321dbf76f04f36f7a36188a1c9066915946775fd8dc6900f70c58ab6",
+    "artifacts/vnext/phase5/resume-01/stub-model-requests.jsonl": "4b8500cccbf5e26da1bd0dc2be5347b4a23451ddc9e934e3703da478ab9746eb",
+    "artifacts/vnext/phase5/resume-01/cleanup.json": "faaf5a8a130ab536a77f8970c0d0be1851caeb5210b15556b456eda8a5a5eda0",
+    "artifacts/vnext/phase5/ablation-stub-04/ledger.json": "068297f129f0dbdb96d815e7817ff207b78e651838ab58c291ef134abe2e591a",
+    "artifacts/vnext/phase5/ablation-stub-04/A0/f1/evaluation/report.json": "4e08879b95500e6cd239e301c6111250d64bb7773144b2604450c92bec42a925",
+    "artifacts/vnext/phase5/ablation-stub-04/A0/f2/evaluation/report.json": "bbc9b0e590c6c49c492f41344bb970cae69e6a98a07791e45e3f688ce42b0f66",
+    "artifacts/vnext/phase5/ablation-stub-04/A0/f3/evaluation/report.json": "d5228bee882b7a6b07cedf444a5698696af27216c755a6f00d44c1661981a9ae",
+    "artifacts/vnext/phase5/ablation-stub-04/A1/f1/evaluation/report.json": "3a511c006fefa1c5aca7155a6c8ea7680d7bd0d65c57a70e19f4c4aa10c2a924",
+    "artifacts/vnext/phase5/ablation-stub-04/A1/f2/evaluation/report.json": "7c241b04d9443a520cc2ca8c7d8b710f33712893e785b0e4536081124dac497e",
+    "artifacts/vnext/phase5/ablation-stub-04/A1/f3/evaluation/report.json": "36eb5c1ac654c76e5fb4c20d181fce57906c8bbc8db1af54ca348cc3c449e9a9",
+    "artifacts/vnext/phase5/ablation-stub-04/A2/f1/evaluation/report.json": "5d76908a6cec6ea6d9d9b0659a051c9ae1cdd7b3a2177a9fa11abfd0b6b3e8de",
+    "artifacts/vnext/phase5/ablation-stub-04/A2/f2/evaluation/report.json": "9857ae1c256bd0778347a76b861061876db159ab9c9b72321aa2ca405afd8670",
+    "artifacts/vnext/phase5/ablation-stub-04/A2/f3/evaluation/report.json": "7965de3f8197beedc933b6e161e21a945c0823d74e36840d985f7262398f0439",
+    "artifacts/vnext/phase5/ablation-stub-04/A3/f1/evaluation/report.json": "ae1f0d81414a2594a8fb018eb588b85a70caf5ee725f16a605f142bd9b5a0447",
+    "artifacts/vnext/phase5/ablation-stub-04/A3/f2/evaluation/report.json": "855b8d4707b35a2c80f72db68e6d70426dc7fe54659a2a5112ce62519c37d41d",
+    "artifacts/vnext/phase5/ablation-stub-04/A3/f3/evaluation/report.json": "659b4f0697fdd4c8ee365ebfe408dda1a3fdc25e43e741684046b2653f9c7a1b"
+  }
+}

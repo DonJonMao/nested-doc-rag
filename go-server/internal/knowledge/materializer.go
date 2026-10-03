@@ -2,6 +2,9 @@ package knowledge
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -99,6 +102,69 @@ func writeObjectToFile(path string, reader io.ReadCloser) error {
 		return httpx.NewAppError(httpx.CodeInternal, "close local knowledge document failed", http.StatusInternalServerError, nil, err)
 	}
 	return nil
+}
+
+// MaterializeBuildInput uses only the committed snapshot, not current documents.
+// UUID directories prevent equal filenames from overwriting another source.
+func (m *IngestionMaterializer) MaterializeBuildInput(ctx context.Context, workspaceID uuid.UUID, snapshotJSON json.RawMessage, outDir string) (string, int, func(), error) {
+	if m == nil || m.Storage == nil {
+		return "", 0, func() {}, fmt.Errorf("ingestion materializer is not configured")
+	}
+	var snapshot BuildInputSnapshot
+	if err := json.Unmarshal(snapshotJSON, &snapshot); err != nil {
+		return "", 0, func() {}, err
+	}
+	if snapshot.SchemaVersion != BuildInputSchemaVersion || snapshot.WorkspaceID != workspaceID ||
+		snapshot.KnowledgeBaseID == uuid.Nil || snapshot.IndexVersionID == uuid.Nil ||
+		strings.TrimSpace(snapshot.Collection) == "" || strings.TrimSpace(snapshot.Namespace) == "" || len(snapshot.Documents) == 0 {
+		return "", 0, func() {}, fmt.Errorf("invalid frozen build input scope")
+	}
+	inputDir := filepath.Join(outDir, "input", snapshot.IndexVersionID.String())
+	seen := map[string]bool{}
+	for _, doc := range snapshot.Documents {
+		expectedPath := filepath.ToSlash(filepath.Join(doc.DocumentID.String(), doc.FileID.String(), doc.Filename))
+		hash, err := hex.DecodeString(doc.SHA256)
+		if err != nil || len(hash) != sha256.Size || doc.DocumentID == uuid.Nil || doc.FileID == uuid.Nil ||
+			doc.SizeBytes <= 0 || doc.ObjectKey == "" || doc.Filename == "" || doc.Filename != filepkg.SanitizeFilename(doc.Filename) ||
+			doc.RelativePath != expectedPath || seen[doc.RelativePath] {
+			return "", 0, func() {}, fmt.Errorf("invalid frozen source metadata")
+		}
+		seen[doc.RelativePath] = true
+		reader, _, err := m.Storage.Get(ctx, doc.ObjectKey)
+		if err != nil {
+			return "", 0, func() {}, err
+		}
+		path := filepath.Join(inputDir, filepath.FromSlash(doc.RelativePath))
+		if err := materializeHashedSource(path, reader, doc.SHA256, doc.SizeBytes); err != nil {
+			return "", 0, func() {}, err
+		}
+	}
+	return inputDir, len(snapshot.Documents), func() {}, nil
+}
+
+func materializeHashedSource(path string, reader io.ReadCloser, hash string, size int64) error {
+	defer reader.Close()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	target, err := os.CreateTemp(filepath.Dir(path), ".source-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(target.Name())
+	hasher := sha256.New()
+	n, copyErr := io.Copy(io.MultiWriter(target, hasher), reader)
+	closeErr := target.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if n != size || hex.EncodeToString(hasher.Sum(nil)) != hash {
+		return fmt.Errorf("frozen source hash/size mismatch")
+	}
+	return os.Rename(target.Name(), path)
 }
 
 func safePathSegment(value string) string {

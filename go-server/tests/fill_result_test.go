@@ -52,6 +52,8 @@ func TestFillRunDetailReadsManifestAndSummary(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "completed", detail.Status)
+	require.Equal(t, 1, detail.ProgressTotal)
+	require.Equal(t, 0, detail.ProgressDone)
 	require.Equal(t, formpkg.ManifestStatusValid, detail.ManifestStatus)
 	require.Equal(t, formpkg.ArtifactValidationStatusValid, detail.ArtifactValidationStatus)
 	require.Equal(t, 141, detail.Summary.TotalFields)

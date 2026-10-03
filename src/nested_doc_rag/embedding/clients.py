@@ -14,7 +14,7 @@ QUERY_INSTRUCTION = "Instruct: Given a web search query, retrieve relevant passa
 
 
 class CurlJsonClient:
-    def __init__(self, timeout_seconds: int = 120) -> None:
+    def __init__(self, timeout_seconds: int = 0) -> None:
         self.timeout_seconds = timeout_seconds
 
     def post_json(self, url: str, payload: dict[str, Any], *, headers: dict[str, str] | None = None) -> dict[str, Any]:
@@ -24,14 +24,14 @@ class CurlJsonClient:
             "*",
             "--silent",
             "--show-error",
-            "--max-time",
-            str(self.timeout_seconds),
             "-X",
             "POST",
             url,
             "-H",
             "Content-Type: application/json",
         ]
+        if self.timeout_seconds and self.timeout_seconds > 0:
+            command[5:5] = ["--max-time", str(self.timeout_seconds)]
         for name, value in (headers or {}).items():
             command.extend(["-H", f"{name}: {value}"])
         command.extend(["-d", "@-"])
@@ -59,7 +59,7 @@ class EmbeddingClient:
         self,
         endpoint: str = DEFAULT_EMBEDDING_ENDPOINT,
         model: str = DEFAULT_EMBEDDING_MODEL,
-        timeout_seconds: int = 180,
+        timeout_seconds: int = 0,
         purpose: str = "query_embedding",
     ) -> None:
         self.endpoint = endpoint
@@ -98,7 +98,7 @@ class RerankClient:
         self,
         endpoint: str = DEFAULT_RERANK_ENDPOINT,
         model: str = DEFAULT_RERANK_MODEL,
-        timeout_seconds: int = 120,
+        timeout_seconds: int = 0,
     ) -> None:
         self.endpoint = endpoint
         self.model = model

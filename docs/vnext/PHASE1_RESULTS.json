@@ -1,0 +1,19 @@
+{
+  "phase": "1",
+  "python": {
+    "tests": 308,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "ruff_exit_code": 0,
+  "external_model_calls": 0,
+  "original_workspace_files_verified": 103,
+  "original_workspace_changed_files": [],
+  "excluded_pending_phase_1b": [
+    "tests/integration/test_uploaded_form_to_fields.py"
+  ],
+  "regression_A": "passed: native XLSX -> actual local Qdrant upsert -> Docker production layered retrieval",
+  "regression_B": "not implemented yet; Phase 1B owns runtime template parsing",
+  "artifacts": "artifacts/vnext/phase1"
+}

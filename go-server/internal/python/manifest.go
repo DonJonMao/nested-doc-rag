@@ -25,6 +25,9 @@ type RunManifest struct {
 	Artifacts        map[string]string `json:"artifacts"`
 	Counts           ManifestCounts    `json:"counts"`
 	Writeback        ManifestWriteback `json:"writeback"`
+	Evidence         *ManifestEvidence `json:"evidence,omitempty"`
+	IndexScopes      json.RawMessage   `json:"index_scopes,omitempty"`
+	FormInput        json.RawMessage   `json:"form_input,omitempty"`
 	runDir           string
 }
 
@@ -102,7 +105,10 @@ func (m *RunManifest) ArtifactPath(name string) (string, bool) {
 		return "", false
 	}
 	value = strings.TrimSpace(value)
-	if filepath.IsAbs(value) || m.runDir == "" {
+	if !SafeManifestRelativePath(value) {
+		return "", false
+	}
+	if m.runDir == "" {
 		return value, true
 	}
 	return filepath.Join(m.runDir, value), true
@@ -121,5 +127,27 @@ func (m *RunManifest) Validate() error {
 	if len(m.Artifacts) == 0 {
 		return fmt.Errorf("%w: artifacts is required", ErrManifestInvalid)
 	}
+	for name, value := range m.Artifacts {
+		value = strings.TrimSpace(value)
+		if value != "" && !SafeManifestRelativePath(value) {
+			return fmt.Errorf("%w: artifact %s has unsafe path", ErrManifestInvalid, name)
+		}
+	}
+	if m.Evidence != nil && strings.TrimSpace(m.Artifacts["evidence_provenance"]) == "" {
+		return fmt.Errorf("%w: evidence_provenance artifact is required for evidence", ErrManifestInvalid)
+	}
+	if err := m.Evidence.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrManifestInvalid, err)
+	}
 	return nil
+}
+
+func SafeManifestRelativePath(value string) bool {
+	if strings.ContainsAny(value, "\\\x00") || filepath.IsAbs(value) {
+		return false
+	}
+	if filepath.Clean(value) == "." {
+		return false
+	}
+	return filepath.IsLocal(value)
 }

@@ -1,0 +1,19 @@
+{
+  "phase": "2",
+  "python": {
+    "tests": 476,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "go_exit_code": 0,
+  "ruff_exit_code": 0,
+  "external_model_calls": 0,
+  "localhost_model_substitute": true,
+  "added_real_cli_cases": 7,
+  "legacy141_validation": "legacy_read passed, not rerun",
+  "original_workspace_files_verified": 103,
+  "original_workspace_changed_files": [],
+  "artifacts": "artifacts/vnext/phase2",
+  "fresh_docker_e2e_count": 0
+}

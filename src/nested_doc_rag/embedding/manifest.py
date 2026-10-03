@@ -20,6 +20,7 @@ from nested_doc_rag.evidence_images import (
     registry_by_attachment_id,
     safe_key_part,
 )
+from nested_doc_rag.evidence_record import normalize_evidence_record
 
 DEFAULT_CONFIG = load_app_config()
 PROJECT_ROOT = DEFAULT_CONFIG.paths.project_root
@@ -175,9 +176,16 @@ def make_main_excel_manifest_record(segment: dict[str, Any], registry: dict[str,
     source_anchor = segment.get("source_anchor") or {}
     chunk_id = "rag_" + stable_id("main_excel_capability", segment.get("segment_id"))
     attachments = proof_attachments(segment, registry)
-    return {
+    original_source = segment.get("source") or {}
+    raw_source_text = segment.get("raw_source_text")
+    if not isinstance(raw_source_text, str):
+        raw_source_text = original_source.get("raw_source_text")
+    if not isinstance(raw_source_text, str):
+        raw_source_text = segment.get("raw_text")
+    payload = {
         "chunk_id": chunk_id,
         "source_type": "main_excel_capability",
+        "evidence_kind": "structured_field",
         "source_segment_id": segment.get("segment_id"),
         "namespace": namespace,
         "data_center_id": namespace,
@@ -187,10 +195,14 @@ def make_main_excel_manifest_record(segment: dict[str, Any], registry: dict[str,
         "rank_boost": 1.0,
         "text_for_embedding": compact_text(segment.get("embedding_text") or segment.get("raw_text")),
         "raw_text": compact_text(segment.get("raw_text")),
+        "field_name": segment.get("capability_desc") if segment.get("capability_desc") is not None else segment.get("question_text"),
+        "field_value": segment.get("answer_value"),
+        "structural_path": segment.get("category_path") or [],
         "file_name": segment.get("file_name"),
         "relative_path": segment.get("relative_path"),
         "sheet_name": segment.get("sheet_name"),
         "row_index": segment.get("row_index"),
+        "cell_range": source_anchor.get("cell_range"),
         "anchor": f"{source_anchor.get('sheet_name') or segment.get('sheet_name')}!row {segment.get('row_index')}",
         "table_id": None,
         "parent_chunk_id": None,
@@ -215,9 +227,17 @@ def make_main_excel_manifest_record(segment: dict[str, Any], registry: dict[str,
             "cell_range": source_anchor.get("cell_range"),
             "proof_cells": source_anchor.get("proof_cells") or [],
             "relative_path": segment.get("relative_path"),
+            "category_path": segment.get("category_path") or [],
             "proof_attachments": attachments,
         },
     }
+    if isinstance(raw_source_text, str):
+        payload["raw_source_text"] = raw_source_text
+    payload["source"] = {**original_source, **{key: value for key, value in payload["source"].items() if value is not None}}
+    for key in ("source_text_hash", "source_text_hash_space", "document_id", "source_document_hash", "source_chain"):
+        if key in segment:
+            payload[key] = segment[key]
+    return normalize_evidence_record(payload)
 
 
 def make_embedded_table_manifest_record(
@@ -236,9 +256,17 @@ def make_embedded_table_manifest_record(
     attachments = proof_attachments(segment, registry)
 
     chunk_id = "rag_" + stable_id("embedded_word_table", segment.get("segment_id"))
-    return {
+    original_source = segment.get("source") or {}
+    raw_source_text = segment.get("raw_source_text")
+    if not isinstance(raw_source_text, str):
+        raw_source_text = original_source.get("raw_source_text")
+    if not isinstance(raw_source_text, str):
+        raw_source_text = segment.get("raw_text")
+    local_anchor = segment.get("local_anchor") or (segment.get("source") or {}).get("local_anchor") or {}
+    payload = {
         "chunk_id": chunk_id,
         "source_type": "embedded_word_table",
+        "evidence_kind": "table_row",
         "source_segment_id": segment.get("segment_id"),
         "namespace": namespace,
         "data_center_id": namespace,
@@ -257,6 +285,7 @@ def make_embedded_table_manifest_record(
         "parent_chunk_id": segment.get("parent_segment_id"),
         "parent_attachment_id": parent_attachment_id,
         "embedded_file_name": segment.get("embedded_file_name"),
+        "structural_path": [str(value) for value in (segment.get("context"), segment.get("group")) if value],
         "proof_attachment_ids": proof_ids,
         "proof_attachments": attachments,
         "proof_attachment_count": len(proof_ids),
@@ -272,6 +301,8 @@ def make_embedded_table_manifest_record(
         ],
         "source": {
             "file_name": segment.get("file_name"),
+            "file_id": segment.get("file_id"),
+            "parent_file_id": segment.get("parent_file_id"),
             "sheet_name": segment.get("parent_sheet_name"),
             "source_cell": segment.get("parent_source_cell"),
             "anchor": segment.get("anchor"),
@@ -280,12 +311,23 @@ def make_embedded_table_manifest_record(
             "segment_role": segment.get("segment_role"),
             "source_row_indices": segment.get("source_row_indices") or [],
             "embedded_file_name": segment.get("embedded_file_name"),
+            "embedded_object_id": segment.get("embedded_object_id"),
+            "local_anchor": local_anchor,
+            "table_index": segment.get("table_index"),
+            "row_index": segment.get("row_index"),
             "semantic_status": audit.get("semantic_status"),
             "semantic_issue": audit.get("semantic_issue"),
             "relative_path": segment.get("relative_path") or segment.get("file_name"),
             "proof_attachments": attachments,
         },
     }
+    if isinstance(raw_source_text, str):
+        payload["raw_source_text"] = raw_source_text
+    payload["source"] = {**original_source, **{key: value for key, value in payload["source"].items() if value is not None}}
+    for key in ("source_text_hash", "source_text_hash_space", "document_id", "source_document_hash", "source_chain"):
+        if key in segment:
+            payload[key] = segment[key]
+    return normalize_evidence_record(payload)
 
 
 def build_proof_attachment_registry(
@@ -656,24 +698,12 @@ def search_index(
     )
     hits: list[dict[str, Any]] = []
     for score, index in scored[:top_k]:
-        record = records[index]
+        record = normalize_evidence_record(records[index])
         hits.append(
             {
+                **record,
                 "vector_rank": len(hits) + 1,
                 "vector_score": round(score, 6),
-                "chunk_id": record["chunk_id"],
-                "namespace": record["namespace"],
-                "corpus_layer": record["corpus_layer"],
-                "source_type": record["source_type"],
-                "embedding_policy": record["embedding_policy"],
-                "anchor": record.get("anchor"),
-                "file_name": record.get("file_name"),
-                "relative_path": record.get("relative_path"),
-                "raw_text": record.get("raw_text"),
-                "text_for_embedding": record.get("text_for_embedding"),
-                "proof_attachment_ids": record.get("proof_attachment_ids") or [],
-                "proof_attachments": record.get("proof_attachments") or [],
-                "source": record.get("source") or {},
             }
         )
     return hits

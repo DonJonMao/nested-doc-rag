@@ -32,6 +32,13 @@ func (l *FillRunLifecycleAdapter) MarkFillRunRunning(ctx context.Context, runID 
 	return l.Repo.MarkRunning(ctx, runID, time.Now().UTC())
 }
 
+func (l *FillRunLifecycleAdapter) MarkFillRunProgress(ctx context.Context, runID uuid.UUID, progressDone int, progressTotal int) error {
+	if l == nil || l.Repo == nil || runID == uuid.Nil {
+		return nil
+	}
+	return l.Repo.UpdateProgress(ctx, runID, progressDone, progressTotal)
+}
+
 func (l *FillRunLifecycleAdapter) MarkFillRunSucceeded(ctx context.Context, runID uuid.UUID, result *pythonpkg.Step15RunResult, artifacts []artifact.RunArtifact) error {
 	if l == nil || l.Repo == nil || runID == uuid.Nil {
 		return nil

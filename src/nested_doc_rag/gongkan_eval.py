@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -14,30 +15,55 @@ BASE_CLOUD_FILE = "基地云机房信息调研表.xlsx"
 
 
 def select_eval_items(
-    rows: list[int],
+    rows: list[int] | None,
     *,
     form_items_path: Path | None = None,
-    base_cloud_file: str = BASE_CLOUD_FILE,
+    base_cloud_file: str | None = None,
 ) -> list[dict[str, Any]]:
     if form_items_path is None:
         form_items_path = load_app_config().paths.artifacts_dir / "12_gongkan_form_analysis" / "form_items.jsonl"
-    row_set = set(rows)
-    items = [
-        item
-        for item in read_jsonl(form_items_path)
-        if item.get("file_name") == base_cloud_file and int(item.get("row_index")) in row_set
-    ]
-    by_row = {int(item["row_index"]): item for item in items}
-    missing = [row for row in rows if row not in by_row]
+        base_cloud_file = base_cloud_file or BASE_CLOUD_FILE
+    if not form_items_path.is_file():
+        raise RuntimeError(f"form items file does not exist: {form_items_path}")
+    items = read_jsonl(form_items_path)
+    if base_cloud_file is not None:
+        items = [item for item in items if item.get("file_name") == base_cloud_file]
+    return select_form_items(items, rows)
+
+
+def select_form_items(items: list[dict[str, Any]], rows: list[int] | None) -> list[dict[str, Any]]:
+    """Keep every field identity, including equal row numbers on different sheets."""
+    try:
+        available_rows = {int(item["row_index"]) for item in items}
+    except (TypeError, ValueError, KeyError) as exc:
+        raise RuntimeError("each form item requires a positive row_index") from exc
+    if any(row < 1 for row in available_rows):
+        raise RuntimeError("each form item requires a positive row_index")
+    missing = [row for row in rows or [] if row not in available_rows]
     if missing:
-        raise RuntimeError(f"missing base cloud form rows: {missing}")
-    return [by_row[row] for row in rows]
+        raise RuntimeError(f"missing form rows: {missing}")
+    selected = items if rows is None else [item for row in dict.fromkeys(rows) for item in items if int(item["row_index"]) == row]
+    if not selected:
+        raise RuntimeError("no form fields selected")
+    output: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in selected:
+        copied = dict(item)
+        if not copied.get("form_item_id"):
+            identity = [copied.get(key) for key in ("file_name", "sheet_name", "row_index", "target_cell", "question_text")]
+            copied["form_item_id"] = "form_" + hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode()).hexdigest()
+        field_id = str(copied["form_item_id"])
+        if field_id in seen:
+            raise RuntimeError(f"duplicate form field identity: {field_id}")
+        seen.add(field_id)
+        output.append(copied)
+    return output
 
 
 def build_masked_query(item: dict[str, Any], target_namespace: str) -> str:
     parts = [
         f"目标机房：{target_namespace}",
-        "任务：为基地云机房信息调研表生成最后一列“机房信息”的候选答案",
+        f"任务：为表单“{item.get('file_name') or '当前表单'}”的“{item.get('target_column_label') or '待填字段'}”生成候选答案",
         f"类别：{' / '.join(item.get('category_path') or [])}",
         f"指标名称：{item.get('question_text')}",
     ]
@@ -65,27 +91,28 @@ def call_deepseek_json(
         json.dump(payload, tmp, ensure_ascii=False)
         tmp_path = Path(tmp.name)
     try:
-        proc = subprocess.run(
-            [
-                "curl",
-                "--noproxy",
-                "*",
-                "-sS",
-                "--max-time",
-                str(timeout),
-                "-X",
-                "POST",
-                url,
-                "-H",
-                "Content-Type: application/json",
-                *[
-                    item
-                    for name, value in (headers if headers is not None else {"Authorization": f"Bearer {api_key}"}).items()
-                    for item in ("-H", f"{name}: {value}")
-                ],
-                "-d",
-                f"@{tmp_path}",
+        command = [
+            "curl",
+            "--noproxy",
+            "*",
+            "-sS",
+            "-X",
+            "POST",
+            url,
+            "-H",
+            "Content-Type: application/json",
+            *[
+                item
+                for name, value in (headers if headers is not None else {"Authorization": f"Bearer {api_key}"}).items()
+                for item in ("-H", f"{name}: {value}")
             ],
+            "-d",
+            f"@{tmp_path}",
+        ]
+        if timeout and timeout > 0:
+            command[4:4] = ["--max-time", str(timeout)]
+        proc = subprocess.run(
+            command,
             text=True,
             capture_output=True,
             check=False,
@@ -95,7 +122,11 @@ def call_deepseek_json(
     if proc.returncode != 0:
         raise RuntimeError(f"curl failed: {proc.stderr.strip() or proc.stdout.strip()}")
     response = json.loads(proc.stdout)
-    content = response["choices"][0]["message"]["content"].strip()
+    try:
+        content = response["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError, TypeError) as exc:
+        preview = display_text(json.dumps(response, ensure_ascii=False), 500)
+        raise RuntimeError(f"chat response missing choices: {preview}") from exc
     return extract_json_object(content)
 
 

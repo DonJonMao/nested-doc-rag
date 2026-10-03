@@ -35,9 +35,16 @@ func (b *CommandBuilder) BuildStep15AgentCommand(req Step15RunRequest) CommandSp
 		"--out-dir", strings.TrimSpace(req.OutDir),
 	}
 	if req.Judge {
+
 		args = append(args, "--judge")
 	} else {
 		args = append(args, "--no-judge")
+	}
+	if strings.TrimSpace(req.IndexScopesPath) != "" {
+		args = append(args, "--index-scopes", req.IndexScopesPath)
+	}
+	if strings.TrimSpace(req.QdrantCollection) != "" {
+		args = append(args, "--qdrant-collection", req.QdrantCollection)
 	}
 	if req.UseJudgeCache {
 		args = append(args, "--use-judge-cache")
@@ -45,8 +52,11 @@ func (b *CommandBuilder) BuildStep15AgentCommand(req Step15RunRequest) CommandSp
 	if strings.TrimSpace(req.JudgeCachePath) != "" {
 		args = append(args, "--judge-cache", strings.TrimSpace(req.JudgeCachePath))
 	}
-	if req.Writeback && strings.TrimSpace(req.TemplatePath) != "" {
-		args = append(args, "--template", strings.TrimSpace(req.TemplatePath), "--writeback")
+	if strings.TrimSpace(req.TemplatePath) != "" {
+		args = append(args, "--template", strings.TrimSpace(req.TemplatePath))
+	}
+	if req.Writeback {
+		args = append(args, "--writeback")
 	}
 	if req.Resume {
 		args = append(args, "--resume")
@@ -94,6 +104,10 @@ func (b *CommandBuilder) BuildKnowledgeIngestionCommand(req IngestionRequest) Co
 	}
 	if strings.TrimSpace(req.QdrantCollection) != "" {
 		args = append(args, "--qdrant-collection", strings.TrimSpace(req.QdrantCollection))
+	}
+	if req.IndexVersionID != "" {
+		args = append(args, "--index-version-id", req.IndexVersionID,
+			"--input-snapshot", req.InputSnapshotPath, "--input-snapshot-hash", req.InputSnapshotHash)
 	}
 	if strings.TrimSpace(req.QdrantNamespace) != "" {
 		args = append(args, "--qdrant-namespace", strings.TrimSpace(req.QdrantNamespace))

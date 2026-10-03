@@ -74,10 +74,11 @@ COPY go-server/configs /app/configs
 COPY go-server/migrations /app/migrations
 
 # The Python CLI receives --config config/docker.yaml while its cwd is /app/python-core.
-# Keep experiment profiles in the image for audit/replay, while docker.yaml is
-# the production default used by the Go worker.
+# Keep production and experiment profiles in the image for audit/replay, while
+# docker.yaml is the production default used by the Go worker.
 RUN mkdir -p /app/python-core/config/experiments
 COPY config/docker.yaml /app/python-core/config/docker.yaml
+COPY config/writeback37_agentic4.yaml /app/python-core/config/writeback37_agentic4.yaml
 COPY config/experiments /app/python-core/config/experiments
 
 RUN mkdir -p \

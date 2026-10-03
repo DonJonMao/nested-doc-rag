@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from nested_doc_rag.schemas.evidence import EvidenceRef
+
 
 @dataclass(frozen=True)
 class FieldConstraints:
@@ -94,6 +96,7 @@ class FieldPrediction:
     reference_snippets: list[str] = field(default_factory=list)
     validation: dict[str, Any] = field(default_factory=dict)
     method_name: str = ""
+    evidence_refs: list[EvidenceRef] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> FieldPrediction:
@@ -106,6 +109,7 @@ class FieldPrediction:
             confidence=float(value.get("confidence") or 0.0),
             source_chunk_ids=[str(item) for item in value.get("source_chunk_ids") or []],
             evidence_attachment_ids=[str(item) for item in value.get("evidence_attachment_ids") or []],
+            evidence_refs=[item if isinstance(item, EvidenceRef) else EvidenceRef.from_dict(item) for item in value.get("evidence_refs") or []],
             reference_chunk_ids=[str(item) for item in value.get("reference_chunk_ids") or []],
             reference_source_documents=[dict(item) for item in value.get("reference_source_documents") or [] if isinstance(item, dict)],
             reference_snippets=[str(item) for item in value.get("reference_snippets") or []],
@@ -123,6 +127,7 @@ class FieldPrediction:
             "confidence": self.confidence,
             "source_chunk_ids": self.source_chunk_ids,
             "evidence_attachment_ids": self.evidence_attachment_ids,
+            "evidence_refs": [item.to_dict() for item in self.evidence_refs],
             "reference_chunk_ids": self.reference_chunk_ids,
             "reference_source_documents": self.reference_source_documents,
             "reference_snippets": self.reference_snippets,

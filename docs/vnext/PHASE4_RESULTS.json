@@ -1,0 +1,33 @@
+{
+  "phase": "4",
+  "python": {
+    "tests": 700,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "expected_legacy_warnings": 4,
+    "elapsed_seconds": 120.17
+  },
+  "new_policy_cases_from_full_junit": {
+    "writer_policy": 47,
+    "policy_artifact_validation": 16,
+    "real_cli_runtime_integration": 13
+  },
+  "go_exit_code": 0,
+  "ruff_exit_code": 0,
+  "diff_check_exit_code": 0,
+  "existing_value_policy_default": "preserve",
+  "overwrite_all_requires_explicit_cli": true,
+  "writeback_policy_contract_version": "writeback-policy-v1",
+  "new_run_manifest_schema_version": "1.3",
+  "external_model_calls": 0,
+  "localhost_model_substitute": true,
+  "real_model_acceptance": "not executed",
+  "added_real_cli_cases": 13,
+  "targeted_manifest_provenance_addressed_regression_cases": 28,
+  "historical_old_value_certification": "writer records its read; validator checks final workbook and policy consistency",
+  "original_workspace_files_verified": 103,
+  "original_workspace_changed_files": [],
+  "artifacts": "artifacts/vnext/phase4",
+  "fresh_docker_e2e_count": 0
+}

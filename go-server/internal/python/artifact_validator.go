@@ -30,6 +30,11 @@ func ValidateArtifactsFromManifest(runDir string, manifest *RunManifest) (*Artif
 		manifestCopy.runDir = runDir
 		manifest = &manifestCopy
 	}
+	if err := manifest.Validate(); err != nil {
+		result.OK = false
+		result.Errors = append(result.Errors, err.Error())
+		return result, nil
+	}
 	for name, path := range manifest.Artifacts {
 		if strings.TrimSpace(path) == "" {
 			result.OK = false
@@ -40,7 +45,7 @@ func ValidateArtifactsFromManifest(runDir string, manifest *RunManifest) (*Artif
 		if !ok {
 			resolved = path
 		}
-		if _, err := os.Stat(resolved); err != nil {
+		if err := validateArtifactLocation(runDir, resolved); err != nil {
 			result.OK = false
 			result.Missing = append(result.Missing, name)
 		}

@@ -36,12 +36,20 @@ export const useFillRunStore = defineStore('fillRun', () => {
     }
   }
 
+  let detailRequest = 0
+
   async function loadRun(runId: string) {
-    detail.value = null
-    current.value = null
-    detail.value = await getFillRun(runId)
-    current.value = detail.value
-    return detail.value
+    const request = ++detailRequest
+    if (detail.value?.id !== runId) {
+      detail.value = null
+      current.value = null
+    }
+    const result = await getFillRun(runId)
+    if (request === detailRequest) {
+      detail.value = result
+      current.value = result
+    }
+    return result
   }
 
   async function cancel(runId: string) {

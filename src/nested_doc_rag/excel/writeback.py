@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import re
+import warnings
 import xml.etree.ElementTree as ET
 import zipfile
 from collections.abc import Mapping
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, replace
+from datetime import date, datetime, time, timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal
@@ -13,10 +16,12 @@ from openpyxl import load_workbook
 from openpyxl.cell.cell import Cell, MergedCell
 from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils.cell import column_index_from_string, coordinate_from_string, get_column_letter
+from openpyxl.utils.cell import column_index_from_string, coordinate_from_string, get_column_letter, range_boundaries
 from openpyxl.workbook import Workbook
+from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.worksheet import Worksheet
 
+from nested_doc_rag.evidence_resolver import mark_review_display_reference, validate_evidence_ref
 from nested_doc_rag.io import read_json, read_jsonl, write_json, write_jsonl
 from nested_doc_rag.schemas.eval import FieldPrediction
 from nested_doc_rag.schemas.excel import ExcelWritebackItem, ReviewItem, WritebackAuditRecord, WritebackSummary
@@ -41,6 +46,9 @@ WB_INVALID_CELL = "WB_INVALID_CELL"
 WB_MISSING_EVIDENCE = "WB_MISSING_EVIDENCE"
 WB_POLICY_REJECTED = "WB_POLICY_REJECTED"
 WB_COMMENT_TOO_LONG = "WB_COMMENT_TOO_LONG"
+WB_TARGET_NON_EMPTY = "WB_TARGET_NON_EMPTY"
+WB_OVERWRITE_POLICY = "WB_OVERWRITE_POLICY"
+EXISTING_VALUE_POLICIES = frozenset({"preserve", "overwrite_confirmed", "overwrite_all"})
 CRITICAL_FLAGS = {
     "answered_without_source",
     "invalid_source_reference",
@@ -58,6 +66,13 @@ CRITICAL_FLAGS = {
 SUPPORTED_EVIDENCE_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff"}
 DEFAULT_EVIDENCE_IMAGE_MAX_WIDTH = 360
 DEFAULT_EVIDENCE_IMAGE_MAX_HEIGHT = 240
+EVIDENCE_HEADERS = ["Field", "Answer", "Status", "Source", "Location", "Evidence"]
+EVIDENCE_SHEET_MARKER = "_NDR_GENERATED_EVIDENCE_SHEET"
+EVIDENCE_SHEET_MARKER_COMMENT = "nested-doc-rag generated evidence sheet v1"
+
+
+class LegacyWritebackModeWarning(UserWarning):
+    """Legacy mode no longer grants permission to replace existing values."""
 
 
 @dataclass(frozen=True)
@@ -81,11 +96,16 @@ class WritebackPolicy:
     uncertain_style: str = "red_fill"
     uncertain_comment_prefix: str = "[UNCERTAIN]"
     embed_evidence_images: bool = True
-    evidence_image_mode: str = "adjacent_columns"
+    evidence_image_mode: str = "append_sheet"
     max_evidence_images_per_field: int = 3
     max_comment_chars: int = 2000
     evidence_image_max_width_px: int = DEFAULT_EVIDENCE_IMAGE_MAX_WIDTH
     evidence_image_max_height_px: int = DEFAULT_EVIDENCE_IMAGE_MAX_HEIGHT
+    existing_value_policy: str = "preserve"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.existing_value_policy, str) or self.existing_value_policy not in EXISTING_VALUE_POLICIES:
+            raise ValueError("existing_value_policy must be preserve, overwrite_confirmed, or overwrite_all")
 
     @classmethod
     def from_value(cls, value: Any | None) -> WritebackPolicy:
@@ -102,12 +122,20 @@ class WritebackPolicy:
             uncertain_style=str(getter("uncertain_style", "red_fill")),
             uncertain_comment_prefix=str(getter("uncertain_comment_prefix", "[UNCERTAIN]")),
             embed_evidence_images=bool(getter("embed_evidence_images", True)),
-            evidence_image_mode=str(getter("evidence_image_mode", "adjacent_columns")),
+            evidence_image_mode=str(getter("evidence_image_mode", "append_sheet")),
             max_evidence_images_per_field=int(getter("max_evidence_images_per_field", 3) or 3),
             max_comment_chars=int(getter("max_comment_chars", 2000) or 2000),
             evidence_image_max_width_px=int(getter("evidence_image_max_width_px", DEFAULT_EVIDENCE_IMAGE_MAX_WIDTH) or DEFAULT_EVIDENCE_IMAGE_MAX_WIDTH),
             evidence_image_max_height_px=int(getter("evidence_image_max_height_px", DEFAULT_EVIDENCE_IMAGE_MAX_HEIGHT) or DEFAULT_EVIDENCE_IMAGE_MAX_HEIGHT),
+            existing_value_policy=getter("existing_value_policy", "preserve"),
         )
+
+
+def validated_writeback_policy(value: Any | None, *, overwrite_all_cli: bool) -> WritebackPolicy:
+    policy = WritebackPolicy.from_value(value)
+    if policy.existing_value_policy == "overwrite_all" and overwrite_all_cli is not True:
+        raise ValueError("overwrite_all requires an explicit CLI policy selection")
+    return policy
 
 
 def prepare_writeback_item(sheet_name: str, cell: str, value: object, comment: str | None = None) -> ExcelWritebackItem:
@@ -121,12 +149,21 @@ def writeback_from_files(
     output_path: Path,
     trace_path: Path | None = None,
     evidence_map_path: Path | None = None,
+    retrieval_evidence_path: Path | None = None,
     mode: Mode = "safe",
     write_comments: bool = True,
+    writeback_config: Any | None = None,
+    overwrite_all_cli: bool = False,
 ) -> WritebackSummary:
+    policy = validated_writeback_policy(writeback_config, overwrite_all_cli=overwrite_all_cli)
     predictions = [FieldPrediction.from_dict(record) for record in read_jsonl(predictions_path)]
     trace_by_field = load_trace_index(trace_path) if trace_path else {}
     evidence_map = read_json(evidence_map_path) if evidence_map_path and evidence_map_path.exists() else None
+    authority_path = retrieval_evidence_path or predictions_path.parent / "retrieval_evidence.jsonl"
+    retrieval_hits = {
+        str(record["field_id"]): record["top_hits"]
+        for record in read_jsonl(authority_path)
+    } if authority_path.is_file() else {}
     return patch_workbook(
         template_path=template_path,
         predictions=predictions,
@@ -135,6 +172,9 @@ def writeback_from_files(
         write_comments=write_comments,
         trace_by_field=trace_by_field,
         evidence_map=evidence_map,
+        retrieval_hits_by_field_id=retrieval_hits,
+        writeback_config=policy,
+        overwrite_all_cli=overwrite_all_cli,
     )
 
 
@@ -148,16 +188,24 @@ def patch_workbook(
     trace_by_field: dict[str, str] | None = None,
     evidence_map: dict[str, Any] | None = None,
     overlays_by_field_id: Mapping[str, Any] | None = None,
+    retrieval_hits_by_field_id: Mapping[str, list[dict[str, Any]]] | None = None,
     writeback_config: Any | None = None,
     run_id: str | None = None,
+    overwrite_all_cli: bool = False,
 ) -> WritebackSummary:
     if mode not in {"safe", "overwrite"}:
         raise ValueError("mode must be 'safe' or 'overwrite'")
+    policy = validated_writeback_policy(writeback_config, overwrite_all_cli=overwrite_all_cli)
+    if mode == "overwrite":
+        warnings.warn(
+            "Legacy mode=overwrite does not grant overwrite permission; existing_value_policy controls existing cells.",
+            LegacyWritebackModeWarning, stacklevel=2,
+        )
 
     workbook = load_workbook(template_path)
     trace_by_field = trace_by_field or {}
     overlays_by_field_id = overlays_by_field_id or {}
-    policy = WritebackPolicy.from_value(writeback_config)
+    retrieval_hits_by_field_id = retrieval_hits_by_field_id or {}
     audit_records: list[WritebackAuditRecord] = []
     review_items: list[ReviewItem] = []
     image_evidence_records: list[dict[str, Any]] = []
@@ -166,6 +214,7 @@ def patch_workbook(
     evidence_output["fields"] = evidence_fields
 
     resolved: list[ResolvedPrediction] = []
+    original_values: dict[str, Any] = {}
     for prediction in predictions:
         overlay = overlays_by_field_id.get(prediction.field_id)
         status = classify_writeback_status(prediction, overlay)
@@ -204,6 +253,7 @@ def patch_workbook(
             )
             continue
         resolved.append(ResolvedPrediction(prediction=prediction, target=target, status=status, evidence_refs=evidence_refs))
+        original_values.setdefault(target.key, audit_cell_value(workbook[target.sheet_name][target.cell].value))
 
     duplicate_keys = {item.target.key for item in resolved if sum(1 for other in resolved if other.target.key == item.target.key) > 1}
     for item in resolved:
@@ -248,12 +298,23 @@ def patch_workbook(
             status=item.status,
             evidence_refs=item.evidence_refs,
             policy=policy,
+            retrieval_hits=retrieval_hits_by_field_id.get(prediction.field_id, []),
         )
         audit_records.append(audit_record)
         if review_item:
             review_items.append(review_item)
 
     write_evidence_outputs(workbook, audit_records, policy=policy, base_dir=output_path.parent)
+    audit_records = [replace(
+        record, old_value=original_values.get(f"{record.sheet_name}!{record.cell}"),
+        new_value=audit_cell_value(workbook[record.sheet_name][record.cell].value) if record.sheet_name and record.cell else None,
+        policy=policy.existing_value_policy,
+    ) for record in audit_records]
+    for record in audit_records:
+        evidence_fields[record.field_id].update({
+            "status": record.status, "writeback_action": record.writeback_action, "error_code": record.error_code,
+            "old_value": record.old_value, "new_value": record.new_value, "policy": record.policy,
+        })
     output_path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_path)
     audit_path = output_path.parent / "writeback_audit.jsonl"
@@ -287,7 +348,24 @@ def apply_prediction(
     status: str,
     evidence_refs: list[dict[str, Any]],
     policy: WritebackPolicy,
+    retrieval_hits: list[dict[str, Any]] | None = None,
 ) -> tuple[WritebackAuditRecord, ReviewItem | None]:
+    if is_formula_cell(cell):
+        return rejected_writeback(
+            prediction, target=target, trace_id=trace_id, status="flagged" if status == "confirmed" else status,
+            evidence_refs=evidence_refs, reason="skipped_formula", writeback_action="skipped_formula", error_code=WB_POLICY_REJECTED,
+        )
+    if not is_empty_cell(cell):
+        if policy.existing_value_policy == "preserve":
+            return rejected_writeback(
+                prediction, target=target, trace_id=trace_id, status=status, evidence_refs=evidence_refs,
+                reason="target_non_empty", writeback_action="skipped_non_empty_cell", error_code=WB_TARGET_NON_EMPTY,
+            )
+        if policy.existing_value_policy == "overwrite_confirmed" and status != "confirmed":
+            return rejected_writeback(
+                prediction, target=target, trace_id=trace_id, status=status, evidence_refs=evidence_refs,
+                reason="overwrite_policy_rejected", writeback_action="skipped_non_empty_cell", error_code=WB_OVERWRITE_POLICY,
+            )
     if status == "flagged":
         reason = flagged_reason(prediction)
         return (
@@ -332,30 +410,6 @@ def apply_prediction(
                 writeback_action="review_only",
                 evidence_refs=evidence_refs,
                 error_code=WB_MISSING_EVIDENCE,
-            ),
-        )
-
-    if mode == "safe" and is_formula_cell(cell):
-        return (
-            make_audit(
-                prediction,
-                action="skipped",
-                reason="skipped_formula",
-                target=target,
-                trace_id=trace_id,
-                status="flagged" if status == "confirmed" else status,
-                writeback_action="skipped_formula",
-                evidence_refs=evidence_refs,
-                error_code=WB_POLICY_REJECTED,
-            ),
-            make_review_item(
-                prediction,
-                reason="skipped_formula",
-                trace_id=trace_id,
-                status="flagged" if status == "confirmed" else status,
-                writeback_action="skipped_formula",
-                evidence_refs=evidence_refs,
-                error_code=WB_POLICY_REJECTED,
             ),
         )
 
@@ -407,29 +461,14 @@ def apply_prediction(
                     error_code=WB_POLICY_REJECTED,
                 ),
             )
-        if not is_empty_cell(cell):
-            return (
-                make_audit(
-                    prediction,
-                    action="skipped",
-                    reason="uncertain_target_not_empty",
-                    target=target,
-                    trace_id=trace_id,
-                    status=status,
-                    writeback_action="skipped_non_empty_cell",
-                    evidence_refs=evidence_refs,
-                    error_code=WB_POLICY_REJECTED,
-                ),
-                make_review_item(
-                    prediction,
-                    reason="uncertain_target_not_empty",
-                    trace_id=trace_id,
-                    status=status,
-                    writeback_action="skipped_non_empty_cell",
-                    evidence_refs=evidence_refs,
-                    error_code=WB_POLICY_REJECTED,
-                ),
-            )
+        if policy.existing_value_policy == "overwrite_all":
+            evidence_errors = confirmed_evidence_errors(prediction, retrieval_hits or [])
+            if evidence_errors:
+                return rejected_writeback(
+                    prediction, target=target, trace_id=trace_id, status="flagged", evidence_refs=evidence_refs,
+                    reason="unresolvable_evidence: " + "; ".join(evidence_errors), writeback_action="review_only",
+                    error_code=evidence_errors[0].split(":", 1)[0],
+                )
         cell.value = prediction.answer_value
         apply_uncertain_style(cell, policy)
         comment_length, comment_truncated = maybe_write_uncertain_comment(
@@ -463,6 +502,21 @@ def apply_prediction(
             ),
         )
 
+    evidence_errors = confirmed_evidence_errors(prediction, retrieval_hits or [])
+    if evidence_errors:
+        reason = "unresolvable_evidence: " + "; ".join(evidence_errors)
+        error_code = evidence_errors[0].split(":", 1)[0]
+        return (
+            make_audit(
+                prediction, action="skipped", reason=reason, target=target, trace_id=trace_id,
+                status="flagged", writeback_action="review_only", evidence_refs=evidence_refs, error_code=error_code,
+            ),
+            make_review_item(
+                prediction, reason=reason, trace_id=trace_id, status="flagged",
+                writeback_action="review_only", evidence_refs=evidence_refs, error_code=error_code,
+            ),
+        )
+
     cell.value = prediction.answer_value
     comment_length, comment_truncated = maybe_write_comment(
         cell,
@@ -489,6 +543,18 @@ def apply_prediction(
     )
 
 
+def rejected_writeback(
+    prediction: FieldPrediction, *, target: TargetCell, trace_id: str | None, status: str,
+    evidence_refs: list[dict[str, Any]], reason: str, writeback_action: str, error_code: str,
+) -> tuple[WritebackAuditRecord, ReviewItem]:
+    return (
+        make_audit(prediction, action="skipped", reason=reason, target=target, trace_id=trace_id,
+                   status=status, writeback_action=writeback_action, evidence_refs=evidence_refs, error_code=error_code),
+        make_review_item(prediction, reason=reason, trace_id=trace_id, status=status,
+                         writeback_action=writeback_action, evidence_refs=evidence_refs, error_code=error_code),
+    )
+
+
 def maybe_write_comment(
     cell: Cell | MergedCell,
     prediction: FieldPrediction,
@@ -500,7 +566,9 @@ def maybe_write_comment(
 ) -> tuple[int, bool]:
     if not write_comments or isinstance(cell, MergedCell):
         return 0, False
-    comment_text = build_evidence_comment(prediction, evidence_refs, trace_id=trace_id)
+    comment_text = build_evidence_comment(
+        prediction, evidence_refs, trace_id=trace_id, include_text=policy.evidence_image_mode != "append_sheet",
+    )
     return write_limited_comment(cell, comment_text, policy=policy)
 
 
@@ -520,6 +588,7 @@ def maybe_write_uncertain_comment(
         evidence_refs,
         trace_id=trace_id,
         prefix=policy.uncertain_comment_prefix,
+        include_text=policy.evidence_image_mode != "append_sheet",
     )
     return write_limited_comment(cell, comment_text, policy=policy)
 
@@ -548,6 +617,7 @@ def build_evidence_comment(
     *,
     trace_id: str | None,
     prefix: str | None = None,
+    include_text: bool = True,
 ) -> str:
     lines = []
     if prefix:
@@ -555,8 +625,9 @@ def build_evidence_comment(
     lines.append("evidence:")
     for index, ref in enumerate(evidence_refs[:5], start=1):
         lines.append(f"{index}. document: {evidence_document_name(ref)}")
+        lines.append(f"   location: {ref_location(ref)}")
         text = evidence_text(ref)
-        if text:
+        if text and include_text:
             lines.append(f"   text: {display_comment_value(text, max_chars=500)}")
     if len(lines) == 1:
         lines.append(f"1. document: {format_list(prediction.source_chunk_ids) or 'unknown'}")
@@ -576,7 +647,8 @@ def evidence_document_name(ref: Mapping[str, Any]) -> str:
 
 def evidence_text(ref: Mapping[str, Any]) -> str:
     return str(
-        ref.get("text_preview")
+        ref.get("source_text")
+        or ref.get("text_preview")
         or ref.get("raw_text")
         or ref.get("text")
         or ref.get("content")
@@ -595,11 +667,16 @@ def display_comment_value(value: Any, max_chars: int = 180) -> str:
 
 
 def ref_location(ref: Mapping[str, Any]) -> str:
+    coordinate = ref.get("cell_range") or ref.get("cell")
+    sheet = ref.get("sheet_name")
+    if sheet and coordinate:
+        return f"{sheet}!{coordinate}"
     parts = [
-        ref.get("source_anchor"),
         f"page {ref.get('page')}" if ref.get("page") is not None else None,
-        ref.get("sheet_name"),
-        ref.get("cell"),
+        f"table {ref.get('table_index')}" if ref.get("table_index") is not None else None,
+        f"row {ref.get('row_index')}" if ref.get("row_index") is not None else None,
+        f"paragraph {ref.get('paragraph_index')}" if ref.get("paragraph_index") is not None else None,
+        ref.get("source_anchor"),
     ]
     return " / ".join(str(part) for part in parts if part) or "unknown"
 
@@ -618,7 +695,20 @@ def apply_uncertain_style(cell: Cell, policy: WritebackPolicy) -> None:
 
 
 def is_empty_cell(cell: Cell | MergedCell) -> bool:
-    return cell.value is None or str(cell.value).strip() == ""
+    return cell.value is None or cell.value == ""
+
+
+def audit_cell_value(value: Any) -> Any:
+    """Keep scalar types; make native Excel dates/formulas JSON representable."""
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+    if isinstance(value, timedelta):
+        return str(value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return deepcopy(value)
+    if hasattr(value, "text") and hasattr(value, "ref"):
+        return {"formula_type": type(value).__name__, "ref": value.ref, "text": value.text}
+    return str(value)
 
 
 def validation_passed(prediction: FieldPrediction) -> bool:
@@ -653,6 +743,33 @@ def classify_writeback_status(prediction: FieldPrediction, overlay: Any | None) 
     return "flagged"
 
 
+def confirmed_evidence_errors(prediction: FieldPrediction, hits: list[dict[str, Any]]) -> list[str]:
+    """Validate source authority independently of LLM or overlay decisions."""
+    refs = getattr(prediction, "evidence_refs", [])
+    if not refs:
+        return [f"{WB_MISSING_EVIDENCE}: confirmed writeback requires a typed evidence reference"]
+    errors: list[str] = []
+    selected_ids = set(prediction.source_chunk_ids)
+    ref_ids: set[str] = set()
+    permitted_attachments: set[str] = set()
+    for ref in refs:
+        value = dict(ref) if isinstance(ref, Mapping) else ref.to_dict()
+        ref_ids.add(str(value.get("chunk_id") or ""))
+        permitted_attachments.update(str(item) for item in value.get("attachment_ids") or [])
+        if not str(value.get("source_text") or "").strip():
+            errors.append(f"{WB_MISSING_EVIDENCE}: evidence source_text must not be empty")
+        matching = [hit for hit in hits if str(hit.get("chunk_id") or "") == str(value.get("chunk_id") or "")]
+        if not matching:
+            errors.append(f"EV_REF_NOT_IN_RETRIEVAL: reference is not in this field's retrieval: {value.get('chunk_id')}")
+        for hit in matching:
+            errors.extend(f"{error['code']}: {error['reason']}" for error in validate_evidence_ref(ref, hit))
+    if ref_ids != selected_ids:
+        errors.append("EV_REF_NOT_IN_RETRIEVAL: typed references do not match selected source_chunk_ids")
+    if set(prediction.evidence_attachment_ids) - permitted_attachments:
+        errors.append("EV_ATTACHMENT_NOT_FOUND: selected attachment is not authorized by typed source references")
+    return list(dict.fromkeys(errors))
+
+
 def has_usable_answer(prediction: FieldPrediction) -> bool:
     if prediction.answer_status not in {"answered", "partial_clue"}:
         return False
@@ -665,7 +782,8 @@ def has_usable_answer(prediction: FieldPrediction) -> bool:
 
 def has_evidence(prediction: FieldPrediction, overlay: Any | None) -> bool:
     return bool(
-        prediction.source_chunk_ids
+        getattr(prediction, "evidence_refs", [])
+        or prediction.source_chunk_ids
         or prediction.reference_chunk_ids
         or prediction.reference_source_documents
         or prediction.evidence_attachment_ids
@@ -683,7 +801,7 @@ def overlay_value(overlay: Any | None, name: str, default: Any = None) -> Any:
 
 
 def is_formula_cell(cell: Cell | MergedCell) -> bool:
-    return isinstance(cell.value, str) and cell.value.startswith("=")
+    return cell.data_type == "f" or (isinstance(cell.value, str) and cell.value.startswith("="))
 
 
 def resolve_target_cell(workbook: Workbook, target_cell: str | None) -> TargetCell | str:
@@ -830,11 +948,13 @@ def evidence_refs_for_prediction(
     run_id: str | None,
     max_image_refs: int,
 ) -> list[dict[str, Any]]:
-    docs: list[dict[str, Any]] = []
-    docs.extend(dict(item) for item in prediction.reference_source_documents if isinstance(item, dict))
-    docs.extend(dict(item) for item in overlay_value(overlay, "suggested_reference_source_documents", []) or [] if isinstance(item, dict))
+    typed_refs = getattr(prediction, "evidence_refs", [])
+    docs = [dict(ref) if isinstance(ref, Mapping) else ref.to_dict() for ref in typed_refs]
     if not docs:
-        docs.extend({"chunk_id": chunk_id} for chunk_id in prediction.source_chunk_ids)
+        # Historical document/image metadata remains useful for review display.
+        # A source ID alone is never manufactured into an evidence reference.
+        docs.extend(mark_review_display_reference(item) for item in prediction.reference_source_documents if isinstance(item, dict))
+        docs.extend(mark_review_display_reference(item) for item in overlay_value(overlay, "suggested_reference_source_documents", []) or [] if isinstance(item, dict))
 
     refs: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -846,7 +966,7 @@ def evidence_refs_for_prediction(
             continue
         seen.add(key)
         proof_attachments = normalize_proof_attachments(doc.get("proof_attachments"))
-        proof_ids = [str(item) for item in doc.get("proof_attachment_ids") or [] if item]
+        proof_ids = [str(item) for item in doc.get("attachment_ids") or doc.get("proof_attachment_ids") or [] if item]
         if not proof_ids:
             proof_ids = [str(item.get("attachment_id")) for item in proof_attachments if item.get("attachment_id")]
         if not ref.get("image_object_key") and proof_ids and image_count < max_image_refs:
@@ -870,6 +990,10 @@ def evidence_refs_for_prediction(
 
     if prediction.evidence_attachment_ids:
         for attachment_id in prediction.evidence_attachment_ids:
+            if typed_refs:
+                # Typed refs already carry the attachments authorized by their
+                # source hits; do not append free-floating model image IDs.
+                continue
             if image_count >= max_image_refs:
                 break
             object_key = image_object_key_for(run_id, prediction.field_id, attachment_id)
@@ -897,8 +1021,11 @@ def evidence_refs_for_prediction(
 
 
 def normalize_evidence_ref(doc: Mapping[str, Any]) -> dict[str, Any]:
+    if "evidence_kind" in doc and "source_text" in doc:
+        return dict(doc)
     proof_attachments = normalize_proof_attachments(doc.get("proof_attachments"))
     return {
+        **dict(doc),
         "chunk_id": str(doc.get("chunk_id") or ""),
         "document_id": doc.get("document_id") or doc.get("doc_id") or doc.get("file_id") or "",
         "document_name": doc.get("document_name") or doc.get("source_document_name") or "",
@@ -929,7 +1056,7 @@ def normalize_evidence_ref(doc: Mapping[str, Any]) -> dict[str, Any]:
         "bbox": doc.get("bbox") or [],
         "caption": doc.get("caption") or "",
         "file_name": doc.get("file_name") or doc.get("filename") or doc.get("source_file_name") or "",
-        "text_preview": doc.get("text_preview") or doc.get("raw_text") or doc.get("text") or doc.get("content") or doc.get("snippet") or "",
+        "text_preview": doc.get("source_text") or doc.get("text_preview") or doc.get("raw_text") or doc.get("text") or doc.get("content") or doc.get("snippet") or "",
     }
 
 
@@ -976,6 +1103,8 @@ def attach_proof_metadata(ref: dict[str, Any], attachment_id: str, proof_attachm
             ref["cell"] = attachment["source_cell"]
         if attachment.get("caption") and not ref.get("caption"):
             ref["caption"] = attachment["caption"]
+        return
+    if "evidence_kind" in ref:
         return
     parsed_cell = cell_from_attachment_id(attachment_id)
     if parsed_cell and not ref.get("cell"):
@@ -1035,10 +1164,10 @@ def write_evidence_outputs(
         write_evidence_sheet(workbook, audit_records, policy=policy, base_dir=base_dir)
         return
     if policy.evidence_image_mode in {"adjacent_columns", "inline", "answer_adjacent"}:
-        remove_generated_evidence_sheet(workbook)
+        remove_generated_evidence_sheet(workbook, protected_names={record.sheet_name for record in audit_records})
         write_adjacent_evidence_columns(workbook, audit_records, policy=policy, base_dir=base_dir)
         return
-    remove_generated_evidence_sheet(workbook)
+    remove_generated_evidence_sheet(workbook, protected_names={record.sheet_name for record in audit_records})
     write_adjacent_evidence_columns(workbook, audit_records, policy=policy, base_dir=base_dir)
 
 
@@ -1059,11 +1188,12 @@ def write_adjacent_evidence_columns(
 
     for sheet_name, records in records_by_sheet.items():
         sheet = workbook[sheet_name]
+        protected_targets = {record.cell for record in audit_records if record.sheet_name == sheet_name and record.cell}
         min_row_by_answer_col = min_target_row_by_answer_column(records)
         for answer_column, min_row in min_row_by_answer_col.items():
-            write_adjacent_headers(sheet, answer_column=answer_column, header_row=max(1, min_row - 1))
+            write_adjacent_headers(sheet, answer_column=answer_column, header_row=max(1, min_row - 1), protected_cells=protected_targets)
         for record in records:
-            write_adjacent_evidence_record(sheet, record, policy=policy, base_dir=base_dir)
+            write_adjacent_evidence_record(sheet, record, policy=policy, base_dir=base_dir, protected_cells=protected_targets)
 
 
 def min_target_row_by_answer_column(records: list[WritebackAuditRecord]) -> dict[int, int]:
@@ -1080,19 +1210,19 @@ def min_target_row_by_answer_column(records: list[WritebackAuditRecord]) -> dict
     return output
 
 
-def write_adjacent_headers(sheet: Worksheet, *, answer_column: int, header_row: int) -> None:
+def write_adjacent_headers(sheet: Worksheet, *, answer_column: int, header_row: int, protected_cells: set[str] | None = None) -> None:
     evidence_column = answer_column + 1
     image_column = answer_column + 2
     if image_column > MAX_EXCEL_COLUMN:
         return
     evidence_header = sheet.cell(row=header_row, column=evidence_column)
     image_header = sheet.cell(row=header_row, column=image_column)
-    if is_empty_cell(evidence_header):
+    if is_empty_cell(evidence_header) and evidence_header.coordinate not in (protected_cells or set()):
         evidence_header.value = "证据"
-    if is_empty_cell(image_header):
+        evidence_header.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
+    if is_empty_cell(image_header) and image_header.coordinate not in (protected_cells or set()):
         image_header.value = "证据图片"
-    evidence_header.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
-    image_header.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
+        image_header.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
     sheet.column_dimensions[get_column_letter(evidence_column)].width = max(
         sheet.column_dimensions[get_column_letter(evidence_column)].width or 0,
         72,
@@ -1109,6 +1239,7 @@ def write_adjacent_evidence_record(
     *,
     policy: WritebackPolicy,
     base_dir: Path | None,
+    protected_cells: set[str] | None = None,
 ) -> None:
     if not record.cell:
         return
@@ -1123,6 +1254,10 @@ def write_adjacent_evidence_record(
         return
 
     evidence_cell = sheet.cell(row=row, column=evidence_column)
+    if is_formula_cell(evidence_cell) or not is_empty_cell(evidence_cell) or evidence_cell.coordinate in (protected_cells or set()):
+        # Auxiliary evidence must not overwrite existing user cells, including
+        # another field's preserved answer or an unrelated formula.
+        return
     evidence_cell.value = build_adjacent_evidence_text(record)
     evidence_cell.alignment = Alignment(wrap_text=True, vertical="top")
 
@@ -1133,8 +1268,10 @@ def write_adjacent_evidence_record(
     proofs = collect_image_proofs([record], policy=policy)
     if not proofs:
         return
+    image_cell = sheet.cell(row=row, column=image_column)
+    if is_formula_cell(image_cell) or not is_empty_cell(image_cell) or image_cell.coordinate in (protected_cells or set()):
+        return
     if not policy.embed_evidence_images:
-        image_cell = sheet.cell(row=row, column=image_column)
         image_cell.value = "\n".join(proof["image_object_key"] for proof in proofs if proof.get("image_object_key"))
         image_cell.alignment = Alignment(wrap_text=True, vertical="top")
         return
@@ -1158,7 +1295,6 @@ def write_adjacent_evidence_record(
         else:
             unavailable.append(proof.get("image_object_key") or proof.get("proof_attachment_id") or proof.get("source") or "unknown")
 
-    image_cell = sheet.cell(row=row, column=image_column)
     if unavailable:
         prefix = "" if inserted_count == 0 else f"已嵌入 {inserted_count} 张\n"
         image_cell.value = prefix + "图片不可用: " + ", ".join(unavailable)
@@ -1187,9 +1323,41 @@ def build_adjacent_evidence_text(record: WritebackAuditRecord) -> str:
     return "\n".join(lines)
 
 
-def remove_generated_evidence_sheet(workbook: Workbook) -> None:
-    if "Evidence" in workbook.sheetnames:
-        del workbook["Evidence"]
+def generated_evidence_sheets(workbook: Workbook) -> dict[str, str]:
+    sheets: dict[str, str] = {}
+    for name, marker in workbook.defined_names.items():
+        if not name.startswith(EVIDENCE_SHEET_MARKER) or marker.comment != EVIDENCE_SHEET_MARKER_COMMENT or not marker.hidden:
+            continue
+        try:
+            destinations = list(marker.destinations)
+        except (TypeError, AttributeError):
+            continue
+        if len(destinations) != 1:
+            continue
+        title, coordinate = destinations[0]
+        if title in workbook.sheetnames and coordinate == "$A$1" and [cell.value for cell in workbook[title][1]][:6] == EVIDENCE_HEADERS:
+            sheets[title] = name
+    return sheets
+
+
+def remove_generated_evidence_sheet(workbook: Workbook, *, protected_names: set[str | None] | None = None) -> None:
+    for title, marker in generated_evidence_sheets(workbook).items():
+        if title not in (protected_names or set()):
+            del workbook[title]
+            del workbook.defined_names[marker]
+
+
+def mark_generated_evidence_sheet(workbook: Workbook, title: str) -> None:
+    from openpyxl.utils import quote_sheetname
+
+    name = EVIDENCE_SHEET_MARKER
+    number = 1
+    while name in workbook.defined_names:
+        name = f"{EVIDENCE_SHEET_MARKER}_{number}"
+        number += 1
+    workbook.defined_names.add(DefinedName(
+        name, attr_text=f"{quote_sheetname(title)}!$A$1", hidden=True, comment=EVIDENCE_SHEET_MARKER_COMMENT,
+    ))
 
 
 def write_evidence_sheet(
@@ -1206,26 +1374,62 @@ def write_evidence_sheet(
             rows.append(
                 [
                     record.field_id,
-                    record.status,
                     record.answer_value,
+                    record.status,
                     ref.get("file_name") or ref.get("document_id") or ref.get("object_key"),
                     ref_location(ref),
-                    ref.get("text_preview") or ref.get("caption"),
-                    ref.get("image_object_key") or "",
-                    ref.get("image_path") or "",
-                    ref.get("media_path") or "",
+                    evidence_text(ref) or ref.get("caption"),
                 ]
             )
     if not rows:
         return
-    if "Evidence" in workbook.sheetnames:
-        del workbook["Evidence"]
-    sheet = workbook.create_sheet("Evidence")
-    headers = ["field_id", "status", "answer_value", "source", "location", "text_preview", "image_object_key", "image_path", "media_path"]
-    sheet.append(headers)
+    protected = {record.sheet_name for record in audit_records}
+    generated = [title for title in generated_evidence_sheets(workbook) if title not in protected]
+    title = generated[0] if generated else "Evidence"
+    remove_generated_evidence_sheet(workbook, protected_names=protected)
+    number = 1
+    base_title = title
+    while title in workbook.sheetnames:
+        title = f"{base_title}_{number}"
+        number += 1
+    sheet = workbook.create_sheet(title)
+    mark_generated_evidence_sheet(workbook, title)
+    sheet.append(EVIDENCE_HEADERS)
     for row in rows:
         sheet.append(row)
+    sheet.freeze_panes = "A2"
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+    for column, width in zip("ABCDEF", (28, 30, 16, 32, 32, 80), strict=True):
+        sheet.column_dimensions[column].width = width
+    for row in sheet.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
     append_evidence_images(sheet, audit_records, policy=policy, base_dir=base_dir)
+    add_evidence_sheet_comments(workbook, audit_records, policy=policy, evidence_sheet_name=sheet.title)
+
+
+def add_evidence_sheet_comments(
+    workbook: Workbook, audit_records: list[WritebackAuditRecord], *, policy: WritebackPolicy, evidence_sheet_name: str,
+) -> None:
+    """The main form points to evidence locations; source text stays in Evidence."""
+    row = 2
+    for record_index, record in enumerate(audit_records):
+        start = row
+        row += len(record.evidence_refs)
+        if record.writeback_action not in {"written", "written_red_comment"} or not record.sheet_name or not record.cell:
+            continue
+        cell = workbook[record.sheet_name][record.cell]
+        if cell.comment is None:
+            continue
+        lines = [policy.uncertain_comment_prefix] if record.status == "uncertain" else []
+        for index, ref in enumerate(record.evidence_refs, start):
+            lines.append(f"{evidence_sheet_name}!A{index}: {evidence_document_name(ref)} / {ref_location(ref)}")
+        length, truncated = write_limited_comment(cell, "\n".join(lines), policy=policy)
+        error_code = record.error_code
+        if error_code == WB_COMMENT_TOO_LONG and not truncated:
+            error_code = None
+        audit_records[record_index] = replace(record, comment_length=length, error_code=WB_COMMENT_TOO_LONG if truncated else error_code)
 
 
 def append_evidence_images(
@@ -1507,9 +1711,25 @@ def first_existing_workbook(raw_values: list[str], *, base_dir: Path | None) -> 
         candidates.append(raw)
         if base_dir and not raw.is_absolute():
             candidates.append(base_dir / raw)
+            for artifacts_dir in artifacts_dir_candidates(base_dir):
+                candidates.extend(
+                    [
+                        artifacts_dir / raw,
+                        artifacts_dir / "seed_knowledge" / raw,
+                        artifacts_dir / "seed_knowledge" / "data" / raw,
+                    ]
+                )
         if not raw.is_absolute():
             cwd = Path.cwd()
-            candidates.extend([cwd / raw, cwd / "data" / raw, cwd / "artifacts" / raw])
+            candidates.extend(
+                [
+                    cwd / raw,
+                    cwd / "data" / raw,
+                    cwd / "artifacts" / raw,
+                    cwd / "artifacts" / "seed_knowledge" / raw,
+                    cwd / "artifacts" / "seed_knowledge" / "data" / raw,
+                ]
+            )
     for candidate in candidates:
         try:
             resolved = candidate.expanduser().resolve()
@@ -1518,6 +1738,28 @@ def first_existing_workbook(raw_values: list[str], *, base_dir: Path | None) -> 
         if resolved.exists() and resolved.is_file() and resolved.suffix.lower() in {".xlsx", ".xlsm"}:
             return resolved
     return None
+
+
+def artifacts_dir_candidates(base_dir: Path) -> list[Path]:
+    candidates: list[Path] = []
+    for path in [base_dir, *base_dir.parents]:
+        if path.name == "artifacts":
+            candidates.append(path)
+            break
+    if base_dir.parent.name == "runs":
+        candidates.append(base_dir.parent.parent)
+    output: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.expanduser().resolve()
+        except OSError:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        output.append(resolved)
+    return output
 
 
 def resolve_source_workbook_from_attachment(attachment_id: str, *, base_dir: Path | None) -> Path | None:
@@ -1603,8 +1845,8 @@ def read_xlsx_dispimg_media(workbook_path: Path, *, sheet_name: str, cell: str) 
 
 
 def dispimg_image_id_from_cell(workbook_path: Path, *, sheet_name: str, cell: str) -> str:
-    coordinate = normalize_cell_reference(cell)
-    if not coordinate:
+    coordinates = normalize_cell_references(cell)
+    if not coordinates:
         return ""
     try:
         workbook = load_workbook(workbook_path, data_only=False, read_only=True)
@@ -1613,12 +1855,13 @@ def dispimg_image_id_from_cell(workbook_path: Path, *, sheet_name: str, cell: st
     try:
         worksheets = [workbook[sheet_name]] if sheet_name and sheet_name in workbook.sheetnames else list(workbook.worksheets)
         for worksheet in worksheets:
-            value = worksheet[coordinate].value
-            if not isinstance(value, str):
-                continue
-            match = re.search(r'DISPIMG\("([^"]+)"', value)
-            if match:
-                return match.group(1)
+            for coordinate in coordinates:
+                value = worksheet[coordinate].value
+                if not isinstance(value, str):
+                    continue
+                match = re.search(r'DISPIMG\("([^"]+)"', value)
+                if match:
+                    return match.group(1)
     finally:
         workbook.close()
     return ""
@@ -1716,10 +1959,25 @@ def dispimg_cell_reference(cell: str, attachment_id: str) -> str:
 
 
 def normalize_cell_reference(value: str) -> str | None:
+    refs = normalize_cell_references(value)
+    return refs[0] if refs else None
+
+
+def normalize_cell_references(value: str) -> list[str]:
     text = str(value or "").strip()
     if ":" in text:
-        text = text.split(":", 1)[0]
-    return normalize_coordinate(text)
+        try:
+            min_col, min_row, max_col, max_row = range_boundaries(text)
+        except ValueError:
+            text = text.split(":", 1)[0]
+        else:
+            refs: list[str] = []
+            for row in range(min_row, max_row + 1):
+                for col in range(min_col, max_col + 1):
+                    refs.append(f"{get_column_letter(col)}{row}")
+            return refs
+    normalized = normalize_coordinate(text)
+    return [normalized] if normalized else []
 
 
 def load_trace_index(trace_path: Path) -> dict[str, str]:
@@ -1776,4 +2034,7 @@ def manifest_field_from_audit(record: WritebackAuditRecord) -> dict[str, Any]:
         "writeback_action": record.writeback_action,
         "evidence_refs": record.evidence_refs,
         "error_code": record.error_code,
+        "old_value": record.old_value,
+        "new_value": record.new_value,
+        "policy": record.policy,
     }

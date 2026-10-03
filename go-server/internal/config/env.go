@@ -11,6 +11,10 @@ import (
 func ApplyEnvOverrides(cfg *Config) error {
 	var errors []string
 	setString(&cfg.Server.Addr, "GONGKAN_SERVER_ADDR")
+	setDuration(&cfg.Server.ReadTimeout, "GONGKAN_SERVER_READ_TIMEOUT", &errors)
+	setDuration(&cfg.Server.WriteTimeout, "GONGKAN_SERVER_WRITE_TIMEOUT", &errors)
+	setDuration(&cfg.Server.IdleTimeout, "GONGKAN_SERVER_IDLE_TIMEOUT", &errors)
+	setDuration(&cfg.Server.ShutdownTimeout, "GONGKAN_SERVER_SHUTDOWN_TIMEOUT", &errors)
 	setString(&cfg.Database.DSN, "GONGKAN_DATABASE_DSN")
 	setInt32(&cfg.Database.MaxOpenConns, "GONGKAN_DATABASE_MAX_OPEN_CONNS", &errors)
 	setInt32(&cfg.Database.MaxIdleConns, "GONGKAN_DATABASE_MAX_IDLE_CONNS", &errors)

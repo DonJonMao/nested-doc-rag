@@ -1232,7 +1232,21 @@ def is_global_intro_hit(hit: dict[str, Any]) -> bool:
 
 
 def is_exact_structured_hit(hit: dict[str, Any], target_namespace: str) -> bool:
-    return str(hit.get("namespace") or "") == target_namespace and (
+    if str(hit.get("namespace") or "") != target_namespace:
+        return False
+    if hit.get("evidence_kind"):
+        # Physical structure is useful only when a genuine label/value pair
+        # and location are available. A layer annotation cannot grant trust.
+        address = hit.get("address") or {}
+        return (
+            hit["evidence_kind"] == "structured_field"
+            and bool(str(hit.get("field_name") or "").strip())
+            and hit.get("field_value") is not None
+            and bool(str(hit.get("field_value")).strip())
+            and bool(address.get("cell_range") or address.get("paragraph_index") is not None)
+            and str(hit.get("corpus_layer") or "") in {"fact", "evidence"}
+        )
+    return (
         hit.get("retrieval_layer") in {"target_main_fact", "target_structured_detail"}
         or hit.get("source_type") in {"main_excel_capability", "embedded_word_table"}
     )

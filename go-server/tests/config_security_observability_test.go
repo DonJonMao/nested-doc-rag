@@ -22,7 +22,7 @@ func TestSecurityObservabilityDefaults(t *testing.T) {
 	require.Equal(t, 20, cfg.Security.RateLimitRPS)
 	require.Equal(t, 40, cfg.Security.RateLimitBurst)
 	require.True(t, cfg.Security.BodyLimitEnabled)
-	require.Equal(t, int64(256*1024*1024), cfg.Security.MaxBodySize.Bytes)
+	require.Equal(t, int64(2048*1024*1024), cfg.Security.MaxBodySize.Bytes)
 	require.False(t, cfg.Security.HSTSEnabled)
 	require.Equal(t, 30*time.Second, cfg.Operations.GracefulShutdownTimeout.Duration)
 }

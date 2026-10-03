@@ -1,0 +1,128 @@
+services:
+  api:
+    image: ${API_IMAGE:?load the bundled API image}
+    pull_policy: never
+    env_file: [.env, models.env]
+    command: ["--config", "configs/config.docker.yaml"]
+    restart: unless-stopped
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      minio: {condition: service_healthy}
+      qdrant: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes: ["api_runtime:/app/runtime"]
+    logging: &logging
+      driver: json-file
+      options: {max-size: "100m", max-file: "5"}
+
+  worker:
+    image: ${WORKER_IMAGE:?load the bundled Worker image}
+    pull_policy: never
+    env_file: [.env, models.env]
+    command: ["--config", "configs/config.docker.yaml"]
+    restart: unless-stopped
+    depends_on:
+      api: {condition: service_healthy}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import nested_doc_rag' && /app/gongkan-worker --help >/dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    volumes:
+      - worker_runtime:/app/runtime
+      - worker_python_artifacts:/app/python-core/artifacts
+      - worker_python_tmp:/app/python-core/tmp
+    logging: *logging
+
+  web:
+    image: ${WEB_IMAGE:?load the bundled Web image}
+    pull_policy: never
+    environment:
+      DOMAIN: ${DOMAIN:-:80}
+    restart: unless-stopped
+    depends_on:
+      api: {condition: service_healthy}
+    ports: ["${GONGKAN_PUBLIC_BIND:-0.0.0.0}:${GONGKAN_PUBLIC_HTTP_PORT:-8003}:80"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes: ["caddy_data:/data", "caddy_config:/config"]
+    logging: *logging
+
+  postgres:
+    image: ${POSTGRES_IMAGE:?load the bundled PostgreSQL image}
+    pull_policy: never
+    environment:
+      POSTGRES_USER: gongkan
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?initialize the local private env}
+      POSTGRES_DB: gongkan
+    restart: unless-stopped
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gongkan -d gongkan"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    logging: *logging
+
+  redis:
+    image: ${REDIS_IMAGE:?load the bundled Redis image}
+    pull_policy: never
+    command: ["redis-server", "--appendonly", "yes"]
+    restart: unless-stopped
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    logging: *logging
+
+  minio:
+    image: ${MINIO_IMAGE:?load the bundled MinIO image}
+    pull_policy: never
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?initialize the local private env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?initialize the local private env}
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    volumes: ["minio_data:/data"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    logging: *logging
+
+  qdrant:
+    image: ${QDRANT_IMAGE:?load the bundled Qdrant image}
+    pull_policy: never
+    env_file: [.qdrant.env]
+    restart: unless-stopped
+    volumes: ["qdrant_data:/qdrant/storage"]
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc '</dev/tcp/127.0.0.1/6333'"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    logging: *logging
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  qdrant_data:
+  api_runtime:
+  worker_runtime:
+  worker_python_artifacts:
+  worker_python_tmp:
+  caddy_data:
+  caddy_config:

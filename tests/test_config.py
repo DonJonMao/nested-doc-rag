@@ -60,6 +60,7 @@ retrieval:
     assert config.services.embedding_endpoint == "http://cli/embeddings"
     assert config.retrieval.vector_top_k == 33
     assert config.retrieval.plan == "layered"
+    assert config.retrieval.sufficiency_enabled is True
     assert config.retrieval.expand_parent_payload is False
     assert config.retrieval.rerank_top_n == 6
     assert config.retrieval.query_layers == ["fact", "evidence"]
@@ -90,8 +91,11 @@ def test_env_alias_and_path_resolution(tmp_path: Path, monkeypatch) -> None:
 
 def test_agentscope_config_defaults_and_yaml_off_normalization(tmp_path: Path) -> None:
     config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml")
-    assert config.agentscope.enabled is True
-    assert config.agentscope.mode == "equivalent_mas"
+    assert config.agentscope.enabled is False
+    assert config.agentscope.mode == "off"
+    assert config.retrieval.sufficiency_enabled is True
+    assert config.agentic_mas.enabled is False
+    assert config.agentic_mas.prompt_version == "agentic_v1"
 
     config = app_config_from_dict(
         {
@@ -111,6 +115,18 @@ def test_agentscope_config_defaults_and_yaml_off_normalization(tmp_path: Path) -
     )
     assert config.agentscope.enabled is True
     assert config.agentscope.mode == "equivalent_mas"
+
+    config = app_config_from_dict(
+        {
+            "paths": {"project_root": str(tmp_path)},
+            "agentscope": {"enabled": True, "mode": "agentic_mas"},
+            "agentic_mas": {"enabled": True, "max_rounds": 4},
+        },
+        project_root_base=tmp_path,
+    )
+    assert config.agentscope.mode == "agentic_mas"
+    assert config.agentic_mas.enabled is True
+    assert config.agentic_mas.max_rounds == 4
 
     with pytest.raises(ValueError, match="agentscope.mode"):
         app_config_from_dict(
@@ -137,6 +153,9 @@ def test_show_config_command_outputs_merged_config() -> None:
     assert value["services"]["rerank_endpoint"] == "http://111.19.156.74:8002/rerank"
     assert value["services"]["chat_endpoint"] == "http://111.19.156.30:8006/v1/chat/completions"
     assert value["retrieval"]["plan"] == "layered"
+    assert value["retrieval"]["sufficiency_enabled"] is True
+    assert value["agentscope"] == {"enabled": False, "mode": "off"}
+    assert value["agentic_mas"]["enabled"] is False
     assert value["retrieval"]["expand_parent_payload"] is False
     assert value["grounding"]["field_binding_enabled"] is True
     assert value["grounding"]["relaxed_writeback_gate_enabled"] is False
@@ -147,8 +166,38 @@ def test_show_config_command_outputs_merged_config() -> None:
     assert value["qdrant"]["url"] == ""
     assert value["writeback"]["allow_uncertain"] is False
     assert value["writeback"]["embed_evidence_images"] is True
-    assert value["writeback"]["evidence_image_mode"] == "adjacent_columns"
+    assert value["writeback"]["evidence_image_mode"] == "append_sheet"
     assert value["writeback"]["max_comment_chars"] == 2000
+
+
+@pytest.mark.parametrize("filename", ["default.yaml", "docker.yaml", "local.example.yaml"])
+def test_production_configs_use_sufficiency_without_default_mas_or_historical_baseline(filename: str) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    config = load_app_config(f"config/{filename}", project_root=repo_root, env={})
+
+    assert config.retrieval.sufficiency_enabled is True
+    assert config.agentscope.enabled is False
+    assert config.agentscope.mode == "off"
+    assert config.agentic_mas.enabled is False
+    assert not hasattr(config.agentic_mas, "monotonic_writeback37")
+    assert not hasattr(config.agentic_mas, "baseline_writeback_run_dir")
+    assert not hasattr(config.agentic_mas, "preserve_writeback_allowed")
+    assert not hasattr(config.agentic_mas, "promotion_only")
+
+
+def test_sufficiency_switch_obeys_yaml_env_and_cli_priority(tmp_path: Path) -> None:
+    path = tmp_path / "runtime.yaml"
+    path.write_text("retrieval:\n  sufficiency_enabled: false\n", encoding="utf-8")
+    options = {"project_root": tmp_path, "default_config": tmp_path / "missing.yaml"}
+    config = load_app_config(path, env={}, **options)
+    assert config.retrieval.sufficiency_enabled is False
+    config = load_app_config(path, env={"NESTED_DOC_RAG__RETRIEVAL__SUFFICIENCY_ENABLED": "true"}, **options)
+    assert config.retrieval.sufficiency_enabled is True
+    config = load_app_config(
+        path, env={"NESTED_DOC_RAG__RETRIEVAL__SUFFICIENCY_ENABLED": "true"},
+        cli_overrides={"retrieval": {"sufficiency_enabled": False}}, **options,
+    )
+    assert config.retrieval.sufficiency_enabled is False
 
 
 def test_legacy_retrieval_config_normalizes_to_layered(tmp_path: Path) -> None:

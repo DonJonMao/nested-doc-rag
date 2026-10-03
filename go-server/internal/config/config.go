@@ -269,8 +269,8 @@ func Validate(cfg *Config) error {
 	if strings.TrimSpace(cfg.Python.ConfigPath) == "" {
 		problems = append(problems, "python.config_path is required")
 	}
-	if cfg.Python.DefaultTimeout.Duration <= 0 {
-		problems = append(problems, "python.default_timeout must be greater than 0")
+	if cfg.Python.DefaultTimeout.Duration < 0 {
+		problems = append(problems, "python.default_timeout must be greater than or equal to 0")
 	}
 	if cfg.Python.KillGracePeriod.Duration <= 0 {
 		problems = append(problems, "python.kill_grace_period must be greater than 0")
@@ -321,8 +321,8 @@ func Validate(cfg *Config) error {
 	if cfg.Jobs.WorkerConcurrency <= 0 {
 		problems = append(problems, "jobs.worker_concurrency must be greater than 0")
 	}
-	if cfg.Jobs.DefaultTimeout.Duration <= 0 {
-		problems = append(problems, "jobs.default_timeout must be greater than 0")
+	if cfg.Jobs.DefaultTimeout.Duration < 0 {
+		problems = append(problems, "jobs.default_timeout must be greater than or equal to 0")
 	}
 	if cfg.Jobs.MaxAttempts <= 0 {
 		problems = append(problems, "jobs.max_attempts must be greater than 0")
@@ -380,11 +380,11 @@ func validateModelGatewayConfig(cfg *Config, problems *[]string) {
 		*problems = append(*problems, "model_gateway.internal_token_env is required when require_internal_token=true")
 	}
 	defaults := cfg.ModelGateway.Defaults
-	if defaults.RequestTimeoutSeconds <= 0 {
-		*problems = append(*problems, "model_gateway.defaults.request_timeout_seconds must be greater than 0")
+	if defaults.RequestTimeoutSeconds < 0 {
+		*problems = append(*problems, "model_gateway.defaults.request_timeout_seconds must be greater than or equal to 0")
 	}
-	if defaults.QueueTimeoutSeconds <= 0 {
-		*problems = append(*problems, "model_gateway.defaults.queue_timeout_seconds must be greater than 0")
+	if defaults.QueueTimeoutSeconds < 0 {
+		*problems = append(*problems, "model_gateway.defaults.queue_timeout_seconds must be greater than or equal to 0")
 	}
 	if defaults.MaxRequestBodyBytes <= 0 {
 		*problems = append(*problems, "model_gateway.defaults.max_request_body_bytes must be greater than 0")
@@ -435,8 +435,8 @@ func validateModelGatewayKind(name string, kind ModelGatewayKindConfig, problems
 	if kind.PerRunMaxInflight <= 0 {
 		*problems = append(*problems, prefix+".per_run_max_inflight must be greater than 0")
 	}
-	if kind.TimeoutSeconds <= 0 {
-		*problems = append(*problems, prefix+".timeout_seconds must be greater than 0")
+	if kind.TimeoutSeconds < 0 {
+		*problems = append(*problems, prefix+".timeout_seconds must be greater than or equal to 0")
 	}
 }
 
@@ -444,8 +444,8 @@ func Default() *Config {
 	return &Config{
 		Server: ServerConfig{
 			Addr:            ":8080",
-			ReadTimeout:     NewDuration(10 * time.Second),
-			WriteTimeout:    NewDuration(30 * time.Second),
+			ReadTimeout:     NewDuration(30 * time.Minute),
+			WriteTimeout:    NewDuration(30 * time.Minute),
 			IdleTimeout:     NewDuration(60 * time.Second),
 			ShutdownTimeout: NewDuration(15 * time.Second),
 		},
@@ -477,7 +477,7 @@ func Default() *Config {
 			},
 		},
 		Files: FilesConfig{
-			MaxUploadSize: NewByteSize(200 * 1024 * 1024),
+			MaxUploadSize: NewByteSize(2048 * 1024 * 1024),
 			TempDir:       "./runtime/tmp/uploads",
 			AllowedExtensions: []string{
 				".xlsx", ".xlsm", ".docx", ".txt", ".md", ".csv", ".png", ".jpg", ".jpeg",
@@ -510,7 +510,7 @@ func Default() *Config {
 			StderrLogMaxBytes:          1024 * 1024,
 			Step15DefaultRetrievalMode: "layered",
 			Step15DefaultPromptVersion: "step15_compat",
-			Step15DefaultRows:          "4-144",
+			Step15DefaultRows:          "all",
 			IngestCommandEnabled:       true,
 		},
 		Jobs: JobsConfig{
@@ -548,7 +548,7 @@ func Default() *Config {
 			RateLimitRPS:           20,
 			RateLimitBurst:         40,
 			BodyLimitEnabled:       true,
-			MaxBodySize:            NewByteSize(256 * 1024 * 1024),
+			MaxBodySize:            NewByteSize(2048 * 1024 * 1024),
 			HSTSEnabled:            false,
 			HSTSMaxAge:             NewDuration(720 * time.Hour),
 		},
@@ -564,8 +564,8 @@ func Default() *Config {
 			RequireInternalToken: true,
 			InternalTokenEnv:     "NDR_MODEL_GATEWAY_TOKEN",
 			Defaults: ModelGatewayDefaults{
-				RequestTimeoutSeconds:   180,
-				QueueTimeoutSeconds:     300,
+				RequestTimeoutSeconds:   0,
+				QueueTimeoutSeconds:     0,
 				MaxRequestBodyBytes:     10 * 1024 * 1024,
 				MaxResponseBodyBytes:    10 * 1024 * 1024,
 				RetryMaxAttempts:        3,
@@ -583,7 +583,7 @@ func Default() *Config {
 				QPS:               1,
 				RPM:               60,
 				PerRunMaxInflight: 1,
-				TimeoutSeconds:    180,
+				TimeoutSeconds:    0,
 			},
 			Embedding: ModelGatewayKindConfig{
 				Enabled:           true,
@@ -593,7 +593,7 @@ func Default() *Config {
 				QPS:               4,
 				RPM:               240,
 				PerRunMaxInflight: 2,
-				TimeoutSeconds:    120,
+				TimeoutSeconds:    0,
 			},
 			Rerank: ModelGatewayKindConfig{
 				Enabled:           true,
@@ -603,7 +603,7 @@ func Default() *Config {
 				QPS:               2,
 				RPM:               120,
 				PerRunMaxInflight: 2,
-				TimeoutSeconds:    120,
+				TimeoutSeconds:    0,
 			},
 			RedisLimiter: ModelGatewayRedisLimiter{
 				Enabled:        false,

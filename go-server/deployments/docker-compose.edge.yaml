@@ -8,11 +8,10 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "80:80"
-      - "443:443"
+      - "${GONGKAN_PUBLIC_HTTP_PORT:-8003}:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ../../web/dist:/srv/web:ro
+      - ${GONGKAN_WEB_DIST_PATH:-../../web/dist}:/srv/web:ro
       - caddy_data:/data
       - caddy_config:/config
     logging:

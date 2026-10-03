@@ -20,94 +20,107 @@ import (
 )
 
 func TestFillFormWorkerIntegrationMaterializesTemplateAndUpdatesRun(t *testing.T) {
-	workspaceID := uuid.New()
-	runID := uuid.New()
-	formID := uuid.New()
-	fileID := uuid.New()
-	outDir, manifest := manifestWithArtifacts(t)
-	formRepo := newFakeFormFileRepo()
-	require.NoError(t, formRepo.Create(context.Background(), formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, FileID: fileID, Filename: "template.xlsx"}))
-	fileRepo := newFakeFileRepo()
-	fileRepo.files[fileID] = filepkg.File{ID: fileID, WorkspaceID: workspaceID, Filename: "template.xlsx", ObjectKey: "templates/template.xlsx", FileCategory: filepkg.FileCategoryFormTemplate, Status: filepkg.FileStatusActive}
-	storage := newFakeObjectStorage()
-	storage.objects["templates/template.xlsx"] = []byte("template")
-	fillRepo := newFakeFillRunRepo()
-	require.NoError(t, fillRepo.Create(context.Background(), formpkg.FillRun{ID: runID, WorkspaceID: workspaceID, FormFileID: formID, Status: formpkg.FillRunStatusQueued}))
-	runner := &pythonpkg.FakeRunner{Step15Result: &pythonpkg.Step15RunResult{RunID: runID, OutDir: outDir, Manifest: manifest, Validation: &pythonpkg.ArtifactValidationResult{RunDir: outDir, OK: true}}}
-	registrar := &fakeArtifactRegistrar{}
-	eventRepo := &fakeRunEventRepo{}
-	handler := jobs.NewFillFormPythonHandler(
-		runner,
-		pythonpkg.NewArtifactArchiver(registrar, zap.NewNop()),
-		runevent.NewService(eventRepo, nil),
-		zap.NewNop(),
-		jobs.WithTemplateMaterializer(formpkg.NewTemplateMaterializer(formRepo, fileRepo, storage, zap.NewNop())),
-		jobs.WithFillRunLifecycle(formpkg.NewFillRunLifecycleAdapter(fillRepo, zap.NewNop())),
-	)
-	job := jobs.Job{
-		ID:          uuid.New(),
-		WorkspaceID: workspaceID,
-		ResourceID:  runID,
-		JobType:     jobs.JobTypeFillForm,
-		CreatedBy:   uuid.New(),
-		Payload: map[string]any{
-			"fill_run_id":      runID.String(),
-			"workspace_id":     workspaceID.String(),
-			"form_file_id":     formID.String(),
-			"target_namespace": "target",
-			"rows":             "4-144",
-			"retrieval_mode":   "layered",
-			"prompt_version":   "step15_compat",
-			"writeback":        true,
-			"out_dir":          outDir,
-		},
+	for _, test := range []struct {
+		name      string
+		writeback bool
+	}{{"writeback enabled", true}, {"writeback disabled", false}} {
+		t.Run(test.name, func(t *testing.T) {
+			workspaceID := uuid.New()
+			runID := uuid.New()
+			formID := uuid.New()
+			fileID := uuid.New()
+			outDir, manifest := manifestWithArtifacts(t)
+			formRepo := newFakeFormFileRepo()
+			require.NoError(t, formRepo.Create(context.Background(), formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, FileID: fileID, Filename: "template.xlsx"}))
+			fileRepo := newFakeFileRepo()
+			fileRepo.files[fileID] = filepkg.File{ID: fileID, WorkspaceID: workspaceID, Filename: "template.xlsx", ObjectKey: "templates/template.xlsx", FileCategory: filepkg.FileCategoryFormTemplate, Status: filepkg.FileStatusActive}
+			storage := newFakeObjectStorage()
+			storage.objects["templates/template.xlsx"] = []byte("template")
+			fillRepo := newFakeFillRunRepo()
+			require.NoError(t, fillRepo.Create(context.Background(), formpkg.FillRun{ID: runID, WorkspaceID: workspaceID, FormFileID: formID, Status: formpkg.FillRunStatusQueued}))
+			runner := &pythonpkg.FakeRunner{Step15Result: &pythonpkg.Step15RunResult{RunID: runID, OutDir: outDir, Manifest: manifest, Validation: &pythonpkg.ArtifactValidationResult{RunDir: outDir, OK: true}}}
+			registrar := &fakeArtifactRegistrar{}
+			eventRepo := &fakeRunEventRepo{}
+			handler := jobs.NewFillFormPythonHandler(
+				runner,
+				pythonpkg.NewArtifactArchiver(registrar, zap.NewNop()),
+				runevent.NewService(eventRepo, nil),
+				zap.NewNop(),
+				jobs.WithTemplateMaterializer(formpkg.NewTemplateMaterializer(formRepo, fileRepo, storage, zap.NewNop())),
+				jobs.WithFillRunLifecycle(formpkg.NewFillRunLifecycleAdapter(fillRepo, zap.NewNop())),
+			)
+			job := jobs.Job{
+				ID:          uuid.New(),
+				WorkspaceID: workspaceID,
+				ResourceID:  runID,
+				JobType:     jobs.JobTypeFillForm,
+				CreatedBy:   uuid.New(),
+				Payload: map[string]any{
+					"fill_run_id":      runID.String(),
+					"workspace_id":     workspaceID.String(),
+					"form_file_id":     formID.String(),
+					"target_namespace": "target",
+					"rows":             "all",
+					"retrieval_mode":   "layered",
+					"prompt_version":   "step15_compat",
+					"writeback":        test.writeback,
+					"out_dir":          outDir,
+				},
+			}
+
+			err := handler.Handle(context.Background(), &job)
+
+			require.NoError(t, err)
+			require.Len(t, runner.Step15Calls, 1)
+			require.Equal(t, test.writeback, runner.Step15Calls[0].Writeback)
+			require.Equal(t, "all", runner.Step15Calls[0].Rows)
+			templatePath := runner.Step15Calls[0].TemplatePath
+			require.NotEmpty(t, templatePath)
+			require.Equal(t, filepath.Join(outDir, "input", "template.xlsx"), templatePath)
+			data, err := os.ReadFile(templatePath)
+			require.NoError(t, err)
+			require.Equal(t, []byte("template"), data)
+			require.Len(t, registrar.requests, 2)
+			require.ElementsMatch(t, []string{"run_manifest", "predictions"}, artifactTypesFromRequests(registrar.requests))
+			run, err := fillRepo.GetByID(context.Background(), runID)
+			require.NoError(t, err)
+			require.Equal(t, formpkg.FillRunStatusSucceeded, run.Status)
+			requireEventTypes(t, eventRepo, runevent.EventPythonStarted, runevent.EventPythonFinished, runevent.EventArtifactsRegistered)
+		})
 	}
-
-	err := handler.Handle(context.Background(), &job)
-
-	require.NoError(t, err)
-	require.Len(t, runner.Step15Calls, 1)
-	templatePath := runner.Step15Calls[0].TemplatePath
-	require.NotEmpty(t, templatePath)
-	require.Equal(t, filepath.Join(outDir, "input", "template.xlsx"), templatePath)
-	data, err := os.ReadFile(templatePath)
-	require.NoError(t, err)
-	require.Equal(t, []byte("template"), data)
-	require.Len(t, registrar.requests, 2)
-	require.ElementsMatch(t, []string{"run_manifest", "predictions"}, artifactTypesFromRequests(registrar.requests))
-	run, err := fillRepo.GetByID(context.Background(), runID)
-	require.NoError(t, err)
-	require.Equal(t, formpkg.FillRunStatusSucceeded, run.Status)
-	requireEventTypes(t, eventRepo, runevent.EventPythonStarted, runevent.EventPythonFinished, runevent.EventArtifactsRegistered)
 }
 
 func TestFillFormWorkerIntegrationMaterializerFailureMarksRunFailed(t *testing.T) {
-	runID := uuid.New()
-	workspaceID := uuid.New()
-	runner := &pythonpkg.FakeRunner{}
-	lifecycle := &recordingFillRunLifecycle{}
-	handler := jobs.NewFillFormPythonHandler(
-		runner,
-		pythonpkg.NewArtifactArchiver(&fakeArtifactRegistrar{}, zap.NewNop()),
-		nil,
-		zap.NewNop(),
-		jobs.WithTemplateMaterializer(&recordingTemplateMaterializer{err: errors.New("storage missing")}),
-		jobs.WithFillRunLifecycle(lifecycle),
-	)
-	job := jobs.Job{ID: uuid.New(), WorkspaceID: workspaceID, ResourceID: runID, JobType: jobs.JobTypeFillForm, Payload: map[string]any{
-		"fill_run_id":      runID.String(),
-		"form_file_id":     uuid.NewString(),
-		"target_namespace": "target",
-		"writeback":        true,
-		"out_dir":          t.TempDir(),
-	}}
+	for _, writeback := range []bool{true, false} {
+		t.Run(map[bool]string{true: "writeback enabled", false: "writeback disabled"}[writeback], func(t *testing.T) {
+			runID := uuid.New()
+			workspaceID := uuid.New()
+			runner := &pythonpkg.FakeRunner{}
+			lifecycle := &recordingFillRunLifecycle{}
+			handler := jobs.NewFillFormPythonHandler(
+				runner,
+				pythonpkg.NewArtifactArchiver(&fakeArtifactRegistrar{}, zap.NewNop()),
+				nil,
+				zap.NewNop(),
+				jobs.WithTemplateMaterializer(&recordingTemplateMaterializer{err: errors.New("storage missing")}),
+				jobs.WithFillRunLifecycle(lifecycle),
+			)
+			job := jobs.Job{ID: uuid.New(), WorkspaceID: workspaceID, ResourceID: runID, JobType: jobs.JobTypeFillForm, Payload: map[string]any{
+				"fill_run_id":      runID.String(),
+				"form_file_id":     uuid.NewString(),
+				"target_namespace": "target",
+				"writeback":        writeback,
+				"out_dir":          t.TempDir(),
+			}}
 
-	err := handler.Handle(context.Background(), &job)
+			err := handler.Handle(context.Background(), &job)
 
-	require.Error(t, err)
-	require.Empty(t, runner.Step15Calls)
-	require.Equal(t, []uuid.UUID{runID}, lifecycle.failed)
-	require.Empty(t, lifecycle.running)
+			require.Error(t, err)
+			require.Empty(t, runner.Step15Calls)
+			require.Equal(t, []uuid.UUID{runID}, lifecycle.failed)
+			require.Empty(t, lifecycle.running)
+		})
+	}
 }
 
 func TestFillFormWorkerIntegrationRunnerFailureMarksRunFailed(t *testing.T) {
@@ -124,6 +137,7 @@ func TestFillFormWorkerIntegrationRunnerFailureMarksRunFailed(t *testing.T) {
 		jobs.WithFillRunLifecycle(lifecycle),
 	)
 	job := fillFormWorkerTestJob(workspaceID, runID, map[string]any{"writeback": false})
+	handler.TemplateMaterializer = &recordingTemplateMaterializer{}
 
 	err := handler.Handle(context.Background(), &job)
 
@@ -148,6 +162,7 @@ func TestFillFormWorkerIntegrationArchiverFailureMarksRunFailed(t *testing.T) {
 		jobs.WithFillRunLifecycle(lifecycle),
 	)
 	job := fillFormWorkerTestJob(workspaceID, runID, map[string]any{"writeback": false, "out_dir": outDir})
+	handler.TemplateMaterializer = &recordingTemplateMaterializer{}
 
 	err := handler.Handle(context.Background(), &job)
 
@@ -173,6 +188,7 @@ func TestFillFormWorkerIntegrationCompletedWithFailuresLifecycle(t *testing.T) {
 		jobs.WithFillRunLifecycle(lifecycle),
 	)
 	job := fillFormWorkerTestJob(workspaceID, runID, map[string]any{"writeback": false, "out_dir": outDir})
+	handler.TemplateMaterializer = &recordingTemplateMaterializer{}
 
 	err := handler.Handle(context.Background(), &job)
 
@@ -197,6 +213,7 @@ func TestFillFormWorkerIntegrationContextCanceledMarksRunCanceled(t *testing.T) 
 		jobs.WithFillRunLifecycle(lifecycle),
 	)
 	job := fillFormWorkerTestJob(workspaceID, runID, map[string]any{"writeback": false})
+	handler.TemplateMaterializer = &recordingTemplateMaterializer{}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -250,7 +267,14 @@ type recordingFillRunLifecycle struct {
 	completedWithFailures []uuid.UUID
 	failed                []uuid.UUID
 	canceled              []uuid.UUID
+	progress              []fillRunProgressRecord
 	completedArtifacts    map[uuid.UUID][]artifact.RunArtifact
+}
+
+type fillRunProgressRecord struct {
+	runID uuid.UUID
+	done  int
+	total int
 }
 
 func (l *recordingFillRunLifecycle) MarkFillRunRunning(ctx context.Context, runID uuid.UUID, jobID uuid.UUID) error {
@@ -279,5 +303,10 @@ func (l *recordingFillRunLifecycle) MarkFillRunFailed(ctx context.Context, runID
 
 func (l *recordingFillRunLifecycle) MarkFillRunCanceled(ctx context.Context, runID uuid.UUID) error {
 	l.canceled = append(l.canceled, runID)
+	return nil
+}
+
+func (l *recordingFillRunLifecycle) MarkFillRunProgress(ctx context.Context, runID uuid.UUID, progressDone int, progressTotal int) error {
+	l.progress = append(l.progress, fillRunProgressRecord{runID: runID, done: progressDone, total: progressTotal})
 	return nil
 }

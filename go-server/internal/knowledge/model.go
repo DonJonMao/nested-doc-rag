@@ -20,6 +20,9 @@ type KnowledgeBase struct {
 	CreatedBy             uuid.UUID  `json:"created_by"`
 	CreatedAt             time.Time  `json:"created_at"`
 	UpdatedAt             time.Time  `json:"updated_at"`
+	SourceRevision        int64      `json:"source_revision"`
+	SourceDirty           bool       `json:"source_dirty"`
+	ActivationRevision    int64      `json:"activation_revision"`
 }
 
 type KnowledgeDocument struct {
@@ -39,22 +42,29 @@ type KnowledgeDocument struct {
 }
 
 type KnowledgeIndexVersion struct {
-	ID               uuid.UUID  `json:"id"`
-	KnowledgeBaseID  uuid.UUID  `json:"knowledge_base_id"`
-	WorkspaceID      uuid.UUID  `json:"workspace_id"`
-	Version          int        `json:"version"`
-	QdrantCollection string     `json:"qdrant_collection"`
-	QdrantNamespace  string     `json:"qdrant_namespace,omitempty"`
-	ArtifactDir      string     `json:"artifact_dir,omitempty"`
-	ManifestPath     string     `json:"manifest_path,omitempty"`
-	Status           string     `json:"status"`
-	DocumentCount    int        `json:"document_count"`
-	ChunkCount       int        `json:"chunk_count"`
-	CreatedBy        uuid.UUID  `json:"created_by"`
-	CreatedAt        time.Time  `json:"created_at"`
-	ReadyAt          *time.Time `json:"ready_at,omitempty"`
-	FailedAt         *time.Time `json:"failed_at,omitempty"`
-	ErrorMessage     string     `json:"error_message,omitempty"`
+	ID                         uuid.UUID  `json:"id"`
+	KnowledgeBaseID            uuid.UUID  `json:"knowledge_base_id"`
+	WorkspaceID                uuid.UUID  `json:"workspace_id"`
+	Version                    int        `json:"version"`
+	QdrantCollection           string     `json:"qdrant_collection"`
+	QdrantNamespace            string     `json:"qdrant_namespace,omitempty"`
+	ArtifactDir                string     `json:"artifact_dir,omitempty"`
+	ManifestPath               string     `json:"manifest_path,omitempty"`
+	Status                     string     `json:"status"`
+	DocumentCount              int        `json:"document_count"`
+	ChunkCount                 int        `json:"chunk_count"`
+	CreatedBy                  uuid.UUID  `json:"created_by"`
+	CreatedAt                  time.Time  `json:"created_at"`
+	ReadyAt                    *time.Time `json:"ready_at,omitempty"`
+	FailedAt                   *time.Time `json:"failed_at,omitempty"`
+	ErrorMessage               string     `json:"error_message,omitempty"`
+	StorageContract            string     `json:"storage_contract"`
+	ValidationState            string     `json:"validation_state"`
+	InputSnapshotHash          string     `json:"input_snapshot_hash,omitempty"`
+	SourceRevision             int64      `json:"source_revision"`
+	ExpectedActiveVersionID    *uuid.UUID `json:"expected_active_version_id,omitempty"`
+	ExpectedActivationRevision int64      `json:"expected_activation_revision"`
+	PublicationState           string     `json:"publication_state"`
 }
 
 type IngestionJob struct {

@@ -22,6 +22,7 @@ const (
 	TypeWritebackAudit       = "writeback_audit"
 	TypeEvidenceMap          = "evidence_map"
 	TypeImageEvidence        = "image_evidence"
+	TypeEvidenceProvenance   = "evidence_provenance"
 )
 
 type RunArtifact struct {

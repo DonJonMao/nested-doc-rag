@@ -1,0 +1,262 @@
+{
+  "phase": "5",
+  "base_commit": "030300065e0d5041f581f573e772f7756e54abd6",
+  "previous_phase_commit": "08ea6eb9deb7c4ebd4c6307e2b2956378de3fc9b",
+  "phase5_revision": "the commit containing this report; execution images retain previous HEAD plus working-tree file hashes",
+  "goal_complete": false,
+  "real_model_acceptance": "pending; configured embedding/rerank/chat disconnected on real probes",
+  "defaults": {
+    "retrieval.sufficiency_enabled": true,
+    "retrieval.schema_first_enabled": false,
+    "agentscope.enabled": false,
+    "agentscope.mode": "off",
+    "agentic_mas.enabled": false,
+    "writeback.existing_value_policy": "preserve"
+  },
+  "python": {
+    "tests": 878,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "elapsed_seconds": 155.622,
+    "compatibility_warnings": 75,
+    "exit_code": 0,
+    "command": "PYTHONPATH=src /Users/mao/miniconda3/bin/python -m pytest tests -q --junitxml=artifacts/vnext/phase5/final-python-frozen.xml",
+    "scope": "final frozen full suite including auxiliary Docker and old141 helpers"
+  },
+  "docker_driver_regressions": {
+    "passed": 6,
+    "failures": 0,
+    "exit_code": 0,
+    "junit": "artifacts/vnext/phase5/final-docker-driver-tests.xml"
+  },
+  "go": {
+    "race_enabled": true,
+    "forced_count": 1,
+    "exit_code": 0,
+    "test_events": {
+      "pass": 544
+    },
+    "leaf_test_events": {
+      "pass": 520
+    },
+    "skipped_tests": [],
+    "failed_tests": [],
+    "packages_passed": 8,
+    "packages_without_tests": 19
+  },
+  "frontend": {
+    "leaf_test_statuses": {
+      "passed": 39
+    },
+    "passed": 39,
+    "failed": 0,
+    "pending": 0,
+    "todo": 0,
+    "test_files": 3,
+    "test_exit_code": 0,
+    "typecheck_exit_code": 0,
+    "build_exit_code": 0
+  },
+  "required_postgres": {
+    "passed": true,
+    "dsn_endpoint": "127.0.0.1:55432",
+    "database": "vnext_test",
+    "random_isolated_databases_used_by_tests": true,
+    "missing_dsn_exit_code": 2
+  },
+  "checks": {
+    "gofmt": 0,
+    "vet": 0,
+    "diff": 0,
+    "ruff_exit_code": 0,
+    "diff_check_exit_code": 0
+  },
+  "dataset": {
+    "pairs": 3,
+    "challenge_count": 30,
+    "native_required_decoy_locators": 58,
+    "answerable": 29,
+    "preserve_eligible_writes": 28,
+    "formula_control_count": 1,
+    "reproduction": "declared source/template/form_items hashes and gold bytes reproduced in an independent directory"
+  },
+  "ablation": {
+    "models_kind": "stub",
+    "methods": [
+      "A0",
+      "A1",
+      "A2",
+      "A3"
+    ],
+    "completed_method_pair_runs": 12,
+    "offline_evaluations": 12,
+    "evaluation_exit_codes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "real_quality_claim": false,
+    "immutable_runs_unchanged": true,
+    "primary_counterfactual": "separate A3-primary with same revision and primary plan; no supplement",
+    "reports": "artifacts/vnext/phase5/ablation-evaluation-03-summary.json",
+    "request_ledger_scope": "shared append-only protocol evidence; per-run model request count unknown"
+  },
+  "docker": {
+    "runtime_kind": "docker",
+    "models_kind": "stub",
+    "runner_kind": "production-api-worker-python",
+    "compose_project": "vnext-stub-20261002t163836z-cac950",
+    "status": "succeeded",
+    "fresh_pairs": 3,
+    "parsed_and_processed_fields": 30,
+    "protected_nonempty_cells": 109,
+    "unsafe_overwrite_count": 0,
+    "isolated_volumes": 8,
+    "containers_absent_before_start": true,
+    "volumes_absent_before_start": true,
+    "engineering_contract_passed": true,
+    "real_docker_chain_passed": false,
+    "final_quality_gates_claimed": false,
+    "run_ids": {
+      "f1": "9a495c83-f796-44fe-a703-32dd141e4c87",
+      "f2": "af845c07-df40-4c7c-b08b-4d367a1fdb8f",
+      "f3": "8ddadbee-2da8-4d7b-a3a2-a21513475f42"
+    },
+    "worker_and_downloaded_validators": "all three pairs passed both; actual artifact/downloaded workbook hashes verified",
+    "formula_control": "改造核查!D151 preserved",
+    "human_target_control": "C28 original human value preserved",
+    "ledger": "artifacts/vnext/phase5/docker/stub-20261003-004/ledger.json",
+    "model_identity_receipt": "artifacts/vnext/phase5/docker/stub-20261003-004/model-identity-receipt.json",
+    "image_ids": {
+      "api": "sha256:6b5cda38adfc3721ed772ff66c4cd5bb6bffb5ca06fecfac37a92997fb99de39",
+      "worker": "sha256:0c4a7a696b1f6b5933ce1d8b2ec5ae5bcc9fa6469d8dc7eec45193ce6555d0bc"
+    },
+    "image_label_revision": "08ea6eb; labels explicitly describe Phase5 working-tree builds",
+    "worker_source_verification": {
+      "changed_modules_checked": 4,
+      "mismatches": [],
+      "receipt": "artifacts/vnext/phase5/docker/stub-20261003-004/worker-source-sha256.json"
+    },
+    "cleanup": "Explicitly owned acceptance projects 002,003,004 stopped; volumes/artifacts retained, no original deployment cleanup"
+  },
+  "real_model_preflight": {
+    "passed": false,
+    "probes": [
+      {
+        "kind": "embedding",
+        "passed": false,
+        "error_type": "RemoteDisconnected",
+        "elapsed_seconds": 5.012
+      },
+      {
+        "kind": "rerank",
+        "passed": false,
+        "error_type": "RemoteDisconnected",
+        "elapsed_seconds": 5.012
+      },
+      {
+        "kind": "chat",
+        "passed": false,
+        "error_type": "RemoteDisconnected",
+        "elapsed_seconds": 5.012
+      }
+    ],
+    "requests_attempted": true,
+    "provider_usage": "unknown",
+    "provider_cost": "unknown",
+    "successful_provider_response_observed": false,
+    "report": "artifacts/vnext/phase5/model-preflight-recheck.json"
+  },
+  "historical": {
+    "old141_prepared_fields": 141,
+    "heldout_equal_examples_removed": 69,
+    "old37": "legacy read/replay only; 141 fields, 37 historical writes, 104 review, quality_metrics=null",
+    "old141_live": "not executed",
+    "old141_dry_preparation": "Final source: old141-live-prepared-02, config/default.yaml; two verified copied legacy stores, 9533 points/4096 dimensions each; zero model requests; prepare01 retained as earlier dry evidence",
+    "heldout_gold": "legacy_heldout_unverified; not independent factual gold"
+  },
+  "earlier_attempts": [
+    {
+      "identity": "stub-20261003-001",
+      "result": "invalidated before startup; no execution"
+    },
+    {
+      "identity": "stub-20261003-002",
+      "result": "real ingestion/publication succeeded; F1 fill validator rejected review display references misclassified as typed; raw/authority offline writer replay later passed"
+    },
+    {
+      "identity": "stub-20261003-003",
+      "result": "actual F1 fill succeeded; driver interrupted due public/domain status mismatch; full acceptance incomplete",
+      "executed_driver_snapshot": "artifacts/vnext/phase5/docker/stub-20261003-003/executed_driver.py"
+    }
+  ],
+  "original_workspace": {
+    "checked_files": 103,
+    "changed_files": [],
+    "original_workspace": "/Users/mao/projects/datacenter"
+  },
+  "remaining_required_gates": [
+    "Configured true model services available with recorded identities",
+    "Three fresh true-model Docker pairs",
+    "True-model challenge and A0–A3/primary-only execution and scoring",
+    "Old141 live blank/preserve runs",
+    "Independent evidence/status review before heldout becomes factual quality gold"
+  ],
+  "limitations": [
+    "Synthetic challenges do not establish real-room generalization",
+    "Component tests do not establish browser visual acceptance",
+    "No GC or event outbox",
+    "Old binaries must stop before migration; mixed rolling deployment unsupported",
+    "Pinned target/global KBs require one shared collection"
+  ],
+  "evidence_sha256": {
+    "artifacts/vnext/phase5/final-python.xml": "98ff1747d852087a2c9adcb4c57370e31ce6ee5e93977ceb9f98cfe5e9823439",
+    "artifacts/vnext/phase5/final-python.log": "55e4dcf8ada487ba4caa80b1bac3d40144de9ca1de21d7f185f5a67e638aaf61",
+    "artifacts/vnext/phase5/final-go-frontend-summary.json": "91a12592d8437d75efe7e0f208048ae5359fd0bb7283f138d1425e2c6dfc2cde",
+    "artifacts/vnext/phase5/final-ruff.txt": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "artifacts/vnext/phase5/final-docker-driver-tests.xml": "3d7a8ab114596b88334058a347c9d8090cae3b82cd98213db4bcffb598aabf17",
+    "artifacts/vnext/phase5/ablation-evaluation-03.json": "f4011ae9a335990873b5a2cf415e68de79f3b08bbc3c62df7f99b40b9541f7d5",
+    "artifacts/vnext/phase5/ablation-evaluation-03-summary.json": "4babb0b9970327f327cca97c394041ee56e4bea19b83a19a631af40789d8d6cd",
+    "artifacts/vnext/phase5/ablation-evaluation-03-integrity.json": "ac893914c03aced83c92d231fd3df59b3be3be12c89f82c89d483be1868e6d5e",
+    "artifacts/vnext/phase5/docker/stub-20261003-004/ledger.json": "5bee33d3121158127f6095ebbbced97e66905ba3be6cf56428fecbd5a37594f3",
+    "artifacts/vnext/phase5/docker/stub-20261003-004/storage-before.json": "f8f8613228348d676eb83c4140e5f898655af5d982e690f724993b3a328b15fa",
+    "artifacts/vnext/phase5/docker/stub-20261003-004/model-identity-receipt.json": "6fe6d812a647e29c50ba433f118ca286b2221aa3ba77a3187c0cc85c09130fea",
+    "artifacts/vnext/phase5/model-preflight.json": "959625045c1e1a3f5ac01aef8f6149ded1fc6a36e310467d893bc00c6ab06a16",
+    "artifacts/vnext/phase5/model-preflight-recheck.json": "d8ae827884e896b666061dbb44d6b4e829746a778e9e3322d6d41995cc5df94d",
+    "artifacts/vnext/phase5/container-model-preflight.json": "c1393aef81daf560ac516663bc911560a524a8f5fb958d92cb22bd021ab31d9b",
+    "artifacts/vnext/phase5/original-workspace-check.json": "e6783cc509f1caa133b6eed7eb3d3d04feb0cef251773a8cf02b912d7c8575ba",
+    "artifacts/vnext/phase5/docker-failure-002/review-reference-verification.json": "b9067f01f730216e6acc08b0282d8110cad08b21ee7c5eee947a84880e108b3c",
+    "artifacts/vnext/phase5/docker-failure-002/writer-replay-verification.json": "ddf16070e09592fe9e3fc06f86d529fecdb27d76a4aaa4c6bdd5d1a7f0b7f28d",
+    "artifacts/vnext/phase5/final-python-frozen.xml": "fe5ab30f134efea3823c82083ce083adab668ce5ee8a3a5c2a9f808a51bda079",
+    "artifacts/vnext/phase5/final-python-frozen.log": "4a157e2d2b2f42415a98ad9b3dc3fe334cd9be4b2feb0f1c073d7aacfdd0d016",
+    "artifacts/vnext/phase5/final-ruff-frozen.txt": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "artifacts/vnext/phase5/final-diff-frozen.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "artifacts/vnext/phase5/final-source-snapshot.json": "7357c15ab1ef3199caec26b8d2dcc247b8e64418564c348cd3beba7d55355fbb",
+    "artifacts/vnext/phase5/old141-runner-verification.json": "a0b70656c71c7413706d59986af8612da84ccef6a053b6e173b20ddcb6d93b7d",
+    "artifacts/vnext/phase5/old141-live-prepared-02/ledger.json": "3852b1540979652d3b59b916a814584a01ce311888c23fda842db582cd9a96e4",
+    "artifacts/vnext/phase5/original-workspace-check-final.json": "e6783cc509f1caa133b6eed7eb3d3d04feb0cef251773a8cf02b912d7c8575ba",
+    "artifacts/vnext/phase5/docker/stub-20261003-004/worker-source-sha256.json": "7ab4af0bcae6e0b49372582d28d1e2e586a81dd72f52249d9c9c5096c466ebfd",
+    "artifacts/vnext/phase5/docker-stop-004.log": "68f74987e5212c1bd96a19717429eb8be8aed23a486f659ba5489681642ce2bd"
+  },
+  "earlier_full_python": {
+    "passed": 845,
+    "junit": "artifacts/vnext/phase5/final-python.xml",
+    "log": "artifacts/vnext/phase5/final-python.log",
+    "scope": "earlier full run before adding Docker/old141 helper regressions; retained"
+  },
+  "old141_runner_regressions": {
+    "passed": 27,
+    "exit_code": 0,
+    "report": "artifacts/vnext/phase5/old141-runner-verification.json"
+  }
+}

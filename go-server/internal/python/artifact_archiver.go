@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/artifact"
@@ -40,6 +41,28 @@ func (a *ArtifactArchiver) ArchiveStep15Artifacts(ctx context.Context, workspace
 	if manifest == nil {
 		return nil, fmt.Errorf("%w: manifest is nil", ErrArtifactArchiveFail)
 	}
+	if err := manifest.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrArtifactArchiveFail, err)
+	}
+	if strings.TrimSpace(manifest.runDir) == "" {
+		return nil, fmt.Errorf("%w: manifest run directory is missing", ErrArtifactArchiveFail)
+	}
+	// Check the entire set before registering anything. A declared relative path
+	// must resolve to a regular file within this run, including through symlinks.
+	if err := validateArtifactLocation(manifest.runDir, filepath.Join(manifest.runDir, RunManifestFilename)); err != nil {
+		return nil, fmt.Errorf("%w: inspect run_manifest: %v", ErrArtifactArchiveFail, err)
+	}
+	paths := make(map[string]string, len(manifest.Artifacts))
+	for artifactType := range manifest.Artifacts {
+		if path, ok := manifest.ArtifactPath(artifactType); ok {
+			paths[artifactType] = path
+		}
+	}
+	for artifactType, path := range paths {
+		if err := validateArtifactLocation(manifest.runDir, path); err != nil {
+			return nil, fmt.Errorf("%w: inspect %s: %v", ErrArtifactArchiveFail, artifactType, err)
+		}
+	}
 	artifacts := make([]artifact.RunArtifact, 0, len(manifest.Artifacts))
 	if strings.TrimSpace(manifest.runDir) != "" {
 		registered, err := a.archiveArtifact(ctx, workspaceID, runID, artifact.TypeRunManifest, filepath.Join(manifest.runDir, RunManifestFilename), actor)
@@ -48,7 +71,14 @@ func (a *ArtifactArchiver) ArchiveStep15Artifacts(ctx context.Context, workspace
 		}
 		artifacts = append(artifacts, *registered)
 	}
+	names := make([]string, 0, len(manifest.Artifacts))
 	for artifactType := range manifest.Artifacts {
+		if artifactType != artifact.TypeRunManifest {
+			names = append(names, artifactType)
+		}
+	}
+	sort.Strings(names)
+	for _, artifactType := range names {
 		path, ok := manifest.ArtifactPath(artifactType)
 		if !ok || strings.TrimSpace(path) == "" {
 			continue
@@ -60,6 +90,29 @@ func (a *ArtifactArchiver) ArchiveStep15Artifacts(ctx context.Context, workspace
 		artifacts = append(artifacts, *registered)
 	}
 	return artifacts, nil
+}
+
+func validateArtifactLocation(runDir string, path string) error {
+	root, err := filepath.EvalSymlinks(runDir)
+	if err != nil {
+		return err
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return err
+	}
+	relative, err := filepath.Rel(root, resolved)
+	if err != nil || !SafeManifestRelativePath(relative) {
+		return fmt.Errorf("artifact resolves outside run directory")
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("artifact is not a regular file")
+	}
+	return nil
 }
 
 func (a *ArtifactArchiver) archiveArtifact(ctx context.Context, workspaceID uuid.UUID, runID uuid.UUID, artifactType string, path string, actor auth.Principal) (*artifact.RunArtifact, error) {

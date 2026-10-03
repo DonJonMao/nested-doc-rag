@@ -1,0 +1,2025 @@
+{
+  "tables": [
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "action",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "ip",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "payload_json",
+          "not_null": false,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "resource_id",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "resource_type",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "user_agent",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "user_id",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "workspace_id",
+          "not_null": false,
+          "type": "uuid"
+        }
+      ],
+      "constraints": [
+        "PRIMARY KEY (id)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "audit_logs",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "created_by",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "deleted_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "file_category",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "file_size",
+          "not_null": true,
+          "type": "bigint"
+        },
+        {
+          "default": null,
+          "name": "filename",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "mime_type",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "object_key",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "original_filename",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "sha256",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": "'active'::text",
+          "name": "status",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "workspace_id",
+          "not_null": true,
+          "type": "uuid"
+        }
+      ],
+      "constraints": [
+        "FOREIGN KEY (created_by) REFERENCES users(id)|validated=true|deferred=false/false",
+        "FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "PRIMARY KEY (id)|validated=true|deferred=false/false",
+        "UNIQUE (object_key)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "files",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        },
+        {
+          "columns": [
+            "object_key"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": false,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": "0",
+          "name": "answered_count",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": "0",
+          "name": "conflict_unresolved_count",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "created_by",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "error_message",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "failed_count",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "filled_form_artifact_id",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "finished_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "form_file_id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": "'global'::text",
+          "name": "global_namespace",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "index_version_id",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "job_id",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": "false",
+          "name": "judge_enabled",
+          "not_null": true,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "knowledge_base_id",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": "0",
+          "name": "last_event_sequence",
+          "not_null": true,
+          "type": "bigint"
+        },
+        {
+          "default": "''::text",
+          "name": "name",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "not_found_count",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "out_dir",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "partial_clue_count",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": "0",
+          "name": "progress_done",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": "0",
+          "name": "progress_total",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": "'step15_compat'::text",
+          "name": "prompt_version",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "queued_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "'layered'::text",
+          "name": "retrieval_mode",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "review_required_count",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "room_context",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "rows_spec",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "run_manifest_path",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "started_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "'created'::text",
+          "name": "status",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "summary_path",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "target_namespace",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "false",
+          "name": "use_judge_cache",
+          "not_null": true,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "workspace_id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": "0",
+          "name": "writeback_allowed_count",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": "true",
+          "name": "writeback_enabled",
+          "not_null": true,
+          "type": "boolean"
+        }
+      ],
+      "constraints": [
+        "FOREIGN KEY (created_by) REFERENCES users(id)|validated=true|deferred=false/false",
+        "FOREIGN KEY (filled_form_artifact_id) REFERENCES run_artifacts(id) ON DELETE SET NULL|validated=true|deferred=false/false",
+        "FOREIGN KEY (form_file_id) REFERENCES form_files(id) ON DELETE RESTRICT|validated=true|deferred=false/false",
+        "FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE SET NULL|validated=true|deferred=false/false",
+        "FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "PRIMARY KEY (id)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "fill_runs",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "created_by",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "file_id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "filename",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "workspace_id",
+          "not_null": true,
+          "type": "uuid"
+        }
+      ],
+      "constraints": [
+        "FOREIGN KEY (created_by) REFERENCES users(id)|validated=true|deferred=false/false",
+        "FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE RESTRICT|validated=true|deferred=false/false",
+        "FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "PRIMARY KEY (id)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "form_files",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "created_by",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": "0",
+          "name": "document_count",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "error_message",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "finished_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "index_version_id",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "job_id",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "knowledge_base_id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "out_dir",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "progress",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "python_command",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "started_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "'created'::text",
+          "name": "status",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "workspace_id",
+          "not_null": true,
+          "type": "uuid"
+        }
+      ],
+      "constraints": [
+        "FOREIGN KEY (created_by) REFERENCES users(id)|validated=true|deferred=false/false",
+        "FOREIGN KEY (index_version_id) REFERENCES knowledge_index_versions(id) ON DELETE SET NULL|validated=true|deferred=false/false",
+        "FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE SET NULL|validated=true|deferred=false/false",
+        "FOREIGN KEY (knowledge_base_id) REFERENCES knowledge_bases(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "PRIMARY KEY (id)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "ingestion_jobs",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": "0",
+          "name": "attempt",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "cancel_requested_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "created_by",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "error_message",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "finished_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "heartbeat_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "job_type",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": "3",
+          "name": "max_attempts",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": "'{}'::jsonb",
+          "name": "payload_json",
+          "not_null": true,
+          "type": "jsonb"
+        },
+        {
+          "default": "0",
+          "name": "priority",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "queued_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "resource_id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "resource_type",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "started_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "status",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "workspace_id",
+          "not_null": true,
+          "type": "uuid"
+        }
+      ],
+      "constraints": [
+        "FOREIGN KEY (created_by) REFERENCES users(id)|validated=true|deferred=false/false",
+        "FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "PRIMARY KEY (id)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "jobs",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "created_by",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "current_index_version_id",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "description",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "document_count",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "last_ingested_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "name",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "namespace",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "qdrant_collection",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": "'empty'::text",
+          "name": "status",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "workspace_id",
+          "not_null": true,
+          "type": "uuid"
+        }
+      ],
+      "constraints": [
+        "FOREIGN KEY (created_by) REFERENCES users(id)|validated=true|deferred=false/false",
+        "FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "PRIMARY KEY (id)|validated=true|deferred=false/false",
+        "UNIQUE (workspace_id, name)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "knowledge_bases",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        },
+        {
+          "columns": [
+            "workspace_id",
+            "name"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": false,
+          "ready": true,
+          "valid": true
+        },
+        {
+          "columns": [
+            "workspace_id",
+            "namespace"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": false,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "created_by",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "deleted_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "document_role",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "file_id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "filename",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "knowledge_base_id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "last_ingested_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "namespace",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": "'uploaded'::text",
+          "name": "status",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "workspace_id",
+          "not_null": true,
+          "type": "uuid"
+        }
+      ],
+      "constraints": [
+        "FOREIGN KEY (created_by) REFERENCES users(id)|validated=true|deferred=false/false",
+        "FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE RESTRICT|validated=true|deferred=false/false",
+        "FOREIGN KEY (knowledge_base_id) REFERENCES knowledge_bases(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "PRIMARY KEY (id)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "knowledge_documents",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "artifact_dir",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": "0",
+          "name": "chunk_count",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "created_by",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": "0",
+          "name": "document_count",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "error_message",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "failed_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "knowledge_base_id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "manifest_path",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "qdrant_collection",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "qdrant_namespace",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "ready_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "'building'::text",
+          "name": "status",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "version",
+          "not_null": true,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "workspace_id",
+          "not_null": true,
+          "type": "uuid"
+        }
+      ],
+      "constraints": [
+        "FOREIGN KEY (created_by) REFERENCES users(id)|validated=true|deferred=false/false",
+        "FOREIGN KEY (knowledge_base_id) REFERENCES knowledge_bases(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "PRIMARY KEY (id)|validated=true|deferred=false/false",
+        "UNIQUE (knowledge_base_id, version)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "knowledge_index_versions",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        },
+        {
+          "columns": [
+            "knowledge_base_id",
+            "version"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": false,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "expires_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "revoked_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "token_hash",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "user_id",
+          "not_null": true,
+          "type": "uuid"
+        }
+      ],
+      "constraints": [
+        "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "PRIMARY KEY (id)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "refresh_tokens",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "answer_status",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "answer_value",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "confidence",
+          "not_null": false,
+          "type": "double precision"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "'[]'::jsonb",
+          "name": "critic_flags",
+          "not_null": true,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "edited_answer",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": "'[]'::jsonb",
+          "name": "evidence_attachment_ids",
+          "not_null": true,
+          "type": "jsonb"
+        },
+        {
+          "default": "'[]'::jsonb",
+          "name": "evidence_refs",
+          "not_null": true,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "field_id",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": "'{}'::jsonb",
+          "name": "overlay_payload",
+          "not_null": true,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "question_text",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": "'{}'::jsonb",
+          "name": "raw_payload",
+          "not_null": true,
+          "type": "jsonb"
+        },
+        {
+          "default": "'[]'::jsonb",
+          "name": "reasons",
+          "not_null": true,
+          "type": "jsonb"
+        },
+        {
+          "default": "'[]'::jsonb",
+          "name": "reference_chunk_ids",
+          "not_null": true,
+          "type": "jsonb"
+        },
+        {
+          "default": "'[]'::jsonb",
+          "name": "reference_snippets",
+          "not_null": true,
+          "type": "jsonb"
+        },
+        {
+          "default": "'[]'::jsonb",
+          "name": "reference_source_documents",
+          "not_null": true,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "review_comment",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": "true",
+          "name": "review_required",
+          "not_null": true,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "reviewed_at",
+          "not_null": false,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "reviewer_id",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": "'medium'::text",
+          "name": "risk_level",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "row_index",
+          "not_null": false,
+          "type": "integer"
+        },
+        {
+          "default": null,
+          "name": "run_id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": "'[]'::jsonb",
+          "name": "source_chunk_ids",
+          "not_null": true,
+          "type": "jsonb"
+        },
+        {
+          "default": "'pending'::text",
+          "name": "status",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "suggested_answer_value",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": "'[]'::jsonb",
+          "name": "suggested_reference_source_documents",
+          "not_null": true,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "suggested_status",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "target_cell",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "workspace_id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "writeback_action",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": "false",
+          "name": "writeback_allowed",
+          "not_null": true,
+          "type": "boolean"
+        },
+        {
+          "default": null,
+          "name": "writeback_error_code",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "writeback_status",
+          "not_null": false,
+          "type": "text"
+        }
+      ],
+      "constraints": [
+        "FOREIGN KEY (reviewer_id) REFERENCES users(id)|validated=true|deferred=false/false",
+        "FOREIGN KEY (run_id) REFERENCES fill_runs(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "PRIMARY KEY (id)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "review_items",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "description",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "name",
+          "not_null": true,
+          "type": "text"
+        }
+      ],
+      "constraints": [
+        "PRIMARY KEY (id)|validated=true|deferred=false/false",
+        "UNIQUE (name)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "roles",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        },
+        {
+          "columns": [
+            "name"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": false,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "artifact_type",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "content_type",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "created_by",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "file_size",
+          "not_null": false,
+          "type": "bigint"
+        },
+        {
+          "default": null,
+          "name": "filename",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "local_path",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "object_key",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "run_id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "sha256",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "workspace_id",
+          "not_null": true,
+          "type": "uuid"
+        }
+      ],
+      "constraints": [
+        "FOREIGN KEY (created_by) REFERENCES users(id)|validated=true|deferred=false/false",
+        "FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "PRIMARY KEY (id)|validated=true|deferred=false/false",
+        "UNIQUE (object_key)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "run_artifacts",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        },
+        {
+          "columns": [
+            "object_key"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": false,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "event_type",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "job_id",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": "'{}'::jsonb",
+          "name": "payload_json",
+          "not_null": true,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "run_id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": "owned_nextval",
+          "name": "sequence",
+          "not_null": true,
+          "type": "bigint"
+        },
+        {
+          "default": null,
+          "name": "workspace_id",
+          "not_null": true,
+          "type": "uuid"
+        }
+      ],
+      "constraints": [
+        "FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE SET NULL|validated=true|deferred=false/false",
+        "FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "PRIMARY KEY (id)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "run_events",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        },
+        {
+          "columns": [
+            "run_id",
+            "sequence"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": false,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": "now()",
+          "name": "applied_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": "owned_nextval",
+          "name": "id",
+          "not_null": true,
+          "type": "bigint"
+        },
+        {
+          "default": null,
+          "name": "name",
+          "not_null": true,
+          "type": "text"
+        }
+      ],
+      "constraints": [
+        "PRIMARY KEY (id)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "schema_migrations_marker",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "role_id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "user_id",
+          "not_null": true,
+          "type": "uuid"
+        }
+      ],
+      "constraints": [
+        "FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "PRIMARY KEY (user_id, role_id)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "user_roles",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "user_id",
+            "role_id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "display_name",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "email",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "password_hash",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": "'active'::text",
+          "name": "status",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "username",
+          "not_null": true,
+          "type": "text"
+        }
+      ],
+      "constraints": [
+        "PRIMARY KEY (id)|validated=true|deferred=false/false",
+        "UNIQUE (username)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "users",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        },
+        {
+          "columns": [
+            "username"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": false,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "role",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "user_id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "workspace_id",
+          "not_null": true,
+          "type": "uuid"
+        }
+      ],
+      "constraints": [
+        "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE|validated=true|deferred=false/false",
+        "PRIMARY KEY (workspace_id, user_id)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "workspace_members",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "workspace_id",
+            "user_id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": "now()",
+          "name": "created_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "created_by",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "description",
+          "not_null": false,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "name",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "updated_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        }
+      ],
+      "constraints": [
+        "FOREIGN KEY (created_by) REFERENCES users(id)|validated=true|deferred=false/false",
+        "PRIMARY KEY (id)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "workspaces",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    }
+  ],
+  "uuid_extension_valid": true
+}

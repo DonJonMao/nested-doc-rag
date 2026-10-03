@@ -5,6 +5,7 @@ from dataclasses import replace
 from typing import Any
 
 from nested_doc_rag.evaluation.field_metrics import normalize_bool, normalize_enum, normalize_text, validate_constraints
+from nested_doc_rag.grounding.evidence_strength import is_exact_structured_hit
 from nested_doc_rag.io import display_text
 from nested_doc_rag.schemas.eval import FieldGold, FieldPrediction
 
@@ -191,9 +192,9 @@ def make_prediction_from_evidence(
     }
     if bundle.decision == "use_direct_evidence":
         selected = bundle.selected_chunks[0]
-        answer_value = selected.get("answer_value")
+        answer_value = chunk_answer_value(selected)
         validation = dict(validation_base)
-        if not answer_value:
+        if answer_value is None or normalize_text(answer_value) == "":
             answer_value = selected.get("short_answer") or selected.get("raw_text") or selected.get("text_for_embedding") or selected.get("text") or ""
             answer_value = str(answer_value or "").strip()
             if len(answer_value) > 120:
@@ -409,7 +410,7 @@ def classify_evidence_support(
     query_plan: QueryPlan,
 ) -> tuple[str, str]:
     text = chunk_text(chunk)
-    answer_text = normalize_text(chunk.get("answer_value"))
+    answer_text = normalize_text(chunk_answer_value(chunk))
     layer = infer_retrieval_layer(chunk, query_plan)
     namespace = str(chunk.get("namespace") or "")
     source_type = str(chunk.get("source_type") or "")
@@ -424,6 +425,12 @@ def classify_evidence_support(
 
     if is_uncertain_answer(chunk):
         return EvidenceSupportLevel.REFERENCE, "answer is uncertain and requires review"
+
+    if chunk.get("evidence_kind") == "structured_field" and is_target:
+        label_matches = field_relevance(field, str(chunk.get("field_name") or ""))
+        if is_exact_structured_hit(chunk, query_plan.target_namespace) and label_matches and usable_answer(chunk):
+            return EvidenceSupportLevel.DIRECT, "target located field/value evidence matches field semantics"
+        return EvidenceSupportLevel.REFERENCE, "structured field lacks matching label, value or location"
 
     if chunk_has_answer_value(chunk) and usable_answer(chunk) and chunk.get("field_id") == field.field_id and is_target:
         return EvidenceSupportLevel.DIRECT, "field_id-matched target answer_value"
@@ -443,7 +450,7 @@ def classify_evidence_support(
             if relevant:
                 return EvidenceSupportLevel.REFERENCE, "target structured evidence is relevant but not explicit enough"
             return EvidenceSupportLevel.REFERENCE, "target structured evidence lacks clear field semantics"
-        if layer == "target_raw_detail":
+        if layer in {"target_raw_detail", "target_text_detail", "target_table_detail"}:
             if relevant and has_explicit_answer_signal(field, text):
                 return EvidenceSupportLevel.DIRECT, "target raw detail contains explicit field answer"
             if relevant or source_type:
@@ -496,6 +503,13 @@ def infer_retrieval_layer(chunk: dict[str, Any], query_plan: QueryPlan) -> str:
     source_type = str(chunk.get("source_type") or "")
     corpus_layer = str(chunk.get("corpus_layer") or "")
     is_target = namespace == query_plan.target_namespace
+    if chunk.get("evidence_kind"):
+        if not is_target:
+            return "global_intro" if chunk["evidence_kind"] == "document_intro" else "global_detail"
+        return {
+            "structured_field": "target_structured_fact",
+            "table_row": "target_table_detail",
+        }.get(chunk["evidence_kind"], "target_text_detail")
     if is_target and source_type == "main_excel_capability":
         return "target_main_fact"
     if is_target and source_type in {"embedded_word_table", "structured_detail", "detail_table"}:
@@ -659,6 +673,11 @@ def coarse_question_match(question_text: str, chunk: dict[str, Any]) -> bool:
 def source_priority(chunk: dict[str, Any], query_plan: QueryPlan) -> int:
     namespace = chunk.get("namespace")
     source_type = chunk.get("source_type")
+    kind = chunk.get("evidence_kind")
+    if kind:
+        if namespace != query_plan.target_namespace:
+            return 5 if kind == "document_intro" else 6
+        return {"structured_field": 1, "table_row": 2, "paragraph": 3, "document_chunk": 3, "document_intro": 4}.get(kind, 4)
     if namespace == query_plan.target_namespace and source_type == "main_excel_capability":
         return 1
     if namespace == query_plan.target_namespace and source_type == "embedded_word_table":
@@ -677,7 +696,7 @@ def same_priority_conflict(chunks: list[dict[str, Any]], query_plan: QueryPlan) 
     for chunk in chunks:
         buckets.setdefault(source_priority(chunk, query_plan), []).append(chunk)
     for bucket in buckets.values():
-        values = {answer_key(chunk.get("answer_value")) for chunk in bucket if chunk_has_answer_value(chunk) and usable_answer(chunk)}
+        values = {answer_key(chunk_answer_value(chunk)) for chunk in bucket if chunk_has_answer_value(chunk) and usable_answer(chunk)}
         if len(values) > 1:
             return bucket
     return []
@@ -697,7 +716,7 @@ def choose_target_direct_chunk(chunks: list[dict[str, Any]], field: FieldGold, q
 
 
 def usable_answer(chunk: dict[str, Any]) -> bool:
-    return chunk.get("answer_status", ANSWERED) == ANSWERED and normalize_text(chunk.get("answer_value")) not in {"", "未找到"}
+    return chunk.get("answer_status", ANSWERED) == ANSWERED and normalize_text(chunk_answer_value(chunk)) not in {"", "未找到"}
 
 
 def direct_evidence_candidate(chunk: dict[str, Any]) -> bool:
@@ -708,13 +727,17 @@ def direct_evidence_candidate(chunk: dict[str, Any]) -> bool:
 
 
 def chunk_has_answer_value(chunk: dict[str, Any]) -> bool:
-    return "answer_value" in chunk and normalize_text(chunk.get("answer_value")) != ""
+    return normalize_text(chunk_answer_value(chunk)) != ""
+
+
+def chunk_answer_value(chunk: dict[str, Any]) -> Any:
+    return chunk.get("field_value") if chunk.get("field_value") is not None else chunk.get("answer_value")
 
 
 def is_uncertain_answer(chunk: dict[str, Any]) -> bool:
     if not chunk_has_answer_value(chunk):
         return False
-    return normalize_enum(chunk.get("answer_value")) in {normalize_enum(item) for item in UNCERTAIN_VALUES}
+    return normalize_enum(chunk_answer_value(chunk)) in {normalize_enum(item) for item in UNCERTAIN_VALUES}
 
 
 def answer_key(value: Any) -> str:

@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -16,6 +17,8 @@ type AsynqQueue struct {
 	timeout    time.Duration
 	maxAttempt int
 }
+
+const asynqPracticalNoTimeout = 100 * 365 * 24 * time.Hour
 
 func NewAsynqQueue(redisCfg config.RedisConfig, jobsCfg config.JobsConfig) *AsynqQueue {
 	return &AsynqQueue{
@@ -42,18 +45,31 @@ func (q *AsynqQueue) Enqueue(ctx context.Context, job Job) error {
 	if maxRetry < 0 {
 		maxRetry = 0
 	}
-	timeout := q.timeout
-	if timeout <= 0 {
-		timeout = 2 * time.Hour
-	}
 	_, err = q.client.EnqueueContext(
 		ctx,
 		asynq.NewTask(TaskType(q.namespace, job.JobType), payload),
-		asynq.MaxRetry(maxRetry),
-		asynq.Timeout(timeout),
-		asynq.Queue(queueName(job)),
+		q.enqueueOptions(job, maxRetry)...,
 	)
+	if errors.Is(err, asynq.ErrTaskIDConflict) {
+		return nil
+	}
 	return err
+}
+
+func (q *AsynqQueue) enqueueOptions(job Job, maxRetry int) []asynq.Option {
+	timeout := q.timeout
+	if timeout <= 0 {
+		// Asynq v0.25.1 falls back to its 30m default when timeout is zero
+		// or omitted. Use a large explicit duration to preserve our "0s means
+		// no practical job timeout" configuration.
+		timeout = asynqPracticalNoTimeout
+	}
+	return []asynq.Option{
+		asynq.TaskID(job.ID.String()),
+		asynq.MaxRetry(maxRetry),
+		asynq.Queue(queueName(job)),
+		asynq.Timeout(timeout),
+	}
 }
 
 func (q *AsynqQueue) Close() error {

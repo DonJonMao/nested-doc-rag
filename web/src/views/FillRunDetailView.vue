@@ -1,38 +1,49 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import SubNav from '@/components/nav/SubNav.vue'
 import StatusPill from '@/components/common/StatusPill.vue'
 import ArtifactDownloadPanel from '@/components/fill/ArtifactDownloadPanel.vue'
+import EvidenceWorkbench from '@/components/fill/EvidenceWorkbench.vue'
 import RunEventTimeline from '@/components/fill/RunEventTimeline.vue'
 import { subscribeRunEvents } from '@/api/events.api'
 import { downloadEvidenceImage } from '@/api/fillRuns.api'
 import { useFillRunStore } from '@/stores/fillRun.store'
-import type { FillRunEvidenceRef, RunEvent } from '@/api/types'
+import type { RunEvent } from '@/api/types'
 
 const route = useRoute()
 const fill = useFillRunStore()
 const events = ref<RunEvent[]>([])
 const controller = ref<AbortController | null>(null)
 const loadError = ref('')
-const terminalStatuses = ['completed', 'succeeded', 'completed_with_failures', 'failed', 'cancelled', 'canceled']
+const completedStatuses = ['completed', 'succeeded', 'completed_with_failures']
+let pollTimer: ReturnType<typeof setInterval> | null = null
+let refreshPromise: Promise<unknown> | null = null
 
 const runId = computed(() => String(route.params.runId))
-const run = computed(() => fill.detail)
+const run = computed(() => fill.detail?.id === runId.value ? fill.detail : null)
 const percent = computed(() => {
   if (!run.value) return 0
-  return terminalStatuses.includes(run.value.status) ? 100 : 35
+  const total = run.value.progress_total || 0
+  const done = run.value.progress_done || 0
+  if (total > 0) {
+    const cap = completedStatuses.includes(run.value.status) ? 100 : 99
+    return Math.max(done > 0 ? 1 : 0, Math.min(cap, Math.round((done / total) * 100)))
+  }
+  if (completedStatuses.includes(run.value.status)) return 100
+  return 0
 })
 const isProcessing = computed(() => ['created', 'queued', 'running', 'cancel_requested'].includes(run.value?.status || ''))
 const isCompletedWithFailures = computed(() => run.value?.status === 'completed_with_failures')
 const isFailed = computed(() => run.value?.status === 'failed')
+const isCanceled = computed(() => ['cancelled', 'canceled'].includes(run.value?.status || ''))
 const artifactInvalid = computed(() => run.value?.artifact_validation_status === 'invalid' || run.value?.manifest_status === 'invalid')
 const canCancel = computed(() => ['queued', 'running'].includes(run.value?.raw_status || run.value?.status || ''))
-const uncertainFields = computed(() => run.value?.writeback?.fields?.filter((field) => field.status === 'uncertain') ?? [])
 
 function connectEvents() {
   if (!run.value?.workspace_id) return
+  const subscribedRunId = run.value.id
   controller.value?.abort()
   controller.value = new AbortController()
   subscribeRunEvents({
@@ -41,11 +52,12 @@ function connectEvents() {
     afterSequence: events.value.at(-1)?.sequence,
     signal: controller.value.signal,
     onEvent(event) {
+      if (runId.value !== subscribedRunId) return
       if (!events.value.some((item) => item.sequence === event.sequence)) {
         events.value.push(event)
       }
       if (shouldRefreshRun(event.event_type)) {
-        fill.loadRun(runId.value).catch(() => undefined)
+        refreshRun()
       }
     },
     onError() {
@@ -70,13 +82,35 @@ function shouldRefreshRun(eventType: string) {
 }
 
 async function load() {
+  const requestedRunId = runId.value
+  controller.value?.abort()
+  events.value = []
+  if (pollTimer) clearInterval(pollTimer)
   try {
     loadError.value = ''
-    await fill.loadRun(runId.value)
+    await fill.loadRun(requestedRunId)
+    if (requestedRunId !== runId.value) return
     connectEvents()
+    startPolling()
   } catch {
+    if (requestedRunId !== runId.value) return
     loadError.value = '任务不存在或无权限访问'
   }
+}
+
+function refreshRun() {
+  if (refreshPromise) return refreshPromise
+  refreshPromise = fill.loadRun(runId.value).catch(() => undefined).finally(() => {
+    refreshPromise = null
+  })
+  return refreshPromise
+}
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = setInterval(() => {
+    if (isProcessing.value) refreshRun()
+  }, 5000)
 }
 
 async function cancel() {
@@ -90,19 +124,6 @@ function count(value?: number) {
   return value ?? 0
 }
 
-function displayValue(value: unknown) {
-  if (value === null || value === undefined || value === '') return '-'
-  return String(value)
-}
-
-function evidenceSource(ref: FillRunEvidenceRef) {
-  return ref.file_name || ref.document_id || ref.object_key || ref.chunk_id || '未知来源'
-}
-
-function evidenceLocation(ref: FillRunEvidenceRef) {
-  return [ref.source_anchor, ref.sheet_name, ref.cell, ref.page ? `page ${ref.page}` : ''].filter(Boolean).join(' / ') || '-'
-}
-
 async function downloadImage(imageObjectKey: string) {
   if (!run.value) return
   try {
@@ -112,8 +133,11 @@ async function downloadImage(imageObjectKey: string) {
   }
 }
 
-onMounted(load)
-onBeforeUnmount(() => controller.value?.abort())
+watch(runId, load, { immediate: true })
+onBeforeUnmount(() => {
+  controller.value?.abort()
+  if (pollTimer) clearInterval(pollTimer)
+})
 </script>
 
 <template>
@@ -130,11 +154,16 @@ onBeforeUnmount(() => controller.value?.abort())
         <div class="gk-caption">{{ run.template_file_name || '未记录模板文件' }} · {{ run.kb_name || '未关联知识库' }}</div>
       </div>
       <StatusPill :status="run.status" />
-      <el-progress :percentage="percent" />
+      <div class="detail__progress">
+        <el-progress v-if="run.progress_total > 0 || completedStatuses.includes(run.status)" :percentage="percent" />
+        <p v-else class="gk-caption">{{ isProcessing ? '等待字段总数与执行进度' : '未记录字段进度' }}</p>
+        <span v-if="run.progress_total > 0">已处理 {{ run.progress_done }} / {{ run.progress_total }}</span>
+      </div>
       <el-button v-if="canCancel" @click="cancel">取消任务</el-button>
       <p v-if="isProcessing" class="detail__info">任务处理中</p>
       <p v-if="isCompletedWithFailures" class="detail__warning">任务已完成，但部分字段处理失败，请查看需人工补充字段清单。</p>
       <p v-if="isFailed" class="detail__error">{{ run.error_message || '任务失败，无法下载结果。' }}</p>
+      <p v-if="isCanceled" class="detail__warning">任务已取消，未生成可下载结果。</p>
       <p v-if="artifactInvalid" class="detail__error">结果文件校验失败，请重新运行任务或联系管理员。</p>
     </section>
 
@@ -142,42 +171,36 @@ onBeforeUnmount(() => controller.value?.abort())
       {{ run.message || '该表格仅自动写入系统判定为安全的字段；未写入或需复核字段请人工补充。' }}
     </section>
 
-    <section v-if="run" class="detail__cards">
-      <div class="detail__metric gk-card">
-        <span>总字段数</span>
-        <strong>{{ run.summary.total_fields }}</strong>
+    <section v-if="run" class="detail__outcomes" aria-label="任务字段概览">
+      <div class="detail__cards">
+        <div class="detail__metric gk-card">
+          <span>总字段数</span>
+          <strong>{{ run.summary.total_fields }}</strong>
+          <small>本次任务字段</small>
+        </div>
+        <div class="detail__metric gk-card">
+          <span>已回答</span>
+          <strong>{{ run.summary.answered }}</strong>
+          <small>回答与写回判定独立</small>
+        </div>
+        <div class="detail__metric detail__metric--written gk-card">
+          <span>实际写入</span>
+          <strong>{{ run.summary.written ?? '—' }}</strong>
+          <small>{{ run.summary.written === undefined ? '未记录实际写入数' : '以写回审计为准' }}</small>
+        </div>
+        <div class="detail__metric detail__metric--review gk-card">
+          <span>需人工补充 / 复核</span>
+          <strong>{{ run.summary.review_required }}</strong>
+          <small>下载后线下核对</small>
+        </div>
       </div>
-      <div class="detail__metric gk-card">
-        <span>已回答字段</span>
-        <strong>{{ run.summary.answered }}</strong>
-      </div>
-      <div class="detail__metric gk-card">
-        <span>自动写入字段</span>
-        <strong>{{ count(run.summary.written ?? run.summary.writeback_allowed) }}</strong>
-      </div>
-      <div class="detail__metric gk-card">
-        <span>需人工补充/复核字段</span>
-        <strong>{{ run.summary.review_required }}</strong>
-      </div>
-      <div class="detail__metric gk-card">
-        <span>确认字段</span>
-        <strong>{{ count(run.summary.confirmed) }}</strong>
-      </div>
-      <div class="detail__metric gk-card">
-        <span>存疑字段</span>
-        <strong>{{ count(run.summary.uncertain) }}</strong>
-      </div>
-      <div class="detail__metric gk-card">
-        <span>标记字段</span>
-        <strong>{{ count(run.summary.flagged) }}</strong>
-      </div>
-      <div class="detail__metric gk-card">
-        <span>未找到字段</span>
-        <strong>{{ run.summary.not_found }}</strong>
-      </div>
-      <div class="detail__metric gk-card">
-        <span>失败字段</span>
-        <strong>{{ run.summary.failed_fields }}</strong>
+      <div class="detail__breakdown gk-card">
+        <span class="detail__breakdown-label">字段判定</span>
+        <span class="detail__outcome detail__outcome--confirmed"><i aria-hidden="true"></i>确认 <b>{{ count(run.summary.confirmed) }}</b></span>
+        <span class="detail__outcome detail__outcome--uncertain"><i aria-hidden="true"></i>存疑 <b>{{ count(run.summary.uncertain) }}</b></span>
+        <span class="detail__outcome detail__outcome--flagged"><i aria-hidden="true"></i>标记 <b>{{ count(run.summary.flagged) }}</b></span>
+        <span class="detail__outcome"><i aria-hidden="true"></i>未找到 <b>{{ run.summary.not_found }}</b></span>
+        <span class="detail__outcome detail__outcome--flagged"><i aria-hidden="true"></i>失败 <b>{{ run.summary.failed_fields }}</b></span>
       </div>
     </section>
 
@@ -198,32 +221,14 @@ onBeforeUnmount(() => controller.value?.abort())
       </section>
     </div>
 
-    <section v-if="run && uncertainFields.length" class="detail__evidence gk-card">
-      <h2 class="gk-card-title">存疑字段证据</h2>
-      <p class="gk-caption">以下字段已按配置标红写入或进入人工补充清单，请下载表格后线下复核。</p>
-      <div class="detail__evidence-list">
-        <article v-for="field in uncertainFields" :key="field.field_key || field.field_id || field.target_cell" class="detail__evidence-item">
-          <div class="detail__evidence-head">
-            <strong>{{ field.field_key || field.field_id || field.target_cell }}</strong>
-            <span>{{ field.writeback_action || 'review_only' }}</span>
-          </div>
-          <div class="detail__evidence-answer">{{ displayValue(field.answer_value) }}</div>
-          <div v-for="(ref, index) in field.evidence_refs" :key="`${field.field_key || field.field_id}-${index}`" class="detail__evidence-ref">
-            <div>{{ evidenceSource(ref) }}</div>
-            <small>{{ evidenceLocation(ref) }}</small>
-            <p v-if="ref.text_preview">{{ ref.text_preview }}</p>
-            <el-button
-              v-if="ref.image_object_key"
-              link
-              type="primary"
-              @click="downloadImage(ref.image_object_key || '')"
-            >
-              下载图片证据
-            </el-button>
-          </div>
-        </article>
-      </div>
-    </section>
+    <EvidenceWorkbench
+      v-if="run"
+      :evidence="run.evidence"
+      :writeback="run.writeback"
+      :run-status="run.status"
+      :artifact-invalid="artifactInvalid"
+      @download-image="downloadImage"
+    />
 
     <RunEventTimeline v-if="run" :events="events" />
   </main>
@@ -253,6 +258,19 @@ onBeforeUnmount(() => controller.value?.abort())
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 18px;
   box-shadow: var(--gk-glass-shadow);
+}
+
+.detail__summary > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+
+.detail__progress {
+  min-width: 0;
+}
+
+.detail__progress span {
+  display: block;
+  margin-top: 6px;
+  color: var(--gk-ink-3);
+  font-size: 13px;
 }
 
 .detail__error {
@@ -291,81 +309,86 @@ onBeforeUnmount(() => controller.value?.abort())
   background: linear-gradient(135deg, rgba(234, 244, 255, 0.74), rgba(255, 255, 255, 0.58));
 }
 
+.detail__outcomes {
+  display: grid;
+  gap: 12px;
+}
+
 .detail__cards {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-}
-
-.detail__evidence {
-  padding: 24px;
-  box-shadow: var(--gk-glass-shadow);
-}
-
-.detail__evidence-list {
-  display: grid;
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.detail__evidence-item {
-  border: 1px solid var(--gk-glass-line);
-  border-radius: 8px;
-  padding: 16px;
-  display: grid;
-  gap: 10px;
-  background: rgba(255, 255, 255, 0.48);
-}
-
-.detail__evidence-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.detail__evidence-head span {
-  color: var(--gk-warning);
-  padding: 2px 8px;
-  border-radius: var(--gk-radius-pill);
-  background: rgba(255, 247, 232, 0.72);
-}
-
-.detail__evidence-answer {
-  color: var(--gk-ink-1);
-}
-
-.detail__evidence-ref {
-  border-top: 1px solid var(--gk-glass-line);
-  padding-top: 10px;
-  display: grid;
-  gap: 4px;
-}
-
-.detail__evidence-ref small {
-  color: var(--gk-ink-3);
-}
-
-.detail__evidence-ref p {
-  margin: 0;
-  color: var(--gk-ink-2);
 }
 
 .detail__metric {
-  min-height: 104px;
+  min-width: 0;
+  min-height: 142px;
   display: grid;
   align-content: space-between;
-  background: linear-gradient(155deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.48));
+  gap: 12px;
+  background: var(--gk-glass-bg-strong);
 }
 
 .detail__metric span {
-  color: var(--gk-ink-3);
+  color: var(--gk-ink-2);
   font-size: 13px;
 }
 
 .detail__metric strong {
-  font-size: 30px;
+  font-size: 34px;
   line-height: 1;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
+
+.detail__metric small {
+  color: var(--gk-ink-3);
+  font-size: 11px;
+}
+
+.detail__metric--written strong { color: var(--gk-info); }
+.detail__metric--review strong { color: var(--gk-warning); }
+
+.detail__breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 24px;
+  padding: 15px 22px;
+  box-shadow: none;
+}
+
+.detail__breakdown-label {
+  font-size: 12px;
+  color: var(--gk-ink-3);
+  margin-right: 8px;
+}
+
+.detail__outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--gk-ink-3);
+  font-size: 12px;
+}
+
+.detail__outcome i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.detail__outcome b {
+  color: var(--gk-ink-1);
+  font-size: 14px;
+  margin-left: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail__outcome--confirmed { color: var(--gk-success); }
+.detail__outcome--uncertain { color: var(--gk-warning); }
+.detail__outcome--flagged { color: var(--gk-danger); }
 
 .detail__metrics dl {
   display: grid;
@@ -384,8 +407,7 @@ onBeforeUnmount(() => controller.value?.abort())
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .detail__error,
   .detail__warning,
-  .detail__info,
-  .detail__evidence-item {
+  .detail__info {
     -webkit-backdrop-filter: saturate(170%) blur(16px);
     backdrop-filter: saturate(170%) blur(16px);
   }
@@ -393,7 +415,7 @@ onBeforeUnmount(() => controller.value?.abort())
 
 @media (max-width: 980px) {
   .detail__cards {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -402,8 +424,11 @@ onBeforeUnmount(() => controller.value?.abort())
     grid-template-columns: 1fr;
   }
 
-  .detail__cards {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  .detail__cards { gap: 9px; }
+
+  .detail__metric { padding: 19px 16px; min-height: 130px; }
+  .detail__metric strong { font-size: 29px; }
+  .detail__breakdown { padding: 14px 16px; gap: 12px 17px; }
+  .detail__breakdown-label { width: 100%; }
 }
 </style>

@@ -620,24 +620,25 @@ def call_llm_json(
         json.dump(payload, tmp, ensure_ascii=False)
         tmp_path = Path(tmp.name)
     try:
+        command = [
+            "curl",
+            "--noproxy",
+            "*",
+            "-sS",
+            "-X",
+            "POST",
+            url,
+            "-H",
+            "Content-Type: application/json",
+            "-H",
+            f"Authorization: Bearer {api_key}",
+            "-d",
+            f"@{tmp_path}",
+        ]
+        if timeout and timeout > 0:
+            command[4:4] = ["--max-time", str(timeout)]
         proc = subprocess.run(
-            [
-                "curl",
-                "--noproxy",
-                "*",
-                "-sS",
-                "--max-time",
-                str(timeout),
-                "-X",
-                "POST",
-                url,
-                "-H",
-                "Content-Type: application/json",
-                "-H",
-                f"Authorization: Bearer {api_key}",
-                "-d",
-                f"@{tmp_path}",
-            ],
+            command,
             text=True,
             capture_output=True,
             check=False,

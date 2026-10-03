@@ -35,7 +35,7 @@ func TestPythonRunnerRunStep15Success(t *testing.T) {
 	require.NotNil(t, result.Validation)
 	require.Equal(t, "layered", argValue(t, exec.specs[0].Args, "--retrieval-plan"))
 	require.Equal(t, "step15_compat", argValue(t, exec.specs[0].Args, "--prompt-version"))
-	require.Equal(t, "4-144", argValue(t, exec.specs[0].Args, "--rows"))
+	require.Equal(t, "all", argValue(t, exec.specs[0].Args, "--rows"))
 	require.Contains(t, exec.specs[1].Args, "validate-artifacts")
 }
 
@@ -88,7 +88,7 @@ func testSubprocessRunner(exec *fakeCommandExecutor) *pythonpkg.SubprocessPython
 		DefaultTimeout:             time.Hour,
 		Step15DefaultRetrievalMode: "layered",
 		Step15DefaultPromptVersion: "step15_compat",
-		Step15DefaultRows:          "4-144",
+		Step15DefaultRows:          "all",
 		IngestCommandEnabled:       true,
 	}
 }

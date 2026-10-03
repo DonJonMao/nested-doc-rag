@@ -11,6 +11,20 @@ on:
 jobs:
   go:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.4
+        env:
+          POSTGRES_USER: vnext_test
+          POSTGRES_PASSWORD: vnext_ci_only
+          POSTGRES_DB: vnext_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vnext_test -d vnext_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: go-server
@@ -35,6 +49,11 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      - name: Required PostgreSQL integration
+        env:
+          VNEXT_TEST_POSTGRES_DSN: postgres://vnext_test:vnext_ci_only@127.0.0.1:5432/vnext_test?sslmode=disable
+        run: make test-postgres
 
       - name: Vet
         run: go vet ./...

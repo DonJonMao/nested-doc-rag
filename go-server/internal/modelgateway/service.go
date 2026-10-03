@@ -162,9 +162,6 @@ func newKindProxy(cfg KindRuntimeConfig, logger *zap.Logger) *kindProxy {
 	if cfg.PerRunMaxInflight <= 0 {
 		cfg.PerRunMaxInflight = 1
 	}
-	if cfg.QueueTimeout <= 0 {
-		cfg.QueueTimeout = 300 * time.Second
-	}
 	p := &kindProxy{
 		cfg:        cfg,
 		logger:     logger,
@@ -219,7 +216,7 @@ func (p *kindProxy) worker() {
 
 func (p *kindProxy) handleTask(task *requestTask) {
 	queueWait := time.Since(task.queuedAt)
-	if queueWait > p.cfg.QueueTimeout {
+	if p.cfg.QueueTimeout > 0 && queueWait > p.cfg.QueueTimeout {
 		p.queueTimeout.Add(1)
 		p.errorTotal.Add(1)
 		p.trySend(task, taskResult{Err: newGatewayError(CodeQueueTimeout, "model gateway queue wait timed out", http.StatusTooManyRequests, nil)})
@@ -346,13 +343,11 @@ func (p *kindProxy) callUpstreamWithRetry(ctx context.Context, metadata Metadata
 
 func (p *kindProxy) callUpstream(ctx context.Context, body []byte) upstreamResult {
 	timeout := p.cfg.Timeout
-	if timeout <= 0 {
-		timeout = p.cfg.RequestTimeout
+	reqCtx := ctx
+	cancel := func() {}
+	if timeout > 0 {
+		reqCtx, cancel = context.WithTimeout(ctx, timeout)
 	}
-	if timeout <= 0 {
-		timeout = 180 * time.Second
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	started := time.Now()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, p.cfg.UpstreamURL, bytes.NewReader(body))

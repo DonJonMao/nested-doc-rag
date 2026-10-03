@@ -189,3 +189,36 @@ def test_prediction_reference_fields_backward_compatible() -> None:
     assert prediction.reference_chunk_ids == []
     assert prediction.reference_source_documents == []
     assert prediction.to_dict()["reference_snippets"] == []
+
+
+def test_uploaded_canonical_field_value_is_direct_but_mismatched_label_is_reference() -> None:
+    field = make_field("field_ups", "UPS容量", "number")
+    plan = build_query_plan(field, target_namespace="xixian_4")
+    hit = {
+        "chunk_id": "native_ups", "namespace": "xixian_4", "source_type": "uploaded_excel_row",
+        "evidence_kind": "structured_field", "corpus_layer": "fact", "field_name": "UPS容量",
+        "field_value": "500 kVA", "address": {"cell_range": "A2:B2"}, "raw_text": "UPS容量 / 500 kVA",
+    }
+    bundle = select_evidence([hit], field, plan)
+    prediction = make_prediction_from_evidence(field, bundle)
+    assert prediction.answer_status == "answered"
+    assert prediction.answer_value == "500 kVA"
+    assert prediction.source_chunk_ids == ["native_ups"]
+
+    mismatched = select_evidence([dict(hit, field_name="油机容量", field_id=field.field_id)], field, plan)
+    assert make_prediction_from_evidence(field, mismatched).answer_status == "partial_clue"
+
+
+def test_conflicting_canonical_values_do_not_privilege_historical_source_type() -> None:
+    field = make_field("field_ups", "UPS容量", "number")
+    plan = build_query_plan(field, target_namespace="xixian_4")
+    common = {
+        "namespace": "xixian_4", "evidence_kind": "structured_field", "corpus_layer": "fact",
+        "field_name": "UPS容量", "address": {"cell_range": "A2:B2"},
+    }
+    bundle = select_evidence([
+        dict(common, chunk_id="old", source_type="main_excel_capability", field_value="300 kVA", raw_text="UPS容量 / 300 kVA"),
+        dict(common, chunk_id="new", source_type="uploaded_excel_row", field_value="500 kVA", raw_text="UPS容量 / 500 kVA"),
+    ], field, plan)
+    assert bundle.decision == "conflict_unresolved"
+    assert make_prediction_from_evidence(field, bundle).answer_status == "conflict_unresolved"

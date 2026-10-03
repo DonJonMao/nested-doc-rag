@@ -19,7 +19,8 @@ const roomContext = ref('')
 const busy = ref(false)
 
 const workspaceId = computed(() => workspace.currentWorkspace?.id || workspace.currentWorkspaceId)
-const selectedReady = computed(() => knowledge.options.find((item) => item.id === knowledge.selectedId && item.status === 'ready'))
+const targetKnowledgeOptions = computed(() => knowledge.options.filter((item) => item.namespace.trim().toLowerCase() !== 'global'))
+const selectedReady = computed(() => targetKnowledgeOptions.value.find((item) => item.id === knowledge.selectedId && item.status === 'ready'))
 const roomContextOptions = computed(() => {
   const selected = selectedReady.value
   if (!selected) return []
@@ -29,6 +30,9 @@ const roomContextOptions = computed(() => {
 async function ensureData() {
   if (!workspace.workspaces.length) await workspace.load()
   if (workspaceId.value) await knowledge.loadOptions(workspaceId.value)
+  if (targetKnowledgeOptions.value.length && !targetKnowledgeOptions.value.some((item) => item.id === knowledge.selectedId)) {
+    knowledge.selectedId = targetKnowledgeOptions.value[0].id
+  }
 }
 
 async function onFile(file: File) {
@@ -93,13 +97,13 @@ function uniqueTextOptions(values: Array<string | undefined>) {
   <main class="gk-shell gk-main fill-create">
     <section class="fill-create__hero">
       <h1 class="gk-page-title">上传工勘单，自动完成字段填写</h1>
-      <p>系统会检索对应资料，调用后端 Step15AgentRunner，并生成可下载的回填 Excel。</p>
+      <p>系统会融合目标机房与公共资料，完成可信证据校验，并生成可下载的回填 Excel。</p>
     </section>
 
     <section class="gk-grid-two">
       <div class="gk-card fill-create__panel">
-        <h2 class="gk-card-title">选择知识分库</h2>
-        <KnowledgeBaseSelector v-model="knowledge.selectedId" :items="knowledge.options" />
+        <h2 class="gk-card-title">选择数据中心</h2>
+        <KnowledgeBaseSelector v-model="knowledge.selectedId" :items="targetKnowledgeOptions" />
       </div>
       <div class="gk-card fill-create__panel">
         <h2 class="gk-card-title">上传工勘单</h2>

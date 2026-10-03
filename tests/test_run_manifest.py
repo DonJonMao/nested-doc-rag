@@ -15,6 +15,7 @@ def test_manifest_generated_after_fake_run(tmp_path: Path) -> None:
     runner.run([make_item(4)])
 
     manifest = read_json(tmp_path / "run_manifest.json")
+    assert manifest["schema_version"] == "1.3"
     assert manifest["engine"] == "step15_agent_overlay"
     assert manifest["status"] == "completed"
     assert manifest["artifacts"]["predictions_raw"] == "predictions_raw.jsonl"
@@ -63,7 +64,14 @@ def test_failed_run_still_writes_manifest(tmp_path: Path) -> None:
 
 
 def make_runner(tmp_path: Path, *, answer_caller) -> Step15AgentRunner:
-    config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml")
+    config = load_app_config(
+        project_root=tmp_path,
+        default_config=tmp_path / "missing.yaml",
+        cli_overrides={
+            "agentscope": {"enabled": True, "mode": "equivalent_mas"},
+            "retrieval": {"sufficiency_enabled": False},
+        },
+    )
     return Step15AgentRunner(
         config=config,
         target_namespace="xixian_4",
@@ -101,6 +109,11 @@ def fake_retrieval(query: str) -> Step15RetrievalResult:
             "source_type": "main_excel_capability",
             "corpus_layer": "fact",
             "retrieval_layer": "target_main_fact",
+            "file_name": "能力清单.xlsx",
+            "sheet_name": "供电",
+            "row_index": 2,
+            "cell_range": "A2:B2",
+            "raw_source_text": "市电进线情况：2路市电，来自同一变电站。",
             "raw_text": "市电进线情况：2路市电，来自同一变电站。",
             "text_for_embedding": "市电进线情况 2路市电 来自同一变电站",
         }

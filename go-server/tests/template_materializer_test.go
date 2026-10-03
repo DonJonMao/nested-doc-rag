@@ -2,6 +2,8 @@ package tests
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"os"
 	"path/filepath"
@@ -36,6 +38,52 @@ func TestTemplateMaterializerSuccess(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []byte("template"), data)
 	require.Equal(t, "input", filepath.Base(filepath.Dir(path)))
+}
+
+func TestTemplateMaterializerVerifiesDownloadedBytesBeforePublishing(t *testing.T) {
+	content := []byte("模板 bytes\r\n")
+	sum := sha256.Sum256(content)
+	for _, test := range []struct {
+		name string
+		body []byte
+	}{{"matching bytes", content}, {"changed bytes", []byte("模板 bytes\n")}} {
+		t.Run(test.name, func(t *testing.T) {
+			workspaceID, formID, fileID := uuid.New(), uuid.New(), uuid.New()
+			formRepo := newFakeFormFileRepo()
+			require.NoError(t, formRepo.Create(context.Background(), formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, FileID: fileID}))
+			fileRepo := newFakeFileRepo()
+			fileRepo.files[fileID] = filepkg.File{
+				ID: fileID, WorkspaceID: workspaceID, Filename: "template.xlsx",
+				ObjectKey: "forms/template.xlsx", FileCategory: filepkg.FileCategoryFormTemplate,
+				Status: filepkg.FileStatusActive, SHA256: hex.EncodeToString(sum[:]),
+			}
+			storage := newFakeObjectStorage()
+			storage.objects["forms/template.xlsx"] = test.body
+			outDir := t.TempDir()
+			inputDir := filepath.Join(outDir, "input")
+			require.NoError(t, os.MkdirAll(inputDir, 0o755))
+			localPath := filepath.Join(inputDir, "template.xlsx")
+			require.NoError(t, os.WriteFile(localPath, []byte("previous verified template"), 0o644))
+			materializer := formpkg.NewTemplateMaterializer(formRepo, fileRepo, storage, zap.NewNop())
+
+			path, _, err := materializer.MaterializeTemplate(context.Background(), workspaceID, formID, outDir)
+
+			data, readErr := os.ReadFile(localPath)
+			require.NoError(t, readErr)
+			if test.name == "matching bytes" {
+				require.NoError(t, err)
+				require.Equal(t, localPath, path)
+				require.Equal(t, content, data)
+			} else {
+				require.ErrorContains(t, err, "content hash mismatch")
+				require.Empty(t, path)
+				require.Equal(t, []byte("previous verified template"), data)
+			}
+			entries, err := os.ReadDir(inputDir)
+			require.NoError(t, err)
+			require.Len(t, entries, 1, "temporary download must be removed")
+		})
+	}
 }
 
 func TestTemplateMaterializerWorkspaceMismatchRejected(t *testing.T) {

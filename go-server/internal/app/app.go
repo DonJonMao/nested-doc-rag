@@ -147,6 +147,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	fillRunRepo := formpkg.NewPGXFillRunRepo(db)
 	formFileService := formpkg.NewFormFileService(formFileRepo, fileService, workspaceAuthorizer, auditService, logger)
 	fillRunService := formpkg.NewFillRunService(fillRunRepo, formFileRepo, jobService, artifactService, workspaceAuthorizer, auditService, logger, *cfg)
+	fillRunService.SetPinnedStore(formpkg.NewPGXPinnedFillRunStore(db, jobService, *cfg))
 	reviewRepo := reviewpkg.NewPGXRepo(db)
 	reviewService := reviewpkg.NewService(reviewRepo, fillRunRepo, workspaceAuthorizer, auditService, logger, metrics)
 	knowledgeBaseRepo := knowledgepkg.NewPGXKnowledgeBaseRepo(db)
@@ -157,6 +158,10 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	knowledgeBaseService := knowledgepkg.NewKnowledgeBaseService(knowledgeBaseRepo, knowledgeIndexVersionRepo, workspaceAuthorizer, auditService, logger)
 	knowledgeDocumentService := knowledgepkg.NewKnowledgeDocumentService(knowledgeBaseRepo, knowledgeDocumentRepo, fileService, workspaceAuthorizer, auditService, logger)
 	ingestionService := knowledgepkg.NewIngestionService(knowledgeBaseRepo, knowledgeDocumentRepo, knowledgeIndexVersionRepo, ingestionJobRepo, jobService, workspaceAuthorizer, auditService, logger, *cfg)
+	buildStore := knowledgepkg.NewPGXBuildStore(db)
+	jobService.SetIngestionJobCanceler(buildStore)
+	ingestionService.SetBuildStore(buildStore)
+	knowledgeBaseService.SetBuildStore(buildStore)
 	runAccess := runEventAccessAuthorizer{
 		workspaceAuthorizer: workspaceAuthorizer,
 		fillRuns:            fillRunService,

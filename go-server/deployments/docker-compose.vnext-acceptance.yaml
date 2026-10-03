@@ -1,0 +1,116 @@
+# Independent acceptance storage. Always use a new -p project and run the
+# driver's verify-clean command BEFORE `up`. No knowledge-seed or legacy mount.
+services:
+  api:
+    image: ${VNEXT_API_IMAGE:-datacenter-vnext-api:phase5}
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile.api
+    env_file:
+      - ${VNEXT_RUNTIME_ENV:?prepare the private acceptance env first}
+    command: ["--config", "configs/config.docker.yaml"]
+    ports:
+      - "127.0.0.1:${VNEXT_API_PORT:-18080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+    volumes:
+      - api_runtime:/app/runtime
+
+  worker:
+    image: ${VNEXT_WORKER_IMAGE:-datacenter-vnext-worker:phase5}
+    build:
+      context: ../..
+      dockerfile: go-server/deployments/Dockerfile.worker
+    env_file:
+      - ${VNEXT_RUNTIME_ENV:?prepare the private acceptance env first}
+    command: ["--config", "configs/config.docker.yaml"]
+    # API creates the isolated object bucket before the worker can consume jobs.
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import nested_doc_rag' && /app/gongkan-worker --help >/dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - worker_runtime:/app/runtime
+      - worker_python_artifacts:/app/python-core/artifacts
+      - worker_python_tmp:/app/python-core/tmp
+      - type: bind
+        source: ${VNEXT_MODEL_CONFIG:?prepare the model config path first}
+        target: /app/python-core/config/vnext_acceptance.yaml
+        read_only: true
+
+  postgres:
+    image: ${VNEXT_POSTGRES_IMAGE:-postgres:16.4-alpine}
+    environment:
+      POSTGRES_USER: gongkan
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?private POSTGRES_PASSWORD is required}
+      POSTGRES_DB: gongkan
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gongkan -d gongkan"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: ${VNEXT_REDIS_IMAGE:-redis:7.4-alpine}
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  minio:
+    image: ${VNEXT_MINIO_IMAGE:-minio/minio:RELEASE.2024-10-13T13-34-11Z}
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?private MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?private MINIO_ROOT_PASSWORD is required}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  qdrant:
+    image: ${VNEXT_QDRANT_IMAGE:-qdrant/qdrant:v1.12.4}
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc '</dev/tcp/127.0.0.1/6333'"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  qdrant_data:
+  api_runtime:
+  worker_runtime:
+  worker_python_artifacts:
+  worker_python_tmp:

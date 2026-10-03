@@ -1,0 +1,1099 @@
+{
+  "schema_version": 1,
+  "research_date": "2026-10-01",
+  "generated_utc": "2026-10-01T03:39:51.175928+00:00",
+  "scope": "Official repositories, releases, licenses, papers, model cards, documentation; no inference or benchmark run.",
+  "date_policy": "Release dates, paper dates and Atom entry updated dates are distinct. See report.",
+  "api_note": "Some GitHub anonymous REST calls returned 403 shared rate limit. Failed requests are excluded; public raw/HTML/Atom/PyPI/arXiv sources were used.",
+  "entries": [
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/a2aproject/A2A/main/LICENSE",
+      "retrieved_utc": "2026-10-01T03:23:29Z",
+      "http_status": 200,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/a2a_LICENSE"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/a2aproject/A2A/main/README.md",
+      "retrieved_utc": "2026-10-01T03:23:26Z",
+      "http_status": 200,
+      "sha256": "440930f051475027fc54f0747c1f8ee84a12b36c343f585cdb0a54e6436abc1d",
+      "bytes": 8586,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/a2a_README.md"
+    },
+    {
+      "group": "google",
+      "url": "https://developers.googleblog.com/en/a2a-a-new-era-of-agent-interoperability/",
+      "retrieved_utc": "2026-10-01T03:26:09Z",
+      "http_status": 200,
+      "sha256": "86f26c5e769f36533af512b2b77daaea8f62df8ee87630fcbfd0121d8879342a",
+      "bytes": 71253,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/a2a_announcement_blog.html"
+    },
+    {
+      "group": "google",
+      "url": "https://a2a-protocol.org/latest/topics/what-is-a2a/",
+      "retrieved_utc": "2026-10-01T03:23:30Z",
+      "http_status": 200,
+      "sha256": "acbed39fcaf719eb825a8f7cd1e083dcb4baa38ab75a38f17dda57751a4814f5",
+      "bytes": 86231,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/a2a_docs_intro.html"
+    },
+    {
+      "group": "google",
+      "url": "https://github.com/a2aproject/A2A/releases.atom",
+      "retrieved_utc": "2026-10-01T03:23:28Z",
+      "http_status": 200,
+      "sha256": "2d82853056085ce9fa0bd68ed108a6d988ee461753d327bbbcb9106293458669",
+      "bytes": 46043,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/a2a_releases.atom"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/a2aproject/A2A/v1.0.1/README.md",
+      "retrieved_utc": "2026-10-01T03:25:00Z",
+      "http_status": 200,
+      "sha256": "a3dfbcd026a1cb85370397b84a3f7df26403539aa8c44ed02a1afac4390516b1",
+      "bytes": 8429,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/a2a_v1.0.1_README.md"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/google/adk-python/main/LICENSE",
+      "retrieved_utc": "2026-10-01T03:23:25Z",
+      "http_status": 200,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/adk_LICENSE"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/google/adk-python/main/README.md",
+      "retrieved_utc": "2026-10-01T03:23:22Z",
+      "http_status": 200,
+      "sha256": "2c00eddffa97daff996076f442f63bf6687da90a0fcdd144e441c704ef2dd32b",
+      "bytes": 9411,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/adk_README.md"
+    },
+    {
+      "group": "google",
+      "url": "https://google.github.io/adk-docs/evaluate/",
+      "retrieved_utc": "2026-10-01T03:25:07Z",
+      "http_status": 200,
+      "sha256": "635f8cbf4328ee8e8bd6be21c30aef601ecb5c1bbde17f79ac70c028c58f0b12",
+      "bytes": 209950,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/adk_eval_docs.html"
+    },
+    {
+      "group": "google",
+      "url": "https://google.github.io/adk-docs/observability/",
+      "retrieved_utc": "2026-10-01T03:25:09Z",
+      "http_status": 200,
+      "sha256": "405148875fb2829f367f297eae50d4fc04c09f6a83151b919d64588efb334c28",
+      "bytes": 124229,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/adk_observability_docs.html"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/google/adk-python/main/pyproject.toml",
+      "retrieved_utc": "2026-10-01T03:23:23Z",
+      "http_status": 200,
+      "sha256": "170649e795d073e44f03ed6cee0fe6cedc309a733e05d6be82a5c98f34f61230",
+      "bytes": 16206,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/adk_pyproject.toml"
+    },
+    {
+      "group": "google",
+      "url": "https://github.com/google/adk-python/releases.atom",
+      "retrieved_utc": "2026-10-01T03:23:25Z",
+      "http_status": 200,
+      "sha256": "8a96bfce7cf241018392a35ebdfdb2807a94a6ff8bc607d4cedef448126291f7",
+      "bytes": 217300,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/adk_releases.atom"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/google/adk-python/v2.10.0/README.md",
+      "retrieved_utc": "2026-10-01T03:24:58Z",
+      "http_status": 200,
+      "sha256": "2c00eddffa97daff996076f442f63bf6687da90a0fcdd144e441c704ef2dd32b",
+      "bytes": 9411,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/adk_v2.10.0_README.md"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/google/adk-python/v2.10.0/src/google/adk/evaluation/eval_case.py",
+      "retrieved_utc": "2026-10-01T03:28:14Z",
+      "http_status": 200,
+      "sha256": "237030a38953affb293b42e83268ea46f0372d33682d311b59000bf088b6b629",
+      "bytes": 10690,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/adk_v2.10.0_eval_case.py"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/google/adk-python/v2.10.0/src/google/adk/evaluation/eval_metrics.py",
+      "retrieved_utc": "2026-10-01T03:28:13Z",
+      "http_status": 200,
+      "sha256": "59101d4e31522317de8cb9bf5a095cca6842ce6a8fb3b3d99f465a8af1e23ff8",
+      "bytes": 17844,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/adk_v2.10.0_eval_metrics.py"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/google/adk-python/v2.10.0/src/google/adk/evaluation/eval_set.py",
+      "retrieved_utc": "2026-10-01T03:28:15Z",
+      "http_status": 200,
+      "sha256": "625fcbf72f64ee1cae58034e97e1e6229e9b24dac22faf30ec768acefd76922a",
+      "bytes": 1191,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/adk_v2.10.0_eval_set.py"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/google/adk-python/v2.10.0/pyproject.toml",
+      "retrieved_utc": "2026-10-01T03:24:59Z",
+      "http_status": 200,
+      "sha256": "dadc5b645a5fa3b2bd06966dc56dde0b57f060fdd5a9f50f1f8dd7c790ea429c",
+      "bytes": 16179,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/adk_v2.10.0_pyproject.toml"
+    },
+    {
+      "group": "google",
+      "url": "https://deepmind.google/discover/blog/facts-grounding-a-new-benchmark-for-evaluating-the-factuality-of-large-language-models/",
+      "retrieved_utc": "2026-10-01T03:23:37Z",
+      "http_status": 200,
+      "sha256": "b8991a32ba23a6ae8da7ce3e19aee27c2f353d33d0ad97e7f7bdae8d71832647",
+      "bytes": 153295,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/deepmind_facts_blog.html"
+    },
+    {
+      "group": "google",
+      "url": "https://arxiv.org/abs/2501.03200",
+      "retrieved_utc": "2026-10-01T03:23:31Z",
+      "http_status": 200,
+      "sha256": "c515984f8b0d1dbb59fe85b80a4fb8ee5aa810d6c6127d016f0fa6d507082040",
+      "bytes": 45240,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/facts_grounding_arxiv.html"
+    },
+    {
+      "group": "google",
+      "url": "https://arxiv.org/html/2501.03200v1",
+      "retrieved_utc": "2026-10-01T03:24:57Z",
+      "http_status": 200,
+      "sha256": "6b14f095079815446b61f4a9477474e258d4f99287a5b501565cb5ec49e39ecb",
+      "bytes": 628024,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/facts_grounding_full.html"
+    },
+    {
+      "group": "google",
+      "url": "https://deepmind.google/blog/facts-benchmark-suite-systematically-evaluating-the-factuality-of-large-language-models/",
+      "retrieved_utc": "2026-10-01T03:26:06Z",
+      "http_status": 200,
+      "sha256": "932568bb4dded1c691cc41028b00d6c5600128a02c54d6cd5735b110d5b183be",
+      "bytes": 166023,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/facts_suite_blog.html"
+    },
+    {
+      "group": "google",
+      "url": "https://research.google/blog/deeper-insights-into-retrieval-augmented-generation-the-role-of-sufficient-context/",
+      "retrieved_utc": "2026-10-01T03:26:07Z",
+      "http_status": 200,
+      "sha256": "153534b5c09f4cc5d9b339ad4755930aa778143d9776f76fc3e5f7c29a3d2ec5",
+      "bytes": 191289,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/google_research_rag_sufficiency.html"
+    },
+    {
+      "group": "google",
+      "url": "https://developers.googleblog.com/en/introducing-langextract-a-gemini-powered-information-extraction-library/",
+      "retrieved_utc": "2026-10-01T03:23:33Z",
+      "http_status": 200,
+      "sha256": "91c236756828ca662ba2d688331395de95faa493c9e884276448a64d210e68e1",
+      "bytes": 56009,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/googleblog_langextract.html"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/google/langextract/main/README.md",
+      "retrieved_utc": "2026-10-01T03:23:17Z",
+      "http_status": 200,
+      "sha256": "2843b5f84b153f4b0885b69d2a43431ad7a380737a61016d2b3f13dbafecedcb",
+      "bytes": 21925,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/langextract_README.md"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/google/langextract/main/pyproject.toml",
+      "retrieved_utc": "2026-10-01T03:23:18Z",
+      "http_status": 200,
+      "sha256": "f5383057ee687c34eca2550582b63929967ee5771057def1cd64cbc485c1de75",
+      "bytes": 4429,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/langextract_pyproject.toml"
+    },
+    {
+      "group": "google",
+      "url": "https://github.com/google/langextract/releases.atom",
+      "retrieved_utc": "2026-10-01T03:23:21Z",
+      "http_status": 200,
+      "sha256": "5de88c4ddf1b59e14461d3108acbe958ee247fedc9eb3976a22491678f0d8590",
+      "bytes": 35230,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/langextract_releases.atom"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/google/langextract/v1.7.0/LICENSE",
+      "retrieved_utc": "2026-10-01T03:28:12Z",
+      "http_status": 200,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/langextract_v1.7.0_LICENSE"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/google/langextract/v1.7.0/README.md",
+      "retrieved_utc": "2026-10-01T03:23:19Z",
+      "http_status": 200,
+      "sha256": "2843b5f84b153f4b0885b69d2a43431ad7a380737a61016d2b3f13dbafecedcb",
+      "bytes": 21925,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/langextract_v1.7.0_README.md"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/google/langextract/v1.7.0/langextract/core/data.py",
+      "retrieved_utc": "2026-10-01T03:25:02Z",
+      "http_status": 200,
+      "sha256": "1bdd05d75387858d38b0bb6975a7b7753e957b855ce4e694dabe2985cf0fc8a3",
+      "bytes": 8360,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/langextract_v1.7.0_core_data.py"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/google/langextract/v1.7.0/pyproject.toml",
+      "retrieved_utc": "2026-10-01T03:23:20Z",
+      "http_status": 200,
+      "sha256": "f5383057ee687c34eca2550582b63929967ee5771057def1cd64cbc485c1de75",
+      "bytes": 4429,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/langextract_v1.7.0_pyproject.toml"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/google/langextract/v1.7.0/langextract/resolver.py",
+      "retrieved_utc": "2026-10-01T03:25:01Z",
+      "http_status": 200,
+      "sha256": "454de8e17b398d689ba5fee89f840772cc9708a511dc241c5d8931702cbbf319",
+      "bytes": 50783,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/langextract_v1.7.0_resolver.py"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/google/langextract/v1.7.0/langextract/visualization.py",
+      "retrieved_utc": "2026-10-01T03:25:04Z",
+      "http_status": 200,
+      "sha256": "6d1c19d3200f0ec05bdf692353a7da281bc5376fcfe02ad5b48a78a5638e884f",
+      "bytes": 20314,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/langextract_v1.7.0_visualization.py"
+    },
+    {
+      "group": "google",
+      "url": "https://arxiv.org/abs/2411.06037",
+      "retrieved_utc": "2026-10-01T03:23:31Z",
+      "http_status": 200,
+      "sha256": "42f2bc8e1f95d7740e0c7a9681e73a9ac61a63eebf2c1a44c2798da35552fd31",
+      "bytes": 43022,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/sufficient_context_arxiv.html"
+    },
+    {
+      "group": "google",
+      "url": "https://arxiv.org/html/2411.06037v3",
+      "retrieved_utc": "2026-10-01T03:24:56Z",
+      "http_status": 200,
+      "sha256": "b993d22183a4ae4711abad3ea59e67b0890ed333350a3d319fdb6e53e0face6c",
+      "bytes": 210703,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/sufficient_context_full.html"
+    },
+    {
+      "group": "google",
+      "url": "https://github.com/hljoren/sufficientcontext",
+      "retrieved_utc": "2026-10-01T03:26:03Z",
+      "http_status": 200,
+      "sha256": "b62b0338c4208ab8c11608705538f328e74c53ffe331c72fc7c93dee4643936a",
+      "bytes": 312545,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/sufficient_context_repo.html"
+    },
+    {
+      "group": "google",
+      "url": "https://raw.githubusercontent.com/hljoren/sufficientcontext/main/README.md",
+      "retrieved_utc": "2026-10-01T03:26:01Z",
+      "http_status": 200,
+      "sha256": "16d34ae4d479b4aff9ea50d83eea46192f1b82e370c2338e1b5840261548e0ff",
+      "bytes": 12251,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/google/sufficient_context_repo_README.md"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://raw.githubusercontent.com/agentscope-ai/agentscope/main/LICENSE",
+      "retrieved_utc": "2026-10-01T03:23:54.602042+00:00",
+      "http_status": 200,
+      "sha256": "4186bcadf358c60080060309769db6b2a352720d7353d827bb574c600fee9913",
+      "bytes": 20637,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/agentscope_license.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://raw.githubusercontent.com/agentscope-ai/agentscope/main/pyproject.toml",
+      "retrieved_utc": "2026-10-01T03:23:54.602437+00:00",
+      "http_status": 200,
+      "sha256": "e0e8963e56f0b943c6a5d1da2fbd2a65b6dd792d946a74fa8ec58dcdf6dbcf0c",
+      "bytes": 7773,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/agentscope_pyproject.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://raw.githubusercontent.com/agentscope-ai/agentscope-runtime/main/LICENSE",
+      "retrieved_utc": "2026-10-01T03:23:54.602557+00:00",
+      "http_status": 200,
+      "sha256": "dcc7240d38224c9d04e9cc68f0579a985544162c33dd7256b2b8ae4ed449cf16",
+      "bytes": 11337,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/agentscope_runtime_license.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://raw.githubusercontent.com/Alibaba-NLP/DeepResearch/main/LICENSE",
+      "retrieved_utc": "2026-10-01T03:23:54.602665+00:00",
+      "http_status": 200,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "bytes": 11357,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/deepresearch_license.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://raw.githubusercontent.com/Alibaba-NLP/DeepResearch/main/requirements.txt",
+      "retrieved_utc": "2026-10-01T03:23:54.602766+00:00",
+      "http_status": 200,
+      "sha256": "ca7259b194d9f6dab1c6ece5a9f17e9dc7ca4d6ad14cfe4fdfcfcfab1f4afcee",
+      "bytes": 3670,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/deepresearch_requirements.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://raw.githubusercontent.com/Alibaba-NLP/DeepResearch/main/evaluation/README.md",
+      "retrieved_utc": "2026-10-01T03:23:54.602882+00:00",
+      "http_status": 200,
+      "sha256": "2608bf090c1533dae669a05308e4b4e53af7158b5ac4a25a33f11f980300c3b3",
+      "bytes": 591,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/deepresearch_evaluation_readme.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://raw.githubusercontent.com/Alibaba-NLP/ZeroSearch/main/LICENSE",
+      "retrieved_utc": "2026-10-01T03:23:54.603107+00:00",
+      "http_status": 200,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/zerosearch_license.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://pypi.org/pypi/agentscope/json",
+      "retrieved_utc": "2026-10-01T03:23:55.545901+00:00",
+      "http_status": 200,
+      "sha256": "be3d75741b9bf31f1072790914c977d5dac4009495156c21d771930edacc937c",
+      "bytes": 105472,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/agentscope_pypi.json"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://pypi.org/pypi/agentscope-runtime/json",
+      "retrieved_utc": "2026-10-01T03:23:55.560901+00:00",
+      "http_status": 200,
+      "sha256": "2174feeb837c2201b850fd88c97f5ce401baae29a20595a34fdba0d034193cab",
+      "bytes": 114995,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/agentscope_runtime_pypi.json"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/raw/main/README.md",
+      "retrieved_utc": "2026-10-01T03:23:55.568205+00:00",
+      "http_status": 200,
+      "sha256": "c34d9b7e5a267ad3fdd13227a253686bc90844ff4744a2a6a86c7c905e3d06f3",
+      "bytes": 17237,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/qwen3embedding_modelcard.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://huggingface.co/Qwen/Qwen3-Reranker-0.6B/raw/main/README.md",
+      "retrieved_utc": "2026-10-01T03:23:55.581098+00:00",
+      "http_status": 200,
+      "sha256": "5bba8c734f6dd3ae48317b4139317e45a7fce48fc55e15670b23a0dd15492ab6",
+      "bytes": 14742,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/qwen3reranker_modelcard.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://huggingface.co/Alibaba-NLP/Tongyi-DeepResearch-30B-A3B/raw/main/README.md",
+      "retrieved_utc": "2026-10-01T03:23:55.597527+00:00",
+      "http_status": 200,
+      "sha256": "93e3690c8de14ae46563ea94a1c0690915441d1812a15500dc983906d7bd3b5b",
+      "bytes": 2299,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/tongyi_deepresearch_modelcard.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://huggingface.co/api/models/Qwen/Qwen3-Embedding-0.6B",
+      "retrieved_utc": "2026-10-01T03:23:55.611933+00:00",
+      "http_status": 200,
+      "sha256": "482362a26ecebab0626c2f36dac9e80d5435e217446d01cd295f94803625a6cd",
+      "bytes": 9173,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/qwen3embedding_modelinfo.json"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://huggingface.co/api/models/Qwen/Qwen3-Reranker-0.6B",
+      "retrieved_utc": "2026-10-01T03:23:55.616199+00:00",
+      "http_status": 200,
+      "sha256": "84a9d22ae85870950eb679949a4177cbf9ae01e2a2bd29568829fea15075b6a4",
+      "bytes": 7758,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/qwen3reranker_modelinfo.json"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://huggingface.co/api/models/Alibaba-NLP/Tongyi-DeepResearch-30B-A3B",
+      "retrieved_utc": "2026-10-01T03:23:55.621310+00:00",
+      "http_status": 200,
+      "sha256": "77b99c9b2775f3dce814bf9d44f1eb089123b3f2cf6376aecad4de3d4730a278",
+      "bytes": 7088,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/deepresearch_modelinfo.json"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://github.com/agentscope-ai/agentscope/releases.atom",
+      "retrieved_utc": "2026-10-01T03:23:56.519824+00:00",
+      "http_status": 200,
+      "sha256": "e91da40ab1f833728e79b234959109167e7b437f86ba06e232e2e67a18225bf0",
+      "bytes": 451868,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/agentscope_releases_feed.xml"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://github.com/agentscope-ai/agentscope/commits/main.atom",
+      "retrieved_utc": "2026-10-01T03:23:56.543404+00:00",
+      "http_status": 200,
+      "sha256": "7686af46dff9c72c2b634ef29290d6ae68bfd87636fe2c8e4fa3be3a67a12499",
+      "bytes": 16411,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/agentscope_commits_feed.xml"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://github.com/Alibaba-NLP/DeepResearch/commits/main.atom",
+      "retrieved_utc": "2026-10-01T03:23:56.657242+00:00",
+      "http_status": 200,
+      "sha256": "80d7188846dc413ca52a1143b0433501947fd77fca6742c8d99012cebdfe01b3",
+      "bytes": 15170,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/deepresearch_commits_feed.xml"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://raw.githubusercontent.com/embeddings-benchmark/mteb/main/README.md",
+      "retrieved_utc": "2026-10-01T03:23:56.693941+00:00",
+      "http_status": 200,
+      "sha256": "7d4d66862ca3fd92d8c1949aca25d684362ee9aa40462d046bdfde5d9e86729a",
+      "bytes": 9258,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/mteb_readme.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://raw.githubusercontent.com/embeddings-benchmark/mteb/main/LICENSE",
+      "retrieved_utc": "2026-10-01T03:23:56.713554+00:00",
+      "http_status": 200,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "bytes": 11357,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/mteb_license.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://raw.githubusercontent.com/QwenLM/Qwen3-VL-Embedding/main/README.md",
+      "retrieved_utc": "2026-10-01T03:25:01.042494+00:00",
+      "http_status": 200,
+      "sha256": "c57c3c6c15d15b16a7a281fe5454a88bfe43f57b014d7398e59d37f8db3f36a9",
+      "bytes": 22780,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/qwen3vl_embedding_readme.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B/raw/main/README.md",
+      "retrieved_utc": "2026-10-01T03:25:01.042824+00:00",
+      "http_status": 200,
+      "sha256": "0c01437645b55e91c0145f7f3d9d414d0091cefe53c5f17938949f4c4baad0f2",
+      "bytes": 24249,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/qwen3vl_embedding_modelcard.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://huggingface.co/Qwen/Qwen3-VL-Reranker-2B/raw/main/README.md",
+      "retrieved_utc": "2026-10-01T03:25:01.042963+00:00",
+      "http_status": 200,
+      "sha256": "f5b8fb5e489fffb19561a523e081d28d2d46187079199ba2326c374efa662272",
+      "bytes": 13265,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/qwen3vl_reranker_modelcard.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://huggingface.co/api/models/Qwen/Qwen3-VL-Embedding-2B",
+      "retrieved_utc": "2026-10-01T03:25:01.043072+00:00",
+      "http_status": 200,
+      "sha256": "acbf040baf0e250f22a72ded6f57e3797cec08018c04fe75e7369a9cca15e7ae",
+      "bytes": 8831,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/qwen3vl_embedding_modelinfo.json"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://raw.githubusercontent.com/modelscope/evalscope/main/README.md",
+      "retrieved_utc": "2026-10-01T03:25:01.043230+00:00",
+      "http_status": 200,
+      "sha256": "b73367d024c7c8bd782a7e1d3004faf546f01c4cee03f9c8ee32e8253a270d36",
+      "bytes": 28225,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/evalscope_readme.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://raw.githubusercontent.com/modelscope/evalscope/main/LICENSE",
+      "retrieved_utc": "2026-10-01T03:25:01.043361+00:00",
+      "http_status": 200,
+      "sha256": "2bfd8cd37a4dd0fc55332c7d21050ab071a1843324c39af2434dab94cbf38f72",
+      "bytes": 11416,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/evalscope_license.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://pypi.org/pypi/evalscope/json",
+      "retrieved_utc": "2026-10-01T03:25:01.043477+00:00",
+      "http_status": 200,
+      "sha256": "d7fc44322d8d823790d8b8859ef4fbf285cb06bb66c1fe9875badbbde9afb82d",
+      "bytes": 132708,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/evalscope_pypi.json"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://raw.githubusercontent.com/agentscope-ai/agentscope/main/docs/NEWS.md",
+      "retrieved_utc": "2026-10-01T03:25:01.043588+00:00",
+      "http_status": 200,
+      "sha256": "71b9cc0ff9a71c8cfaa67e41f0213c5a07073894e79957deb2aad7ec958335f4",
+      "bytes": 5083,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/agentscope_news.txt"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://arxiv.org/abs/2508.16279",
+      "retrieved_utc": "2026-10-01T03:25:02.002671+00:00",
+      "http_status": 200,
+      "sha256": "b967bd4802e453eeee32ff0b52c37fddfc2078e6d83475493f92ad534d312872",
+      "bytes": 45223,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/agentscope_paper.html"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://arxiv.org/abs/2506.05176",
+      "retrieved_utc": "2026-10-01T03:25:02.060759+00:00",
+      "http_status": 200,
+      "sha256": "f862c5fa8f76d3ef3fa2de7a42c43f2de2e279a4861215751b402340ba3fa080",
+      "bytes": 43767,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/qwen3embedding_paper.html"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://arxiv.org/abs/2510.24701",
+      "retrieved_utc": "2026-10-01T03:25:02.201864+00:00",
+      "http_status": 200,
+      "sha256": "24ac13b5b8fafe85408e0b6c254151046e31913659f1c4fc1a2afa52bf3b35e8",
+      "bytes": 50034,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/deepresearch_paper.html"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://arxiv.org/abs/2509.13313",
+      "retrieved_utc": "2026-10-01T03:25:02.258056+00:00",
+      "http_status": 200,
+      "sha256": "28a0d96328965710a5662fbdd4654c5866d9aba5cb691af845096d800715b09b",
+      "bytes": 43809,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/resum_paper.html"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://arxiv.org/abs/2510.05118",
+      "retrieved_utc": "2026-10-01T03:25:02.385650+00:00",
+      "http_status": 200,
+      "sha256": "b300a14efce0ac3b59a6f39fa711e17bca7942ae08315268bf980e3d19da9276",
+      "bytes": 40647,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/excluded_unrelated_arxiv_2510.05118.html"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://arxiv.org/abs/2601.04720",
+      "retrieved_utc": "2026-10-01T03:26:55.249425+00:00",
+      "http_status": 200,
+      "sha256": "0e686028549fe2b5fb54ad0267113dc792e48ed018ead72b35f6ae4a516b4c75",
+      "bytes": 44403,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/qwen3vl_embedding_paper.html"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://arxiv.org/abs/2510.24699",
+      "retrieved_utc": "2026-10-01T03:26:55.249771+00:00",
+      "http_status": 200,
+      "sha256": "38904dd85d661850be90a050ca02695dda561daf27c0f49d10e1f90969fee632",
+      "bytes": 43764,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/agentfold_paper.html"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://arxiv.org/abs/2505.04588",
+      "retrieved_utc": "2026-10-01T03:26:55.249914+00:00",
+      "http_status": 200,
+      "sha256": "6bc61080e18749a84f2b25d69a923d58e2fcaa47027623cac81677b95db5ecf2",
+      "bytes": 44404,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/zerosearch_paper.html"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://evalscope.readthedocs.io/en/latest/user_guides/backend/rageval_backend/index.html",
+      "retrieved_utc": "2026-10-01T03:26:55.250024+00:00",
+      "http_status": 200,
+      "sha256": "e261348c01d3b096b592f7d8232e14eeaa25d184963443156a92369c1a1aeb46",
+      "bytes": 73163,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/evalscope_rageval_guide.html"
+    },
+    {
+      "group": "alibaba",
+      "url": "https://github.com/Alibaba-NLP/DeepResearch",
+      "retrieved_utc": "2026-10-01T03:26:55.250137+00:00",
+      "http_status": 200,
+      "sha256": "cfc384edcaea952717536efa6aa6c7be302ef7c5db0ed45e2370a1c43f0168e0",
+      "bytes": 367429,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/alibaba/git_deepresearch_root.html"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/LICENSE",
+      "retrieved_utc": "2026-10-01T03:23:25.656615+00:00",
+      "http_status": 200,
+      "sha256": "3840c5c0c61c294264d2dd77b8777be6ddd90121ef4e0e64abcd22edea581d6e",
+      "bytes": 11376,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/PaddlePaddle__PaddleOCR/LICENSE"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/docling-project/docling/main/README.md",
+      "retrieved_utc": "2026-10-01T03:23:25.656433+00:00",
+      "http_status": 200,
+      "sha256": "4f55583e9c57442b635a2bdf0c718a9919752a73a18b710b0b5cb57ef23c0aed",
+      "bytes": 8535,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/docling-project__docling/README.md"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/docling-project/docling/main/LICENSE",
+      "retrieved_utc": "2026-10-01T03:23:25.656476+00:00",
+      "http_status": 200,
+      "sha256": "edb765d1e3e60d0c7a7d5fba5f2bb2c3c29f7465cecb5c22cf1185c884954e4c",
+      "bytes": 1072,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/docling-project__docling/LICENSE"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/README.md",
+      "retrieved_utc": "2026-10-01T03:23:25.656586+00:00",
+      "http_status": 200,
+      "sha256": "63d76041f1dcb84e1dd141d45dc8dec5d86a3e357fe98bf8432ad2721c0ced90",
+      "bytes": 25918,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/PaddlePaddle__PaddleOCR/README.md"
+    },
+    {
+      "group": "other",
+      "url": "https://github.com/PaddlePaddle/PaddleOCR/releases.atom",
+      "retrieved_utc": "2026-10-01T03:23:25.656550+00:00",
+      "http_status": 200,
+      "sha256": "519e168e6980b814da475f12fb40aa21554433df13fe6543d57e066a1682972f",
+      "bytes": 39260,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/PaddlePaddle__PaddleOCR/releases.atom"
+    },
+    {
+      "group": "other",
+      "url": "https://github.com/PaddlePaddle/PaddleOCR",
+      "retrieved_utc": "2026-10-01T03:23:25.656514+00:00",
+      "http_status": 200,
+      "sha256": "7f4812fc3a285a3eb1c36e873ca73bcea7460aa2c80aa70819bce640cc1f5b6e",
+      "bytes": 474868,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/PaddlePaddle__PaddleOCR/repository.html"
+    },
+    {
+      "group": "other",
+      "url": "https://github.com/docling-project/docling",
+      "retrieved_utc": "2026-10-01T03:23:25.656072+00:00",
+      "http_status": 200,
+      "sha256": "436a38ad8188739dd9afa67435a32f2985ad562b6652ed7346bc98d4dce86ce7",
+      "bytes": 399362,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/docling-project__docling/repository.html"
+    },
+    {
+      "group": "other",
+      "url": "https://github.com/docling-project/docling/releases.atom",
+      "retrieved_utc": "2026-10-01T03:23:25.656365+00:00",
+      "http_status": 200,
+      "sha256": "bdb7c2d8c2b14ec76260e62423aaf1feb1e58f41d5ea672ad1b507098c43c3e9",
+      "bytes": 76214,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/docling-project__docling/releases.atom"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/microsoft/graphrag/main/README.md",
+      "retrieved_utc": "2026-10-01T03:23:26.441717+00:00",
+      "http_status": 200,
+      "sha256": "36df9326f1e83343fd46373a2a059093590e4c2ad2256d3ed5de5c5e6e492709",
+      "bytes": 5099,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/microsoft__graphrag/README.md"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/microsoft/graphrag/main/LICENSE",
+      "retrieved_utc": "2026-10-01T03:23:26.499516+00:00",
+      "http_status": 200,
+      "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+      "bytes": 1141,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/microsoft__graphrag/LICENSE"
+    },
+    {
+      "group": "other",
+      "url": "https://github.com/microsoft/graphrag/releases.atom",
+      "retrieved_utc": "2026-10-01T03:23:26.441604+00:00",
+      "http_status": 200,
+      "sha256": "9cc529ed79968bbefa7d90a4d4330ae4554f61d2ba87529ae5801be1d3560c85",
+      "bytes": 45212,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/microsoft__graphrag/releases.atom"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/microsoft/autogen/main/README.md",
+      "retrieved_utc": "2026-10-01T03:23:26.827608+00:00",
+      "http_status": 200,
+      "sha256": "5d300aa3304aeecf1a48f68ac76a1af255b8645d666b8aa154790cb30f1dbb94",
+      "bytes": 20790,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/microsoft__autogen/README.md"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/microsoft/autogen/main/LICENSE-CODE",
+      "retrieved_utc": "2026-10-01T03:23:26.964956+00:00",
+      "http_status": 200,
+      "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+      "bytes": 1141,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/microsoft__autogen/LICENSE"
+    },
+    {
+      "group": "other",
+      "url": "https://github.com/microsoft/graphrag",
+      "retrieved_utc": "2026-10-01T03:23:26.441314+00:00",
+      "http_status": 200,
+      "sha256": "7e4fe97a9f308ee5c4bd0e77a17e158b0f71fa941fcffba22c0ca2a0bffe8297",
+      "bytes": 347622,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/microsoft__graphrag/repository.html"
+    },
+    {
+      "group": "other",
+      "url": "https://github.com/microsoft/autogen",
+      "retrieved_utc": "2026-10-01T03:23:26.642695+00:00",
+      "http_status": 200,
+      "sha256": "608ec9f512aabc9faa34f4abd1ab3322ace6ba0388150d2b617b2982c1660e4c",
+      "bytes": 402404,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/microsoft__autogen/repository.html"
+    },
+    {
+      "group": "other",
+      "url": "https://github.com/NVIDIA/NeMo-Retriever/releases.atom",
+      "retrieved_utc": "2026-10-01T03:23:27.222629+00:00",
+      "http_status": 200,
+      "sha256": "59a997e3a48af211fd0d8aeea9a07d48fd5ad427e78ee37d145333c1062922f4",
+      "bytes": 8333,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/NVIDIA__NeMo-Retriever/releases.atom"
+    },
+    {
+      "group": "other",
+      "url": "https://github.com/microsoft/autogen/releases.atom",
+      "retrieved_utc": "2026-10-01T03:23:26.774997+00:00",
+      "http_status": 200,
+      "sha256": "e6f53bdf3acb71acfe120ced8b590d87b0988feac1ad2ac4461b833787b27283",
+      "bytes": 145817,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/microsoft__autogen/releases.atom"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/NVIDIA/NeMo-Retriever/main/README.md",
+      "retrieved_utc": "2026-10-01T03:23:27.492003+00:00",
+      "http_status": 200,
+      "sha256": "a9b1a100ac74cbc757260b3d0fa90eaacf4f546ab21e248885e95dc95d027d46",
+      "bytes": 13838,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/NVIDIA__NeMo-Retriever/README.md"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/NVIDIA/NeMo-Retriever/main/LICENSE",
+      "retrieved_utc": "2026-10-01T03:23:27.640781+00:00",
+      "http_status": 200,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "bytes": 11357,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/NVIDIA__NeMo-Retriever/LICENSE"
+    },
+    {
+      "group": "other",
+      "url": "https://github.com/microsoft/promptflow/releases.atom",
+      "retrieved_utc": "2026-10-01T03:23:28.269492+00:00",
+      "http_status": 200,
+      "sha256": "03f0aa083eccc7f7686cf4fa081f076bc5da6d3d1d94cad177804875dc9dabc9",
+      "bytes": 13779,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/microsoft__promptflow/releases.atom"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/microsoft/promptflow/main/README.md",
+      "retrieved_utc": "2026-10-01T03:23:28.368182+00:00",
+      "http_status": 200,
+      "sha256": "88ee4704b8fe540da6fbf415438ac00ed88818bf812be395cae675a07195e7d2",
+      "bytes": 9899,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/microsoft__promptflow/README.md"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/microsoft/promptflow/main/LICENSE",
+      "retrieved_utc": "2026-10-01T03:23:28.394282+00:00",
+      "http_status": 200,
+      "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+      "bytes": 1141,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/microsoft__promptflow/LICENSE"
+    },
+    {
+      "group": "other",
+      "url": "https://github.com/NVIDIA/NeMo-Retriever",
+      "retrieved_utc": "2026-10-01T03:23:27.186421+00:00",
+      "http_status": 200,
+      "sha256": "c42dff35a0b1cd39e0b6140b3e2d895cb1fdf4556fc14260dbfb78085782c12c",
+      "bytes": 411358,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/NVIDIA__NeMo-Retriever/repository.html"
+    },
+    {
+      "group": "other",
+      "url": "https://github.com/microsoft/promptflow",
+      "retrieved_utc": "2026-10-01T03:23:28.121449+00:00",
+      "http_status": 200,
+      "sha256": "aee4f3c1575ace57f822b44e07ba754b403f4476abe590a524d0b2c497542549",
+      "bytes": 356038,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/microsoft__promptflow/repository.html"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/docling-project/docling/main/docs/concepts/docling_document.md",
+      "retrieved_utc": "2026-10-01T03:24:53.455165+00:00",
+      "http_status": 200,
+      "sha256": "9225bdfee28b8ddc40049e0975d83825ba08b284d8e32737aadeb4a9b96a5ddf",
+      "bytes": 3098,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/docling_document.md"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/microsoft/promptflow/main/examples/flows/evaluation/eval-classification-accuracy/flow.dag.yaml",
+      "retrieved_utc": "2026-10-01T03:24:53.455564+00:00",
+      "http_status": 200,
+      "sha256": "321aef95aba91256a9fbe1f22961908a2c232f101f9d8b02f851fca6d6a7d0a1",
+      "bytes": 889,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/promptflow_eval.yaml"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/docling-project/docling/main/docs/usage/supported_formats.md",
+      "retrieved_utc": "2026-10-01T03:24:53.454890+00:00",
+      "http_status": 200,
+      "sha256": "deea9dba4c341b64551d5f951124b7ee5127d818b9e9208bc9da30cd4246d99a",
+      "bytes": 3766,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/docling_formats.md"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/docling-project/docling/main/docs/concepts/chunking.md",
+      "retrieved_utc": "2026-10-01T03:24:53.455258+00:00",
+      "http_status": 200,
+      "sha256": "ee6e0f59216a408002fcc6da251a21a4a9458dcffb6db065af9334df00e5a8b2",
+      "bytes": 5777,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/docling_chunking.md"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/docling-project/docling/main/docling/backend/msexcel_backend.py",
+      "retrieved_utc": "2026-10-01T03:24:53.455328+00:00",
+      "http_status": 200,
+      "sha256": "7f9fb351d4f82f0b10339394f702f472f069318b4a0e7c7118f595da323670fd",
+      "bytes": 77844,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/docling_xlsx_backend.py"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/docs/version3.x/pipeline_usage/PaddleOCR-VL.en.md",
+      "retrieved_utc": "2026-10-01T03:24:53.455494+00:00",
+      "http_status": 200,
+      "sha256": "4d38335454e5ec169d75a67311643c09e58079dc027805885acd7982ec09e4b7",
+      "bytes": 158914,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/paddle_vl.md"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/docs/version3.x/pipeline_usage/PP-StructureV3.en.md",
+      "retrieved_utc": "2026-10-01T03:24:53.455423+00:00",
+      "http_status": 200,
+      "sha256": "8e7e1a7dfdfa1f0f4c13bbe50c495140e04b827e6a07686b787b238e3862edae",
+      "bytes": 197870,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/paddle_structure.md"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/docling-project/docling/main/docling/backend/msword_backend.py",
+      "retrieved_utc": "2026-10-01T03:24:53.455381+00:00",
+      "http_status": 200,
+      "sha256": "5edd0bb8916612a9df5f196a47a05299d663f446ec2ba4275467280ef9ff6405",
+      "bytes": 178936,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/docling_docx_backend.py"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/microsoft/autogen/main/python/packages/agbench/README.md",
+      "retrieved_utc": "2026-10-01T03:24:54.215949+00:00",
+      "http_status": 200,
+      "sha256": "4bed50113a402ccb40b9bdc50ab5a6bf5364bccc4df930d2a003fe982db6839a",
+      "bytes": 9633,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/agbench_README.md"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/microsoft/agent-framework/main/README.md",
+      "retrieved_utc": "2026-10-01T03:24:54.230871+00:00",
+      "http_status": 200,
+      "sha256": "42b5837e2a40cb5897dbe300617751cf6a39fb10ff9eb3acb6ab34fb54a8acaa",
+      "bytes": 13320,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/maf_README.md"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/microsoft/agent-framework/main/LICENSE",
+      "retrieved_utc": "2026-10-01T03:24:54.255637+00:00",
+      "http_status": 200,
+      "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+      "bytes": 1141,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/maf_LICENSE"
+    },
+    {
+      "group": "other",
+      "url": "https://raw.githubusercontent.com/microsoft/graphrag/main/docs/query/global_search.md",
+      "retrieved_utc": "2026-10-01T03:24:54.377511+00:00",
+      "http_status": 200,
+      "sha256": "21d90708c0d9a1c2b68258e5482bb7c1b94e269a3252a29bbcc0a069aecb8060",
+      "bytes": 6023,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/graphrag_global_search.md"
+    },
+    {
+      "group": "other",
+      "url": "https://github.com/docling-project/docling/releases/tag/v2.131.0",
+      "retrieved_utc": "2026-10-01T03:24:54.520475+00:00",
+      "http_status": 200,
+      "sha256": "d3e8f58dbc3a8dd8d0a2b09230676d57aa3b4b3d866b2cea389a2ec84a4b3b80",
+      "bytes": 223629,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/docling_release.html"
+    },
+    {
+      "group": "other",
+      "url": "https://github.com/microsoft/graphrag/releases/tag/v3.2.0",
+      "retrieved_utc": "2026-10-01T03:24:54.392385+00:00",
+      "http_status": 200,
+      "sha256": "c2d910301e243a39423d1f3a11c6de6ab9738053984477d02b9de19e021754e0",
+      "bytes": 221945,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/graphrag_release.html"
+    },
+    {
+      "group": "other",
+      "url": "https://github.com/microsoft/agent-framework/releases.atom",
+      "retrieved_utc": "2026-10-01T03:24:54.360330+00:00",
+      "http_status": 200,
+      "sha256": "941dc5410316392ad9d6ff780ad4c225e09fa0120d828d3a37cd91bea64aa6d2",
+      "bytes": 251951,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/maf_releases.atom"
+    },
+    {
+      "group": "other",
+      "url": "https://github.com/PaddlePaddle/PaddleOCR/releases/tag/v3.7.0",
+      "retrieved_utc": "2026-10-01T03:24:54.945160+00:00",
+      "http_status": 200,
+      "sha256": "8f88a247dd0eb1dae5ba74bfebce506de323f1f56d04ac7c322b5c94a5cd1b17",
+      "bytes": 215336,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/other/paddle_release.html"
+    },
+    {
+      "group": "platform",
+      "url": "https://raw.githubusercontent.com/microsoft/agent-lightning/main/README.md",
+      "retrieved_utc": "2026-10-01 (UTC; exact fetch timestamp not recorded)",
+      "http_status": 200,
+      "sha256": "aabd3c1ff7dbf32f717cc98b6cbcaece27bf13de52f46d46acde9108c8f61edf",
+      "bytes": 11560,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/platform/agent-lightning-readme.txt"
+    },
+    {
+      "group": "platform",
+      "url": "https://raw.githubusercontent.com/microsoft/agent-lightning/main/LICENSE",
+      "retrieved_utc": "2026-10-01 (UTC; exact fetch timestamp not recorded)",
+      "http_status": 200,
+      "sha256": "8f71659370c5268d9a1dc962a46232540e8fca63462586d8efaa95aab492a208",
+      "bytes": 1046,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/platform/agent-lightning-license.txt"
+    },
+    {
+      "group": "platform",
+      "url": "https://github.com/microsoft/agent-lightning/releases.atom",
+      "retrieved_utc": "2026-10-01 (UTC; exact fetch timestamp not recorded)",
+      "http_status": 200,
+      "sha256": "7fd0df3822d816c762774b27469db81fb0f949f1d412e2707841b62a011227b2",
+      "bytes": 90548,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/platform/agent-lightning-releases.txt"
+    },
+    {
+      "group": "platform",
+      "url": "https://raw.githubusercontent.com/mlflow/mlflow/master/README.md",
+      "retrieved_utc": "2026-10-01 (UTC; exact fetch timestamp not recorded)",
+      "http_status": 200,
+      "sha256": "e9b30b8aee35e78fb87bdbbfcf837e8739f596aef5f6def89e735680d7d8b00e",
+      "bytes": 33107,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/platform/mlflow-readme.txt"
+    },
+    {
+      "group": "platform",
+      "url": "https://raw.githubusercontent.com/mlflow/mlflow/master/LICENSE.txt",
+      "retrieved_utc": "2026-10-01 (UTC; exact fetch timestamp not recorded)",
+      "http_status": 200,
+      "sha256": "6395355de6f391afff35996a30fb41b189b4991a4cb54993ace35ab69a0bfa28",
+      "bytes": 11382,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/platform/mlflow-license.txt"
+    },
+    {
+      "group": "platform",
+      "url": "https://github.com/mlflow/mlflow/releases.atom",
+      "retrieved_utc": "2026-10-01 (UTC; exact fetch timestamp not recorded)",
+      "http_status": 200,
+      "sha256": "097070295655a0a1608be8ac9f45929ba236ccfc7125aa09bf0b98553b881b42",
+      "bytes": 428599,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/platform/mlflow-releases.txt"
+    },
+    {
+      "group": "platform",
+      "url": "https://qdrant.tech/documentation/concepts/hybrid-queries/",
+      "retrieved_utc": "2026-10-01 (UTC; exact fetch timestamp not recorded)",
+      "http_status": 200,
+      "sha256": "eb2c425556e75088e17b88e7156a4f962af555cdf23cd0ece43dfa7b1e6b645c",
+      "bytes": 433206,
+      "evidence_path": "artifacts/research/2026-10-01/evidence/platform/qdrant-hybrid-docs.txt"
+    }
+  ]
+}

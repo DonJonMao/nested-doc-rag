@@ -76,7 +76,7 @@ CROSS JOIN (VALUES
     ('西咸4号楼', 'xixian_4', '西咸园区 4 号楼知识分库'),
     ('西咸5号楼', 'xixian_5', '西咸园区 5 号楼知识分库'),
     ('西咸6号楼', 'xixian_6', '西咸园区 6 号楼知识分库'),
-    ('城东浐灞', 'chengdong_chanba', '城东浐灞知识分库'),
+    ('城东灞桥', 'chengdong_baqiao', '城东灞桥知识分库'),
     ('西安', 'xian', '西安知识分库'),
     ('咸阳', 'xianyang', '咸阳知识分库')
 ) AS v(name, namespace, description)

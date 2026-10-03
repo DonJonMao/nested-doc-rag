@@ -13,32 +13,44 @@ from typing import Any
 CONFIG_ENV_PREFIX = "NESTED_DOC_RAG__"
 
 
+def normalize_existing_value_policy(value: Any, *, allow_overwrite_all: bool = False) -> str:
+    allowed = {"preserve", "overwrite_confirmed"}
+    if allow_overwrite_all:
+        allowed.add("overwrite_all")
+    if not isinstance(value, str) or value not in allowed:
+        raise ValueError("writeback.existing_value_policy must be preserve or overwrite_confirmed; overwrite_all requires an explicit CLI option")
+    return value
+
+
 def _default_layered_plan() -> list[dict[str, Any]]:
     return [
         {
-            "layer_name": "target_main_fact",
-            "description": "目标机房主知识库事实行，优先作为可填答案来源。",
+            "layer_name": "target_structured_fact",
+            "description": "目标机房字段和值明确的结构化事实，仍需字段与范围校验。",
             "namespaces": "target",
             "corpus_layers": ["fact", "evidence"],
+            "evidence_kinds": ["structured_field"],
             "source_types": ["main_excel_capability"],
             "vector_top_k": 16,
             "rerank_top_n": 5,
         },
         {
-            "layer_name": "target_structured_detail",
-            "description": "目标机房下钻出来的结构化表格内容，用于补充主表不足。",
+            "layer_name": "target_table_detail",
+            "description": "目标机房表格行，保留真实来源，不自动视为字段事实。",
             "namespaces": "target",
-            "corpus_layers": ["fact"],
-            "source_types": ["embedded_word_table"],
+            "corpus_layers": ["fact", "raw_text"],
+            "evidence_kinds": ["table_row"],
+            "source_types": ["embedded_word_table", "embedded_raw_segment", "uploaded_excel_row", "uploaded_docx_table_row"],
             "vector_top_k": 12,
             "rerank_top_n": 3,
         },
         {
-            "layer_name": "target_raw_detail",
-            "description": "目标机房下钻原文段落或表格行，只做补充线索。",
+            "layer_name": "target_text_detail",
+            "description": "目标机房原文段落与文本块，依据语义与范围判断支持程度。",
             "namespaces": "target",
-            "corpus_layers": ["raw_text"],
-            "source_types": ["embedded_raw_segment"],
+            "corpus_layers": ["fact", "raw_text"],
+            "evidence_kinds": ["paragraph", "document_chunk"],
+            "source_types": ["embedded_raw_segment", "uploaded_docx_paragraph", "uploaded_text_chunk"],
             "vector_top_k": 12,
             "rerank_top_n": 3,
         },
@@ -47,16 +59,18 @@ def _default_layered_plan() -> list[dict[str, Any]]:
             "description": "全局介绍文档，用于解释园区级背景，不应无理由覆盖目标机房主表。",
             "namespaces": "global",
             "corpus_layers": ["intro_doc"],
-            "source_types": ["intro_doc_paragraph", "intro_doc_table_row"],
+            "evidence_kinds": ["document_intro"],
+            "source_types": ["intro_doc_paragraph"],
             "vector_top_k": 10,
             "rerank_top_n": 3,
         },
         {
             "layer_name": "global_detail",
-            "description": "全局下钻结构化或原文材料，只做低优先级补充。",
+            "description": "全局结构化、表格与原文材料，只做低优先级补充。",
             "namespaces": "global",
-            "corpus_layers": ["fact", "raw_text"],
-            "source_types": ["embedded_word_table", "embedded_raw_segment"],
+            "corpus_layers": ["fact", "evidence", "raw_text", "intro_doc"],
+            "evidence_kinds": ["structured_field", "table_row", "paragraph", "document_chunk"],
+            "source_types": ["main_excel_capability", "embedded_word_table", "embedded_raw_segment", "intro_doc_table_row", "uploaded_excel_row", "uploaded_docx_paragraph", "uploaded_docx_table_row", "uploaded_text_chunk"],
             "vector_top_k": 10,
             "rerank_top_n": 2,
         },
@@ -81,7 +95,7 @@ class ServicesConfig:
     chat_endpoint: str = "http://localhost:8006/v1/chat/completions"
     chat_model: str = "deepseek-v4-flash"
     chat_api_key_env: str = "DEEPSEEK_API_KEY"
-    timeout_seconds: int = 120
+    timeout_seconds: int = 0
 
 
 @dataclass(frozen=True)
@@ -95,10 +109,12 @@ class QdrantConfig:
 
 @dataclass(frozen=True)
 class RetrievalConfig:
-    target_namespace: str = "xixian_4"
-    global_namespace: str = "global"
+    target_namespace: str = ""
+    global_namespace: str = ""
     query_layers: list[str] = field(default_factory=lambda: ["fact", "evidence", "intro_doc", "raw_text", "meta"])
     plan: str = "layered"
+    sufficiency_enabled: bool = True
+    schema_first_enabled: bool = False
     vector_top_k: int = 40
     rerank_top_n: int = 10
     layer_top_k: int = 8
@@ -131,7 +147,7 @@ class GroundingConfig:
 @dataclass(frozen=True)
 class EvaluationConfig:
     default_rows: list[int] = field(default_factory=lambda: [4, 5, 13, 16, 25, 26, 31, 36, 53, 117])
-    timeout_seconds: int = 120
+    timeout_seconds: int = 0
     resume: bool = False
     judge_model: str = "deepseek-v4-flash"
     metrics_output: Path = Path("artifacts/15_vector_store/base_cloud_closed_book_eval/summary.json")
@@ -157,6 +173,7 @@ class WritebackConfig:
     max_comment_chars: int = 2000
     evidence_image_max_width_px: int = 360
     evidence_image_max_height_px: int = 240
+    existing_value_policy: str = "preserve"
 
 
 @dataclass(frozen=True)
@@ -175,8 +192,50 @@ class AgentConfig:
 
 @dataclass(frozen=True)
 class AgentScopeConfig:
+    enabled: bool = False
+    mode: str = "off"
+
+
+@dataclass(frozen=True)
+class AgenticMASWorkflowSwitchConfig:
     enabled: bool = True
-    mode: str = "equivalent_mas"
+
+
+@dataclass(frozen=True)
+class AgenticMASWorkflowsConfig:
+    missing_info: AgenticMASWorkflowSwitchConfig = field(default_factory=AgenticMASWorkflowSwitchConfig)
+    wrong_answer_risk: AgenticMASWorkflowSwitchConfig = field(default_factory=AgenticMASWorkflowSwitchConfig)
+    not_found_recovery: AgenticMASWorkflowSwitchConfig = field(default_factory=AgenticMASWorkflowSwitchConfig)
+    uncertainty_conflict: AgenticMASWorkflowSwitchConfig = field(default_factory=AgenticMASWorkflowSwitchConfig)
+
+
+@dataclass(frozen=True)
+class AgenticMASRetrievalActionsConfig:
+    allow_slot_targeted: bool = True
+    allow_alias_retrieval: bool = True
+    allow_layer_expansion: bool = True
+    allow_source_specific: bool = True
+    allow_contrastive: bool = True
+    allow_disambiguation: bool = True
+
+
+@dataclass(frozen=True)
+class AgenticMASTraceConfig:
+    write_agentic_trace: bool = True
+    write_round_states: bool = True
+
+
+@dataclass(frozen=True)
+class AgenticMASConfig:
+    enabled: bool = False
+    max_rounds: int = 3
+    max_actions_per_round: int = 2
+    min_new_evidence: int = 1
+    stop_on_no_novel_chunks: bool = True
+    prompt_version: str = "agentic_v1"
+    workflows: AgenticMASWorkflowsConfig = field(default_factory=AgenticMASWorkflowsConfig)
+    retrieval_actions: AgenticMASRetrievalActionsConfig = field(default_factory=AgenticMASRetrievalActionsConfig)
+    trace: AgenticMASTraceConfig = field(default_factory=AgenticMASTraceConfig)
 
 
 @dataclass(frozen=True)
@@ -191,6 +250,7 @@ class AppConfig:
     writeback: WritebackConfig = field(default_factory=WritebackConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     agentscope: AgentScopeConfig = field(default_factory=AgentScopeConfig)
+    agentic_mas: AgenticMASConfig = field(default_factory=AgenticMASConfig)
 
     def to_dict(self) -> dict[str, Any]:
         return _serialize(self)
@@ -229,6 +289,7 @@ def code_defaults(project_root: Path | None = None) -> dict[str, Any]:
         "writeback": _serialize(WritebackConfig()),
         "agent": _serialize(AgentConfig()),
         "agentscope": _serialize(AgentScopeConfig()),
+        "agentic_mas": _serialize(AgenticMASConfig()),
     }
 
 
@@ -343,7 +404,7 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         chat_endpoint=str(services_data.get("chat_endpoint", "http://localhost:8006/v1/chat/completions")),
         chat_model=str(services_data.get("chat_model", "deepseek-v4-flash")),
         chat_api_key_env=str(services_data.get("chat_api_key_env", "DEEPSEEK_API_KEY")),
-        timeout_seconds=_as_int(services_data.get("timeout_seconds", 120)),
+        timeout_seconds=_as_int(services_data.get("timeout_seconds", 0)),
     )
     qdrant_data = _section(data, "qdrant", QdrantConfig())
     qdrant = QdrantConfig(
@@ -355,10 +416,12 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
     )
     retrieval_data = _section(data, "retrieval", RetrievalConfig())
     retrieval = RetrievalConfig(
-        target_namespace=str(retrieval_data.get("target_namespace", "xixian_4")),
-        global_namespace=str(retrieval_data.get("global_namespace", "global")),
+        target_namespace=str(retrieval_data.get("target_namespace", "")),
+        global_namespace=str(retrieval_data.get("global_namespace", "")),
         query_layers=[str(item) for item in _as_list(retrieval_data.get("query_layers"))],
         plan=_normalize_step15_retrieval_plan(retrieval_data),
+        sufficiency_enabled=_as_bool(retrieval_data.get("sufficiency_enabled", True)),
+        schema_first_enabled=_as_bool(retrieval_data.get("schema_first_enabled", False)),
         vector_top_k=_as_int(retrieval_data.get("vector_top_k", 40)),
         rerank_top_n=_as_int(retrieval_data.get("rerank_top_n", 10)),
         layer_top_k=_as_int(retrieval_data.get("layer_top_k", 8)),
@@ -389,7 +452,7 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
     evaluation_data = _section(data, "evaluation", EvaluationConfig())
     evaluation = EvaluationConfig(
         default_rows=[_as_int(item) for item in _as_list(evaluation_data.get("default_rows"))],
-        timeout_seconds=_as_int(evaluation_data.get("timeout_seconds", 120)),
+        timeout_seconds=_as_int(evaluation_data.get("timeout_seconds", 0)),
         resume=_as_bool(evaluation_data.get("resume", False)),
         judge_model=str(evaluation_data.get("judge_model", "deepseek-v4-flash")),
         metrics_output=_resolve_path(evaluation_data.get("metrics_output", "artifacts/15_vector_store/base_cloud_closed_book_eval/summary.json"), root),
@@ -404,6 +467,7 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
     )
     writeback_data = _section(data, "writeback", WritebackConfig())
     writeback = WritebackConfig(
+        existing_value_policy=normalize_existing_value_policy(writeback_data.get("existing_value_policy", "preserve")),
         allow_uncertain=_as_bool(writeback_data.get("allow_uncertain", False)),
         uncertain_style=str(writeback_data.get("uncertain_style", "red_fill")),
         uncertain_comment_prefix=str(writeback_data.get("uncertain_comment_prefix", "[UNCERTAIN]")),
@@ -433,8 +497,47 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         enabled=_as_bool(agentscope_data.get("enabled", False)),
         mode=agentscope_mode,
     )
-    if agentscope.mode not in {"off", "equivalent_mas", "trace_only"}:
-        raise ValueError("agentscope.mode must be off, equivalent_mas, or trace_only")
+    if agentscope.mode not in {"off", "equivalent_mas", "trace_only", "agentic_mas"}:
+        raise ValueError("agentscope.mode must be off, equivalent_mas, trace_only, or agentic_mas")
+    agentic_mas_data = _section(data, "agentic_mas", AgenticMASConfig())
+    workflows_data = dict(agentic_mas_data.get("workflows") or {})
+    retrieval_actions_data = dict(agentic_mas_data.get("retrieval_actions") or {})
+    trace_data = dict(agentic_mas_data.get("trace") or {})
+    workflows = AgenticMASWorkflowsConfig(
+        missing_info=AgenticMASWorkflowSwitchConfig(
+            enabled=_as_bool((workflows_data.get("missing_info") or {}).get("enabled", True))
+        ),
+        wrong_answer_risk=AgenticMASWorkflowSwitchConfig(
+            enabled=_as_bool((workflows_data.get("wrong_answer_risk") or {}).get("enabled", True))
+        ),
+        not_found_recovery=AgenticMASWorkflowSwitchConfig(
+            enabled=_as_bool((workflows_data.get("not_found_recovery") or {}).get("enabled", True))
+        ),
+        uncertainty_conflict=AgenticMASWorkflowSwitchConfig(
+            enabled=_as_bool((workflows_data.get("uncertainty_conflict") or {}).get("enabled", True))
+        ),
+    )
+    agentic_mas = AgenticMASConfig(
+        enabled=_as_bool(agentic_mas_data.get("enabled", False)),
+        max_rounds=max(1, _as_int(agentic_mas_data.get("max_rounds", 3))),
+        max_actions_per_round=max(0, _as_int(agentic_mas_data.get("max_actions_per_round", 2))),
+        min_new_evidence=max(0, _as_int(agentic_mas_data.get("min_new_evidence", 1))),
+        stop_on_no_novel_chunks=_as_bool(agentic_mas_data.get("stop_on_no_novel_chunks", True)),
+        prompt_version=str(agentic_mas_data.get("prompt_version", "agentic_v1")),
+        workflows=workflows,
+        retrieval_actions=AgenticMASRetrievalActionsConfig(
+            allow_slot_targeted=_as_bool(retrieval_actions_data.get("allow_slot_targeted", True)),
+            allow_alias_retrieval=_as_bool(retrieval_actions_data.get("allow_alias_retrieval", True)),
+            allow_layer_expansion=_as_bool(retrieval_actions_data.get("allow_layer_expansion", True)),
+            allow_source_specific=_as_bool(retrieval_actions_data.get("allow_source_specific", True)),
+            allow_contrastive=_as_bool(retrieval_actions_data.get("allow_contrastive", True)),
+            allow_disambiguation=_as_bool(retrieval_actions_data.get("allow_disambiguation", True)),
+        ),
+        trace=AgenticMASTraceConfig(
+            write_agentic_trace=_as_bool(trace_data.get("write_agentic_trace", True)),
+            write_round_states=_as_bool(trace_data.get("write_round_states", True)),
+        ),
+    )
     return AppConfig(
         paths=paths,
         services=services,
@@ -446,6 +549,7 @@ def app_config_from_dict(data: Mapping[str, Any], *, project_root_base: Path | N
         writeback=writeback,
         agent=agent,
         agentscope=agentscope,
+        agentic_mas=agentic_mas,
     )
 
 
@@ -529,6 +633,7 @@ def _env_aliases() -> dict[str, tuple[str, str]]:
         "NDR_QDRANT_URL": ("qdrant", "url"),
         "NDR_QDRANT_API_KEY_ENV": ("qdrant", "api_key_env"),
         "TARGET_NAMESPACE": ("retrieval", "target_namespace"),
+        "GLOBAL_NAMESPACE": ("retrieval", "global_namespace"),
         "RETRIEVAL_MODE": ("retrieval", "plan"),
         "NDR_RETRIEVAL_MODE": ("retrieval", "plan"),
         "NDR_RETRIEVAL_PLAN": ("retrieval", "plan"),

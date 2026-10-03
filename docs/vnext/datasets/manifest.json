@@ -1,0 +1,350 @@
+{
+  "category_counts": {
+    "current_vs_planned": 4,
+    "numeric_substring": 4,
+    "same_field_wrong_room": 5,
+    "same_value_wrong_field": 5,
+    "second_round": 4,
+    "table_detail": 4,
+    "target_global_conflict": 4
+  },
+  "challenge_count": 30,
+  "dataset_version": "synthetic-native-1",
+  "generation": {
+    "command": "python scripts/vnext_generate_datasets.py",
+    "dependencies": [
+      "production openpyxl",
+      "production python-docx"
+    ],
+    "dependency_versions": {
+      "openpyxl": "3.1.5",
+      "python-docx": "1.2.0"
+    },
+    "deterministic_ooxml_zip_time": "2026-01-01T00:00:00",
+    "external_model_calls": 0
+  },
+  "gold_origin": "declared recipes with explicit domain rules; no model or run artifact used",
+  "independent_pairs": 3,
+  "namespace_rule": "each pair requires a separate workspace and independent target/global KBs",
+  "origin": "anonymous_synthetic",
+  "pairs": [
+    {
+      "collection": "vnext_phase5_native",
+      "form_items": {
+        "artifact_relative_path": "f1/form/form_items.jsonl",
+        "file_name": "form_items.jsonl",
+        "path": "../../../artifacts/vnext/phase5/datasets/f1/form/form_items.jsonl",
+        "sha256": "55cd618b0c621ae366b3c570e28e684168581d3c3ed8414e02dc66cbaaa62c76"
+      },
+      "global_sources": [
+        {
+          "artifact_relative_path": "f1/global/北辰企业标准.xlsx",
+          "document_key": "f1.global.北辰企业标准.xlsx",
+          "document_role": "knowledge_base",
+          "file_name": "北辰企业标准.xlsx",
+          "namespace": "global",
+          "path": "../../../artifacts/vnext/phase5/datasets/f1/global/北辰企业标准.xlsx",
+          "sha256": "6aa0a8ea72c8bc6c75135fef124898f9ec0104ffc405eaae9cce3256e1d8edf8"
+        }
+      ],
+      "gold": {
+        "challenge_count": 10,
+        "dataset_id": "f1",
+        "path": "gold.jsonl"
+      },
+      "id": "f1",
+      "namespaces": {
+        "global": "global",
+        "target": "f1"
+      },
+      "room_context": "北辰301",
+      "target_sources": [
+        {
+          "artifact_relative_path": "f1/target/北辰设施.xlsx",
+          "document_key": "f1.target.北辰设施.xlsx",
+          "document_role": "knowledge_base",
+          "file_name": "北辰设施.xlsx",
+          "namespace": "f1",
+          "path": "../../../artifacts/vnext/phase5/datasets/f1/target/北辰设施.xlsx",
+          "sha256": "65ad122b4a2ed53eabcb3a3adc433a67ea34a4ec124933f41bb06d64f534144a"
+        },
+        {
+          "artifact_relative_path": "f1/target/北辰电池实测.docx",
+          "document_key": "f1.target.北辰电池实测.docx",
+          "document_role": "knowledge_base",
+          "file_name": "北辰电池实测.docx",
+          "namespace": "f1",
+          "path": "../../../artifacts/vnext/phase5/datasets/f1/target/北辰电池实测.docx",
+          "sha256": "5ebd21cbec509dd3c993a80aa1eade070b85392cf2e3f51344bd14013574d0db"
+        }
+      ],
+      "template": {
+        "artifact_relative_path": "f1/form/北辰踏勘表.xlsx",
+        "expected_fields": 10,
+        "expected_targets": [
+          {
+            "cell": "E7",
+            "sheet_name": "采集"
+          },
+          {
+            "cell": "E8",
+            "sheet_name": "采集"
+          },
+          {
+            "cell": "E9",
+            "sheet_name": "采集"
+          },
+          {
+            "cell": "E10",
+            "sheet_name": "采集"
+          },
+          {
+            "cell": "E11",
+            "sheet_name": "采集"
+          },
+          {
+            "cell": "E12",
+            "sheet_name": "采集"
+          },
+          {
+            "cell": "E13",
+            "sheet_name": "采集"
+          },
+          {
+            "cell": "E14",
+            "sheet_name": "采集"
+          },
+          {
+            "cell": "E15",
+            "sheet_name": "采集"
+          },
+          {
+            "cell": "E16",
+            "sheet_name": "采集"
+          }
+        ],
+        "file_name": "北辰踏勘表.xlsx",
+        "path": "../../../artifacts/vnext/phase5/datasets/f1/form/北辰踏勘表.xlsx",
+        "safety_controls": [],
+        "sha256": "ed5e70141ea53fd507fd12c7214871479ef05f99e4aa981197a2b8dd6baf53d9"
+      }
+    },
+    {
+      "collection": "vnext_phase5_native",
+      "form_items": {
+        "artifact_relative_path": "f2/form/form_items.jsonl",
+        "file_name": "form_items.jsonl",
+        "path": "../../../artifacts/vnext/phase5/datasets/f2/form/form_items.jsonl",
+        "sha256": "6be30c623a9e51785f0d91dab2e44023b2e007d353792ab1766f2afdd2bdf2ca"
+      },
+      "global_sources": [
+        {
+          "artifact_relative_path": "f2/global/杉岚企业标准.xlsx",
+          "document_key": "f2.global.杉岚企业标准.xlsx",
+          "document_role": "knowledge_base",
+          "file_name": "杉岚企业标准.xlsx",
+          "namespace": "global",
+          "path": "../../../artifacts/vnext/phase5/datasets/f2/global/杉岚企业标准.xlsx",
+          "sha256": "29ea070d88b67fe96e06d6d53bf9a430185d08df78cc48a9970a50ef48c76681"
+        }
+      ],
+      "gold": {
+        "challenge_count": 10,
+        "dataset_id": "f2",
+        "path": "gold.jsonl"
+      },
+      "id": "f2",
+      "namespaces": {
+        "global": "global",
+        "target": "f2"
+      },
+      "room_context": "杉岚201",
+      "target_sources": [
+        {
+          "artifact_relative_path": "f2/target/杉岚运行资料.docx",
+          "document_key": "f2.target.杉岚运行资料.docx",
+          "document_role": "knowledge_base",
+          "file_name": "杉岚运行资料.docx",
+          "namespace": "f2",
+          "path": "../../../artifacts/vnext/phase5/datasets/f2/target/杉岚运行资料.docx",
+          "sha256": "6443b04f936a7c0aebb0372c4bc5f69d8e1b9a6663be24c13df8b3019d869b07"
+        },
+        {
+          "artifact_relative_path": "f2/target/杉岚确认清单.xlsx",
+          "document_key": "f2.target.杉岚确认清单.xlsx",
+          "document_role": "knowledge_base",
+          "file_name": "杉岚确认清单.xlsx",
+          "namespace": "f2",
+          "path": "../../../artifacts/vnext/phase5/datasets/f2/target/杉岚确认清单.xlsx",
+          "sha256": "ba937267531e40bdde4f70882aaa9d2851bd3db0d4dade42dc298da469f3c731"
+        }
+      ],
+      "template": {
+        "artifact_relative_path": "f2/form/杉岚专项调研.xlsx",
+        "expected_fields": 10,
+        "expected_targets": [
+          {
+            "cell": "C3",
+            "sheet_name": "动力消防"
+          },
+          {
+            "cell": "C4",
+            "sheet_name": "动力消防"
+          },
+          {
+            "cell": "C5",
+            "sheet_name": "动力消防"
+          },
+          {
+            "cell": "C6",
+            "sheet_name": "动力消防"
+          },
+          {
+            "cell": "C7",
+            "sheet_name": "动力消防"
+          },
+          {
+            "cell": "F9",
+            "sheet_name": "运行专项"
+          },
+          {
+            "cell": "F10",
+            "sheet_name": "运行专项"
+          },
+          {
+            "cell": "F11",
+            "sheet_name": "运行专项"
+          },
+          {
+            "cell": "F12",
+            "sheet_name": "运行专项"
+          },
+          {
+            "cell": "F13",
+            "sheet_name": "运行专项"
+          }
+        ],
+        "file_name": "杉岚专项调研.xlsx",
+        "path": "../../../artifacts/vnext/phase5/datasets/f2/form/杉岚专项调研.xlsx",
+        "safety_controls": [],
+        "sha256": "85584b087c81ded985fe39a3727d6fdf2fc67cd759a47a90b3b62cd9c0b38f3d"
+      }
+    },
+    {
+      "collection": "vnext_phase5_native",
+      "form_items": {
+        "artifact_relative_path": "f3/form/form_items.jsonl",
+        "file_name": "form_items.jsonl",
+        "path": "../../../artifacts/vnext/phase5/datasets/f3/form/form_items.jsonl",
+        "sha256": "a52953002d66d3aa582ac1872e635c8bd62e6eef511266456de6b97abfc720a4"
+      },
+      "global_sources": [
+        {
+          "artifact_relative_path": "f3/global/澄海企业标准.xlsx",
+          "document_key": "f3.global.澄海企业标准.xlsx",
+          "document_role": "knowledge_base",
+          "file_name": "澄海企业标准.xlsx",
+          "namespace": "global",
+          "path": "../../../artifacts/vnext/phase5/datasets/f3/global/澄海企业标准.xlsx",
+          "sha256": "2e79aab090bb60e5225c5960fff77f9e3fd9f9d3b80ff770cc04b349eca1e8bb"
+        }
+      ],
+      "gold": {
+        "challenge_count": 10,
+        "dataset_id": "f3",
+        "path": "gold.jsonl"
+      },
+      "id": "f3",
+      "namespaces": {
+        "global": "global",
+        "target": "f3"
+      },
+      "room_context": "澄海南501",
+      "target_sources": [
+        {
+          "artifact_relative_path": "f3/target/澄海现网.xlsx",
+          "document_key": "f3.target.澄海现网.xlsx",
+          "document_role": "knowledge_base",
+          "file_name": "澄海现网.xlsx",
+          "namespace": "f3",
+          "path": "../../../artifacts/vnext/phase5/datasets/f3/target/澄海现网.xlsx",
+          "sha256": "2a711bc9c96c1f356b40885fc9bdcc0b69db12ce38893307f771800f8b82583f"
+        },
+        {
+          "artifact_relative_path": "f3/target/澄海UPS巡检.docx",
+          "document_key": "f3.target.澄海UPS巡检.docx",
+          "document_role": "knowledge_base",
+          "file_name": "澄海UPS巡检.docx",
+          "namespace": "f3",
+          "path": "../../../artifacts/vnext/phase5/datasets/f3/target/澄海UPS巡检.docx",
+          "sha256": "8e8297ef96f6fdf8cf7eb500922e3a339dd50b078064563f0582383e7c68b1d6"
+        }
+      ],
+      "template": {
+        "artifact_relative_path": "f3/form/澄海改造核查.xlsx",
+        "expected_fields": 10,
+        "expected_targets": [
+          {
+            "cell": "B4",
+            "sheet_name": "现场记录"
+          },
+          {
+            "cell": "B5",
+            "sheet_name": "现场记录"
+          },
+          {
+            "cell": "B6",
+            "sheet_name": "现场记录"
+          },
+          {
+            "cell": "B7",
+            "sheet_name": "现场记录"
+          },
+          {
+            "cell": "B8",
+            "sheet_name": "现场记录"
+          },
+          {
+            "cell": "D146",
+            "sheet_name": "改造核查"
+          },
+          {
+            "cell": "D147",
+            "sheet_name": "改造核查"
+          },
+          {
+            "cell": "D148",
+            "sheet_name": "改造核查"
+          },
+          {
+            "cell": "D149",
+            "sheet_name": "改造核查"
+          },
+          {
+            "cell": "D150",
+            "sheet_name": "改造核查"
+          }
+        ],
+        "file_name": "澄海改造核查.xlsx",
+        "path": "../../../artifacts/vnext/phase5/datasets/f3/form/澄海改造核查.xlsx",
+        "safety_controls": [
+          {
+            "control_id": "F3_FORMULA",
+            "counted_as_challenge": false,
+            "expected_output_value": "=SUM(1,2)",
+            "expected_parser_action": "formula_target",
+            "has_formula": true,
+            "original_value": "=SUM(1,2)",
+            "target": {
+              "cell": "D151",
+              "sheet_name": "改造核查"
+            }
+          }
+        ],
+        "sha256": "bba508fe360a65eaf8ca3d4c83688f77259d91c373e946f19b44b777bd5d5bc0"
+      }
+    }
+  ],
+  "path_base": "manifest directory",
+  "schema_version": "vnext-evaluation-dataset-v1"
+}

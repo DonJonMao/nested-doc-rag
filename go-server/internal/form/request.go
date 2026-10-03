@@ -22,10 +22,11 @@ type CreateFillRunRequest struct {
 	KnowledgeBaseID *uuid.UUID `json:"knowledge_base_id"`
 	IndexVersionID  *uuid.UUID `json:"index_version_id"`
 
-	TargetNamespace string `json:"target_namespace"`
-	GlobalNamespace string `json:"global_namespace"`
-	RoomContext     string `json:"room_context"`
-	Rows            string `json:"rows"`
+	GlobalKnowledgeBaseID *uuid.UUID `json:"global_knowledge_base_id"`
+	TargetNamespace       string     `json:"target_namespace"`
+	GlobalNamespace       string     `json:"global_namespace"`
+	RoomContext           string     `json:"room_context"`
+	Rows                  string     `json:"rows"`
 
 	RetrievalMode string `json:"retrieval_mode"`
 	PromptVersion string `json:"prompt_version"`
@@ -35,9 +36,11 @@ type CreateFillRunRequest struct {
 }
 
 type CreateSimpleFillRunRequest struct {
-	WorkspaceID     uuid.UUID `json:"workspace_id"`
-	KnowledgeBaseID uuid.UUID `json:"knowledge_base_id"`
-	FormFileID      uuid.UUID `json:"form_file_id"`
-	Name            string    `json:"name"`
-	RoomContext     string    `json:"room_context"`
+	WorkspaceID           uuid.UUID `json:"workspace_id"`
+	KnowledgeBaseID       uuid.UUID `json:"knowledge_base_id"`
+	GlobalKnowledgeBaseID uuid.UUID `json:"global_knowledge_base_id"`
+	FormFileID            uuid.UUID `json:"form_file_id"`
+	Name                  string    `json:"name"`
+	GlobalNamespace       string    `json:"global_namespace"`
+	RoomContext           string    `json:"room_context"`
 }

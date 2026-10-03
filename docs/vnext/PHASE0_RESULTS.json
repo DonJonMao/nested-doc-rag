@@ -1,0 +1,28 @@
+{
+  "baseline_commit": "030300065e0d5041f581f573e772f7756e54abd6",
+  "branch": "feat/evidence-grounded-vnext",
+  "python": "3.13.13 | packaged by Anaconda, Inc. | (main, Apr 14 2026, 06:14:06) [Clang 20.1.8 ]",
+  "scope": "Phase0 regression tests only; no production source edits; no commits",
+  "results": {
+    "baseline": {
+      "tests": 199,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "regressions": {
+      "tests": 2,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "regression_external_model_calls": 0,
+  "regression_qdrant": "actual local in-memory Qdrant",
+  "known_failures": {
+    "A": "Uploaded fact directly queryable in Qdrant; Docker production layered vector_hits=0, reranked_hits=0",
+    "B": "Real run-step15-agent CLI passes zero runtime fields for a fresh uploaded template without historical form_items.jsonl"
+  },
+  "baseline_full_suite_excluded_only_two_new_regression_files": true,
+  "ruff_exit_code": 0
+}

@@ -34,7 +34,7 @@ func TestFillRunServiceCreateCreatesJobAndQueues(t *testing.T) {
 	cfg.Python.ProjectDir = t.TempDir()
 	service := formpkg.NewFillRunService(fillRepo, formRepo, jobSvc, &fakeFillArtifactService{}, &fakeAuthorizer{}, audit.NewService(audits, zap.NewNop()), zap.NewNop(), cfg)
 
-	run, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, Name: "西咸四号楼巡检", TargetNamespace: "target"}, actor)
+	run, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, Name: "西咸四号楼巡检", TargetNamespace: "target", GlobalNamespace: "global"}, actor)
 
 	require.NoError(t, err)
 	require.Equal(t, "西咸四号楼巡检", run.Name)
@@ -62,7 +62,7 @@ func TestFillRunServiceCreateDefaultsNameFromFormFilename(t *testing.T) {
 	cfg.Python.ProjectDir = t.TempDir()
 	service := formpkg.NewFillRunService(newFakeFillRunRepo(), formRepo, &fakeJobUseCase{}, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), cfg)
 
-	run, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "target"}, actor)
+	run, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "target", GlobalNamespace: "global"}, actor)
 
 	require.NoError(t, err)
 	require.Equal(t, "基地云机房信息调研表", run.Name)
@@ -76,7 +76,7 @@ func TestFillRunServiceCreateRejectsTooLongName(t *testing.T) {
 	require.NoError(t, formRepo.Create(context.Background(), formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, FileID: uuid.New(), Filename: "form.xlsx", CreatedBy: actor.UserID}))
 	service := formpkg.NewFillRunService(newFakeFillRunRepo(), formRepo, &fakeJobUseCase{}, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), *config.Default())
 
-	_, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, Name: strings.Repeat("测", 121), TargetNamespace: "target"}, actor)
+	_, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, Name: strings.Repeat("测", 121), TargetNamespace: "target", GlobalNamespace: "global"}, actor)
 
 	require.Error(t, err)
 	require.Equal(t, httpx.CodeInvalidArgument, httpx.ErrorFrom(err).Code)
@@ -217,7 +217,7 @@ func TestFillRunServiceCreateDoesNotRequireWorkspaceWrite(t *testing.T) {
 	require.NoError(t, formRepo.Create(context.Background(), formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, FileID: uuid.New(), Filename: "form.xlsx", CreatedBy: actor.UserID}))
 	service := formpkg.NewFillRunService(newFakeFillRunRepo(), formRepo, &fakeJobUseCase{}, &fakeFillArtifactService{}, &fakeAuthorizer{writeErr: httpx.NewAppError(httpx.CodeForbidden, "forbidden", http.StatusForbidden, nil, nil)}, nil, zap.NewNop(), *config.Default())
 
-	run, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "target"}, actor)
+	run, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "target", GlobalNamespace: "global"}, actor)
 
 	require.NoError(t, err)
 	require.Equal(t, actor.UserID, run.CreatedBy)
@@ -232,7 +232,7 @@ func TestFillRunServiceCreateRejectsFormWorkspaceMismatch(t *testing.T) {
 	jobSvc := &fakeJobUseCase{}
 	service := formpkg.NewFillRunService(newFakeFillRunRepo(), formRepo, jobSvc, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), *config.Default())
 
-	_, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: requestWorkspaceID, FormFileID: formID, TargetNamespace: "target"}, actor)
+	_, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: requestWorkspaceID, FormFileID: formID, TargetNamespace: "target", GlobalNamespace: "global"}, actor)
 
 	require.Error(t, err)
 	require.Equal(t, httpx.CodeForbidden, httpx.ErrorFrom(err).Code)
@@ -248,7 +248,7 @@ func TestFillRunServiceCreateRejectsOtherUsersFormFile(t *testing.T) {
 	jobSvc := &fakeJobUseCase{}
 	service := formpkg.NewFillRunService(newFakeFillRunRepo(), formRepo, jobSvc, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), *config.Default())
 
-	_, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "target"}, actor)
+	_, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "target", GlobalNamespace: "global"}, actor)
 
 	requireAppError(t, err, httpx.CodeNotFound, http.StatusNotFound)
 	require.Empty(t, jobSvc.created)
@@ -270,6 +270,22 @@ func TestFillRunServiceCreateRequiresTargetNamespace(t *testing.T) {
 	require.Empty(t, jobSvc.created)
 }
 
+func TestFillRunServiceCreateRejectsGlobalTargetNamespace(t *testing.T) {
+	workspaceID := uuid.New()
+	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}}
+	formRepo := newFakeFormFileRepo()
+	formID := uuid.New()
+	require.NoError(t, formRepo.Create(context.Background(), formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, FileID: uuid.New(), Filename: "form.xlsx", CreatedBy: actor.UserID}))
+	jobSvc := &fakeJobUseCase{}
+	service := formpkg.NewFillRunService(newFakeFillRunRepo(), formRepo, jobSvc, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), *config.Default())
+
+	_, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "global"}, actor)
+
+	require.Error(t, err)
+	require.Equal(t, httpx.CodeInvalidArgument, httpx.ErrorFrom(err).Code)
+	require.Empty(t, jobSvc.created)
+}
+
 func TestFillRunServiceCreateJobFailureMarksRunFailed(t *testing.T) {
 	workspaceID := uuid.New()
 	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}}
@@ -279,7 +295,7 @@ func TestFillRunServiceCreateJobFailureMarksRunFailed(t *testing.T) {
 	fillRepo := newFakeFillRunRepo()
 	service := formpkg.NewFillRunService(fillRepo, formRepo, &fakeJobUseCase{err: errors.New("queue unavailable")}, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), *config.Default())
 
-	_, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "target"}, actor)
+	_, err := service.CreateFillRun(context.Background(), formpkg.CreateFillRunRequest{WorkspaceID: workspaceID, FormFileID: formID, TargetNamespace: "target", GlobalNamespace: "global"}, actor)
 
 	require.Error(t, err)
 	require.Len(t, fillRepo.runs, 1)
@@ -295,7 +311,9 @@ func TestFillRunServiceCreateForOperatorRequiresReadyKnowledgeBase(t *testing.T)
 	formRepo := newFakeFormFileRepo()
 	formID := uuid.New()
 	kbID := uuid.New()
+	globalKBID := uuid.New()
 	currentVersionID := uuid.New()
+	globalVersionID := uuid.New()
 	require.NoError(t, formRepo.Create(context.Background(), formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, FileID: uuid.New(), Filename: "form.xlsx", CreatedBy: actor.UserID}))
 	bases := newFakeKnowledgeBaseRepo()
 	require.NoError(t, bases.Create(context.Background(), knowledgepkg.KnowledgeBase{
@@ -305,6 +323,14 @@ func TestFillRunServiceCreateForOperatorRequiresReadyKnowledgeBase(t *testing.T)
 		Namespace:             "xixian_4",
 		Status:                knowledgepkg.KnowledgeBaseStatusReady,
 		CurrentIndexVersionID: &currentVersionID,
+	}))
+	require.NoError(t, bases.Create(context.Background(), knowledgepkg.KnowledgeBase{
+		ID:                    globalKBID,
+		WorkspaceID:           workspaceID,
+		Name:                  "公共资料",
+		Namespace:             "global",
+		Status:                knowledgepkg.KnowledgeBaseStatusReady,
+		CurrentIndexVersionID: &globalVersionID,
 	}))
 	jobSvc := &fakeJobUseCase{}
 	cfg := *config.Default()
@@ -323,6 +349,7 @@ func TestFillRunServiceCreateForOperatorRequiresReadyKnowledgeBase(t *testing.T)
 		KnowledgeBaseID: &kbID,
 		IndexVersionID:  &wrongVersionID,
 		TargetNamespace: "other",
+		GlobalNamespace: "global",
 		Rows:            "1-999",
 		RetrievalMode:   "flat",
 		PromptVersion:   "debug",
@@ -340,6 +367,7 @@ func TestFillRunServiceCreateForOperatorRequiresReadyKnowledgeBase(t *testing.T)
 		WorkspaceID:     workspaceID,
 		FormFileID:      formID,
 		KnowledgeBaseID: &kbID,
+		GlobalNamespace: "global",
 		Rows:            "1-999",
 		RetrievalMode:   "flat",
 		PromptVersion:   "debug",
@@ -357,6 +385,174 @@ func TestFillRunServiceCreateForOperatorRequiresReadyKnowledgeBase(t *testing.T)
 	require.False(t, run.JudgeEnabled)
 	require.False(t, run.UseJudgeCache)
 	require.True(t, run.WritebackEnabled)
+}
+
+func TestFillRunServiceCreateSimpleUsesWriteback37FourModeDefaults(t *testing.T) {
+	workspaceID := uuid.New()
+	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}}
+	formRepo := newFakeFormFileRepo()
+	formID := uuid.New()
+	kbID := uuid.New()
+	globalKBID := uuid.New()
+	currentVersionID := uuid.New()
+	globalVersionID := uuid.New()
+	require.NoError(t, formRepo.Create(context.Background(), formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, FileID: uuid.New(), Filename: "form.xlsx", CreatedBy: actor.UserID}))
+	bases := newFakeKnowledgeBaseRepo()
+	require.NoError(t, bases.Create(context.Background(), knowledgepkg.KnowledgeBase{
+		ID:                    kbID,
+		WorkspaceID:           workspaceID,
+		Name:                  "西咸4号楼",
+		Namespace:             "xixian_4",
+		Status:                knowledgepkg.KnowledgeBaseStatusReady,
+		CurrentIndexVersionID: &currentVersionID,
+	}))
+	require.NoError(t, bases.Create(context.Background(), knowledgepkg.KnowledgeBase{
+		ID:                    globalKBID,
+		WorkspaceID:           workspaceID,
+		Name:                  "公共资料",
+		Namespace:             "global",
+		Status:                knowledgepkg.KnowledgeBaseStatusReady,
+		CurrentIndexVersionID: &globalVersionID,
+	}))
+	jobSvc := &fakeJobUseCase{}
+	cfg := *config.Default()
+	cfg.Python.ProjectDir = t.TempDir()
+	cfg.Python.Step15DefaultRetrievalMode = "layered"
+	cfg.Python.Step15DefaultPromptVersion = "step15_compat"
+	service := formpkg.NewFillRunService(newFakeFillRunRepo(), formRepo, jobSvc, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), cfg)
+	service.SetKnowledgeBaseReader(bases)
+
+	run, err := service.CreateSimpleFillRun(context.Background(), formpkg.CreateSimpleFillRunRequest{
+		WorkspaceID:     workspaceID,
+		KnowledgeBaseID: kbID,
+		FormFileID:      formID,
+		RoomContext:     "西咸4号楼 301机房",
+	}, actor)
+
+	require.NoError(t, err)
+	require.Equal(t, "xixian_4", run.TargetNamespace)
+	require.Equal(t, "global", run.GlobalNamespace)
+	require.NotNil(t, run.KnowledgeBaseID)
+	require.Equal(t, "西咸4号楼 301机房", run.RoomContext)
+	require.Equal(t, "all", run.RowsSpec)
+	require.Equal(t, "layered", run.RetrievalMode)
+	require.Equal(t, "step15_compat", run.PromptVersion)
+	require.False(t, run.JudgeEnabled)
+	require.False(t, run.UseJudgeCache)
+	require.True(t, run.WritebackEnabled)
+	require.Len(t, jobSvc.created, 1)
+	require.Equal(t, "all", jobSvc.created[0].Payload["rows"])
+	require.Equal(t, false, jobSvc.created[0].Payload["judge"])
+	require.Equal(t, false, jobSvc.created[0].Payload["use_judge_cache"])
+	require.Equal(t, "global", jobSvc.created[0].Payload["global_namespace"])
+}
+
+func TestFillRunServiceCreateSimpleRequiresReadyAutomaticGlobalKnowledgeBase(t *testing.T) {
+	workspaceID := uuid.New()
+	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}}
+	formRepo := newFakeFormFileRepo()
+	formID := uuid.New()
+	targetKBID := uuid.New()
+	targetVersionID := uuid.New()
+	require.NoError(t, formRepo.Create(context.Background(), formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, FileID: uuid.New(), Filename: "form.xlsx", CreatedBy: actor.UserID}))
+	bases := newFakeKnowledgeBaseRepo()
+	require.NoError(t, bases.Create(context.Background(), knowledgepkg.KnowledgeBase{
+		ID:                    targetKBID,
+		WorkspaceID:           workspaceID,
+		Name:                  "西咸4号楼",
+		Namespace:             "xixian_4",
+		Status:                knowledgepkg.KnowledgeBaseStatusReady,
+		CurrentIndexVersionID: &targetVersionID,
+	}))
+	jobSvc := &fakeJobUseCase{}
+	service := formpkg.NewFillRunService(newFakeFillRunRepo(), formRepo, jobSvc, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), *config.Default())
+	service.SetKnowledgeBaseReader(bases)
+
+	_, err := service.CreateSimpleFillRun(context.Background(), formpkg.CreateSimpleFillRunRequest{
+		WorkspaceID:     workspaceID,
+		KnowledgeBaseID: targetKBID,
+		FormFileID:      formID,
+	}, actor)
+
+	require.Error(t, err)
+	require.Equal(t, httpx.CodeConflict, httpx.ErrorFrom(err).Code)
+	require.Empty(t, jobSvc.created)
+}
+
+func TestFillRunServiceCreateSimpleUsesSelectedGlobalKnowledgeBase(t *testing.T) {
+	workspaceID := uuid.New()
+	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleOperator}}
+	formRepo := newFakeFormFileRepo()
+	formID := uuid.New()
+	targetKBID := uuid.New()
+	globalKBID := uuid.New()
+	targetVersionID := uuid.New()
+	globalVersionID := uuid.New()
+	require.NoError(t, formRepo.Create(context.Background(), formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, FileID: uuid.New(), Filename: "form.xlsx", CreatedBy: actor.UserID}))
+	bases := newFakeKnowledgeBaseRepo()
+	require.NoError(t, bases.Create(context.Background(), knowledgepkg.KnowledgeBase{
+		ID:                    targetKBID,
+		WorkspaceID:           workspaceID,
+		Name:                  "西咸4号楼",
+		Namespace:             "xixian_4",
+		Status:                knowledgepkg.KnowledgeBaseStatusReady,
+		CurrentIndexVersionID: &targetVersionID,
+	}))
+	require.NoError(t, bases.Create(context.Background(), knowledgepkg.KnowledgeBase{
+		ID:                    globalKBID,
+		WorkspaceID:           workspaceID,
+		Name:                  "公共资料",
+		Namespace:             "public_docs",
+		Status:                knowledgepkg.KnowledgeBaseStatusReady,
+		CurrentIndexVersionID: &globalVersionID,
+	}))
+	jobSvc := &fakeJobUseCase{}
+	cfg := *config.Default()
+	cfg.Python.ProjectDir = t.TempDir()
+	service := formpkg.NewFillRunService(newFakeFillRunRepo(), formRepo, jobSvc, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), cfg)
+	service.SetKnowledgeBaseReader(bases)
+
+	run, err := service.CreateSimpleFillRun(context.Background(), formpkg.CreateSimpleFillRunRequest{
+		WorkspaceID:           workspaceID,
+		KnowledgeBaseID:       targetKBID,
+		GlobalKnowledgeBaseID: globalKBID,
+		FormFileID:            formID,
+	}, actor)
+
+	require.NoError(t, err)
+	require.Equal(t, "xixian_4", run.TargetNamespace)
+	require.Equal(t, "public_docs", run.GlobalNamespace)
+	require.Len(t, jobSvc.created, 1)
+	require.Equal(t, "xixian_4", jobSvc.created[0].Payload["target_namespace"])
+	require.Equal(t, "public_docs", jobSvc.created[0].Payload["global_namespace"])
+}
+
+func TestFillRunServiceCreateSimpleRejectsGlobalKnowledgeBase(t *testing.T) {
+	workspaceID := uuid.New()
+	actor := auth.Principal{UserID: uuid.New(), Roles: []string{auth.RoleAdmin}}
+	formRepo := newFakeFormFileRepo()
+	formID := uuid.New()
+	kbID := uuid.New()
+	currentVersionID := uuid.New()
+	require.NoError(t, formRepo.Create(context.Background(), formpkg.FormFile{ID: formID, WorkspaceID: workspaceID, FileID: uuid.New(), Filename: "form.xlsx", CreatedBy: actor.UserID}))
+	bases := newFakeKnowledgeBaseRepo()
+	require.NoError(t, bases.Create(context.Background(), knowledgepkg.KnowledgeBase{
+		ID:                    kbID,
+		WorkspaceID:           workspaceID,
+		Name:                  "全局公共资料",
+		Namespace:             "global",
+		Status:                knowledgepkg.KnowledgeBaseStatusReady,
+		CurrentIndexVersionID: &currentVersionID,
+	}))
+	jobSvc := &fakeJobUseCase{}
+	service := formpkg.NewFillRunService(newFakeFillRunRepo(), formRepo, jobSvc, &fakeFillArtifactService{}, &fakeAuthorizer{}, nil, zap.NewNop(), *config.Default())
+	service.SetKnowledgeBaseReader(bases)
+
+	_, err := service.CreateSimpleFillRun(context.Background(), formpkg.CreateSimpleFillRunRequest{WorkspaceID: workspaceID, KnowledgeBaseID: kbID, FormFileID: formID}, actor)
+
+	require.Error(t, err)
+	require.Equal(t, httpx.CodeInvalidArgument, httpx.ErrorFrom(err).Code)
+	require.Empty(t, jobSvc.created)
 }
 
 func TestFillRunServiceDownloadArtifactByType(t *testing.T) {

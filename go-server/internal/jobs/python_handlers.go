@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/artifact"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/auth"
@@ -34,12 +37,20 @@ type TemplateMaterializer interface {
 	MaterializeTemplate(ctx context.Context, workspaceID uuid.UUID, formFileID uuid.UUID, outDir string) (localPath string, cleanup func(), err error)
 }
 
+type pinnedTemplateMaterializer interface {
+	MaterializePinnedTemplate(context.Context, uuid.UUID, json.RawMessage, string) (string, func(), error)
+}
+
 type FillRunLifecycle interface {
 	MarkFillRunRunning(ctx context.Context, runID uuid.UUID, jobID uuid.UUID) error
 	MarkFillRunSucceeded(ctx context.Context, runID uuid.UUID, result *python.Step15RunResult, artifacts []artifact.RunArtifact) error
 	MarkFillRunCompletedWithFailures(ctx context.Context, runID uuid.UUID, result *python.Step15RunResult, artifacts []artifact.RunArtifact, errMsg string) error
 	MarkFillRunFailed(ctx context.Context, runID uuid.UUID, err error) error
 	MarkFillRunCanceled(ctx context.Context, runID uuid.UUID) error
+}
+
+type fillRunProgressLifecycle interface {
+	MarkFillRunProgress(ctx context.Context, runID uuid.UUID, progressDone int, progressTotal int) error
 }
 
 type ReviewImporter interface {
@@ -116,10 +127,33 @@ func (h *FillFormPythonHandler) Handle(ctx context.Context, job *Job) error {
 	if strings.TrimSpace(payload.OutDir) == "" {
 		return errors.New("fill_form payload out_dir is required")
 	}
-	if payload.Writeback && strings.TrimSpace(payload.TemplatePath) == "" {
+	indexScopesPath, err := freezeFillScopes(payload, job.WorkspaceID)
+	if err != nil {
+		h.markFailed(ctx, job.ResourceID, err)
+		return err
+	}
+	runID := payload.FillRunID
+	if runID == uuid.Nil {
+		runID = job.ResourceID
+	}
+	if len(payload.TemplatePin) > 0 && string(payload.TemplatePin) != "null" {
+		materializer, ok := h.TemplateMaterializer.(pinnedTemplateMaterializer)
+		if !ok {
+			return errors.New("frozen template materializer is required")
+		}
+		localPath, cleanup, err := materializer.MaterializePinnedTemplate(ctx, job.WorkspaceID, payload.TemplatePin, payload.OutDir)
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if err != nil {
+			h.markFailed(ctx, runID, err)
+			return err
+		}
+		payload.TemplatePath = localPath
+	} else if strings.TrimSpace(payload.TemplatePath) == "" {
 		if h.TemplateMaterializer == nil {
-			err := errors.New("fill_form payload template_path is required when writeback=true")
-			h.markFailed(ctx, payload.FillRunID, err)
+			err := errors.New("fill_form payload template_path is required when materializer is not configured")
+			h.markFailed(ctx, runID, err)
 			return err
 		}
 		localPath, cleanup, err := h.TemplateMaterializer.MaterializeTemplate(ctx, job.WorkspaceID, payload.FormFileID, payload.OutDir)
@@ -127,54 +161,60 @@ func (h *FillFormPythonHandler) Handle(ctx context.Context, job *Job) error {
 			defer cleanup()
 		}
 		if err != nil {
-			h.markFailed(ctx, payload.FillRunID, err)
+			h.markFailed(ctx, runID, err)
 			return err
 		}
 		payload.TemplatePath = localPath
 	}
-	if h.Lifecycle != nil && payload.FillRunID != uuid.Nil {
-		if err := h.Lifecycle.MarkFillRunRunning(ctx, payload.FillRunID, job.ID); err != nil {
-			h.Logger.Warn("mark fill run running failed", zap.String("run_id", payload.FillRunID.String()), zap.Error(err))
+	if h.Lifecycle != nil && runID != uuid.Nil {
+		if err := h.Lifecycle.MarkFillRunRunning(ctx, runID, job.ID); err != nil {
+			return err
 		}
 	}
-	h.emit(ctx, job, runevent.EventPythonStarted, map[string]any{"out_dir": payload.OutDir})
-	runID := payload.FillRunID
-	if runID == uuid.Nil {
-		runID = job.ResourceID
+	resume, err := effectiveFillResume(payload.OutDir, payload.Resume)
+	if err != nil {
+		h.markFailed(ctx, runID, err)
+		return err
 	}
+	h.emit(ctx, job, runevent.EventPythonStarted, map[string]any{"out_dir": payload.OutDir})
+	h.markInitialProgress(context.Background(), job, runID, payload.Rows)
 	env := mergeModelGatewayEnv(payload.Env, h.ModelGateway, job, runID)
+	stopProgress := h.startStep15ProgressWatcher(ctx, job, runID, payload.OutDir, payload.Rows)
 	result, err := h.Runner.RunStep15Agent(ctx, python.Step15RunRequest{
-		WorkspaceID:     job.WorkspaceID,
-		JobID:           job.ID,
-		RunID:           job.ResourceID,
-		ConfigPath:      payload.ConfigPath,
-		TargetNamespace: payload.TargetNamespace,
-		GlobalNamespace: payload.GlobalNamespace,
-		RoomContext:     payload.RoomContext,
-		Rows:            payload.Rows,
-		RetrievalMode:   payload.RetrievalMode,
-		PromptVersion:   payload.PromptVersion,
-		Judge:           payload.Judge,
-		UseJudgeCache:   payload.UseJudgeCache,
-		JudgeCachePath:  payload.JudgeCachePath,
-		TemplatePath:    payload.TemplatePath,
-		Writeback:       payload.Writeback,
-		Resume:          payload.Resume,
-		OutDir:          payload.OutDir,
-		Env:             env,
+		WorkspaceID:      job.WorkspaceID,
+		JobID:            job.ID,
+		RunID:            runID,
+		ConfigPath:       payload.ConfigPath,
+		TargetNamespace:  payload.TargetNamespace,
+		GlobalNamespace:  payload.GlobalNamespace,
+		IndexScopesPath:  indexScopesPath,
+		QdrantCollection: frozenFillCollection(payload),
+		RoomContext:      payload.RoomContext,
+		Rows:             payload.Rows,
+		RetrievalMode:    payload.RetrievalMode,
+		PromptVersion:    payload.PromptVersion,
+		Judge:            payload.Judge,
+		UseJudgeCache:    payload.UseJudgeCache,
+		JudgeCachePath:   payload.JudgeCachePath,
+		TemplatePath:     payload.TemplatePath,
+		Writeback:        payload.Writeback,
+		Resume:           resume,
+		OutDir:           payload.OutDir,
+		Env:              env,
 	})
+	stopProgress()
 	if err != nil {
 		h.emit(ctx, job, runevent.EventArtifactValidationFailed, map[string]any{"error_message": err.Error()})
 		if ctx.Err() != nil {
-			h.markCanceled(context.Background(), payload.FillRunID)
+			h.markCanceled(context.Background(), runID)
 		} else {
-			h.markFailed(context.Background(), payload.FillRunID, err)
+			h.markFailed(context.Background(), runID, err)
 		}
 		return err
 	}
 	if result == nil {
 		err := errors.New("python runner returned nil step15 result")
-		h.markFailed(context.Background(), payload.FillRunID, err)
+		h.markFailed(context.Background(), runID, err)
 		return err
 	}
 	h.emit(ctx, job, runevent.EventPythonFinished, map[string]any{"exit_code": result.ExitCode, "out_dir": result.OutDir})
@@ -184,32 +224,32 @@ func (h *FillFormPythonHandler) Handle(ctx context.Context, job *Job) error {
 		} else {
 			h.emit(ctx, job, runevent.EventArtifactValidationFailed, map[string]any{"missing": result.Validation.Missing, "errors": result.Validation.Errors})
 			err := errors.New("artifact validation failed")
-			h.markFailed(context.Background(), payload.FillRunID, err)
+			h.markFailed(context.Background(), runID, err)
 			return err
 		}
 	}
 	if result.Manifest == nil {
 		err := errors.New("run manifest missing from python result")
-		h.markFailed(context.Background(), payload.FillRunID, err)
+		h.markFailed(context.Background(), runID, err)
 		return err
 	}
 	if h.Archiver == nil {
 		err := errors.New("artifact archiver is not configured")
-		h.markFailed(context.Background(), payload.FillRunID, err)
+		h.markFailed(context.Background(), runID, err)
 		return err
 	}
 	actor := auth.Principal{UserID: job.CreatedBy, Roles: []string{auth.RoleAdmin}}
 	registered, err := h.Archiver.ArchiveStep15Artifacts(ctx, job.WorkspaceID, job.ResourceID, result.Manifest, actor)
 	if err != nil {
-		h.markFailed(context.Background(), payload.FillRunID, err)
+		h.markFailed(context.Background(), runID, err)
 		return err
 	}
 	h.emit(ctx, job, runevent.EventArtifactsRegistered, map[string]any{"count": len(registered)})
-	if h.ReviewImporter != nil && payload.FillRunID != uuid.Nil {
-		importResult, err := h.ReviewImporter.ImportForFillRun(ctx, job.WorkspaceID, payload.FillRunID, result.Manifest)
+	if h.ReviewImporter != nil && runID != uuid.Nil {
+		importResult, err := h.ReviewImporter.ImportForFillRun(ctx, job.WorkspaceID, runID, result.Manifest)
 		if err != nil {
 			h.emit(context.Background(), job, runevent.EventReviewImportFailed, map[string]any{"error_message": err.Error()})
-			h.markFailed(context.Background(), payload.FillRunID, err)
+			h.markFailed(context.Background(), runID, err)
 			return err
 		}
 		h.emit(ctx, job, runevent.EventReviewItemsImported, map[string]any{
@@ -221,13 +261,13 @@ func (h *FillFormPythonHandler) Handle(ctx context.Context, job *Job) error {
 			"writeback_allowed": importResult.WritebackAllowed,
 		})
 	}
-	if h.Lifecycle != nil && payload.FillRunID != uuid.Nil {
+	if h.Lifecycle != nil && runID != uuid.Nil {
 		if result.Manifest.Status == JobStatusCompletedWithFailures || result.Manifest.Counts.Failed > 0 {
-			if err := h.Lifecycle.MarkFillRunCompletedWithFailures(context.Background(), payload.FillRunID, result, registered, "completed with failures"); err != nil {
-				h.Logger.Warn("mark fill run completed_with_failures failed", zap.String("run_id", payload.FillRunID.String()), zap.Error(err))
+			if err := h.Lifecycle.MarkFillRunCompletedWithFailures(context.Background(), runID, result, registered, "completed with failures"); err != nil {
+				return err
 			}
-		} else if err := h.Lifecycle.MarkFillRunSucceeded(context.Background(), payload.FillRunID, result, registered); err != nil {
-			h.Logger.Warn("mark fill run succeeded failed", zap.String("run_id", payload.FillRunID.String()), zap.Error(err))
+		} else if err := h.Lifecycle.MarkFillRunSucceeded(context.Background(), runID, result, registered); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -262,6 +302,14 @@ type IngestKnowledgePythonHandlerOption func(*IngestKnowledgePythonHandler)
 
 type IngestionMaterializer interface {
 	MaterializeDocuments(ctx context.Context, workspaceID uuid.UUID, knowledgeBaseID uuid.UUID, outDir string) (inputDir string, documentCount int, cleanup func(), err error)
+}
+
+type frozenIngestionMaterializer interface {
+	MaterializeBuildInput(context.Context, uuid.UUID, json.RawMessage, string) (string, int, func(), error)
+}
+
+type publishedIngestionReader interface {
+	ReadPublishedIngestion(context.Context, uuid.UUID) (*python.IngestionResult, bool, error)
 }
 
 type IngestionLifecycle interface {
@@ -333,14 +381,49 @@ func (h *IngestKnowledgePythonHandler) Handle(ctx context.Context, job *Job) err
 	if strings.TrimSpace(payload.OutDir) == "" {
 		return errors.New("ingest_knowledge payload out_dir is required")
 	}
+	if payload.versionedBuild() {
+		reader, ok := h.Lifecycle.(publishedIngestionReader)
+		if !ok {
+			return errors.New("versioned ingestion publication recovery is required")
+		}
+		_, published, err := reader.ReadPublishedIngestion(ctx, payload.IngestionJobID)
+		if err != nil {
+			return err
+		}
+		if published {
+			return nil
+		} // ready data must never be cleared/rebuilt on job retry.
+	}
 	if h.Lifecycle != nil && payload.IngestionJobID != uuid.Nil {
 		if err := h.Lifecycle.MarkIngestionRunning(ctx, payload.IngestionJobID, job.ID); err != nil {
-			h.Logger.Warn("mark ingestion running failed", zap.String("ingestion_job_id", payload.IngestionJobID.String()), zap.Error(err))
+			return err
 		}
 	}
 	h.emit(ctx, job, runevent.EventIngestionStarted, map[string]any{"out_dir": payload.OutDir, "ingestion_job_id": payload.IngestionJobID.String()})
 	h.emit(ctx, job, runevent.EventPythonStarted, map[string]any{"out_dir": payload.OutDir})
-	if strings.TrimSpace(payload.InputDir) == "" {
+	inputSnapshotPath := ""
+	if payload.versionedBuild() {
+		var err error
+		inputSnapshotPath, err = freezeBuildSnapshot(payload, job.WorkspaceID)
+		if err != nil {
+			h.markIngestionFailed(ctx, payload.IngestionJobID, err)
+			return err
+		}
+		materializer, ok := h.Materializer.(frozenIngestionMaterializer)
+		if !ok {
+			return errors.New("frozen build materializer is required")
+		}
+		inputDir, documentCount, cleanup, err := materializer.MaterializeBuildInput(ctx, job.WorkspaceID, json.RawMessage(payload.InputSnapshotJSON), payload.OutDir)
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if err != nil {
+			h.markIngestionFailed(ctx, payload.IngestionJobID, err)
+			return err
+		}
+		payload.InputDir = inputDir
+		h.emit(ctx, job, runevent.EventIngestionMaterialized, map[string]any{"input_dir": inputDir, "document_count": documentCount})
+	} else if strings.TrimSpace(payload.InputDir) == "" {
 		if h.Materializer == nil {
 			err := errors.New("ingest_knowledge payload input_dir is required when materializer is not configured")
 			h.markIngestionFailed(context.Background(), payload.IngestionJobID, err)
@@ -364,6 +447,9 @@ func (h *IngestKnowledgePythonHandler) Handle(ctx context.Context, job *Job) err
 		h.emit(ctx, job, runevent.EventIngestionMaterialized, map[string]any{"input_dir": inputDir, "document_count": documentCount})
 	}
 	externalID := strings.TrimSpace(payload.KnowledgeBaseExternalID)
+	if payload.versionedBuild() {
+		externalID = payload.KnowledgeBaseID
+	}
 	if externalID == "" {
 		externalID = strings.TrimSpace(payload.KnowledgeBaseID)
 	}
@@ -373,18 +459,21 @@ func (h *IngestKnowledgePythonHandler) Handle(ctx context.Context, job *Job) err
 	}
 	env := mergeModelGatewayEnv(payload.Env, h.ModelGateway, job, ingestionID)
 	result, err := h.Runner.RunKnowledgeIngestion(ctx, python.IngestionRequest{
-		WorkspaceID:      job.WorkspaceID,
-		JobID:            job.ID,
-		IngestionID:      ingestionID,
-		ConfigPath:       payload.ConfigPath,
-		InputDir:         payload.InputDir,
-		Namespace:        payload.Namespace,
-		KnowledgeBaseID:  externalID,
-		QdrantCollection: payload.QdrantCollection,
-		QdrantNamespace:  payload.QdrantNamespace,
-		OutDir:           payload.OutDir,
-		Resume:           payload.Resume,
-		Env:              env,
+		WorkspaceID:       job.WorkspaceID,
+		JobID:             job.ID,
+		IngestionID:       ingestionID,
+		ConfigPath:        payload.ConfigPath,
+		InputDir:          payload.InputDir,
+		Namespace:         payload.Namespace,
+		KnowledgeBaseID:   externalID,
+		QdrantCollection:  payload.QdrantCollection,
+		QdrantNamespace:   payload.QdrantNamespace,
+		IndexVersionID:    payload.versionedID(),
+		InputSnapshotPath: inputSnapshotPath,
+		InputSnapshotHash: payload.InputSnapshotHash,
+		OutDir:            payload.OutDir,
+		Resume:            payload.Resume,
+		Env:               env,
 	})
 	if err != nil {
 		h.emit(ctx, job, runevent.EventIngestionFailed, map[string]any{"error_message": err.Error()})
@@ -408,7 +497,7 @@ func (h *IngestKnowledgePythonHandler) Handle(ctx context.Context, job *Job) err
 	}
 	if h.Lifecycle != nil && payload.IngestionJobID != uuid.Nil {
 		if err := h.Lifecycle.MarkIngestionSucceeded(context.Background(), payload.IngestionJobID, result); err != nil {
-			h.Logger.Warn("mark ingestion succeeded failed", zap.String("ingestion_job_id", payload.IngestionJobID.String()), zap.Error(err))
+			return err
 		}
 	}
 	h.emit(ctx, job, runevent.EventIndexVersionReady, map[string]any{"ingestion_job_id": payload.IngestionJobID.String(), "index_version_id": payload.IndexVersionID.String()})
@@ -427,6 +516,234 @@ func (h *IngestKnowledgePythonHandler) RecoverInterruptedJob(ctx context.Context
 		err = errors.New("worker interrupted ingestion run")
 	}
 	h.markIngestionFailed(ctx, job.ResourceID, err)
+}
+
+// RecoverPublishedJob repairs only the job state after the publication commit.
+// It runs even for a still-running row left by a failed MarkSucceeded call.
+func (h *IngestKnowledgePythonHandler) RecoverPublishedJob(ctx context.Context, job *Job) (bool, error) {
+	if h == nil || job == nil {
+		return false, nil
+	}
+	var payload ingestKnowledgePythonPayload
+	if err := decodeJobPayload(job.Payload, &payload); err != nil {
+		return false, err
+	}
+	if !payload.versionedBuild() {
+		return false, nil
+	}
+	reader, ok := h.Lifecycle.(publishedIngestionReader)
+	if !ok {
+		return false, errors.New("versioned ingestion publication recovery is required")
+	}
+	_, published, err := reader.ReadPublishedIngestion(ctx, payload.IngestionJobID)
+	return published, err
+}
+
+type step15TraceProgressState struct {
+	seen          map[string]bool
+	done          int
+	total         int
+	reportedTotal bool
+}
+
+type step15TraceEvent struct {
+	FieldID string         `json:"field_id"`
+	Step    string         `json:"step"`
+	Payload map[string]any `json:"payload"`
+}
+
+func (h *FillFormPythonHandler) startStep15ProgressWatcher(ctx context.Context, job *Job, runID uuid.UUID, outDir string, rowsSpec string) func() {
+	if h == nil || job == nil || strings.TrimSpace(outDir) == "" {
+		return func() {}
+	}
+	watchCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		state := step15TraceProgressState{seen: map[string]bool{}, total: estimateRowsTotal(rowsSpec)}
+		ticker := time.NewTicker(1500 * time.Millisecond)
+		defer ticker.Stop()
+		tracePaths := step15TracePaths(outDir)
+		for {
+			state.scanPaths(h, job, runID, tracePaths)
+			select {
+			case <-watchCtx.Done():
+				state.scanPaths(h, job, runID, tracePaths)
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
+func (h *FillFormPythonHandler) markInitialProgress(ctx context.Context, job *Job, runID uuid.UUID, rowsSpec string) {
+	total := estimateRowsTotal(rowsSpec)
+	if total <= 0 {
+		return
+	}
+	if updater, ok := h.Lifecycle.(fillRunProgressLifecycle); ok && runID != uuid.Nil {
+		if err := updater.MarkFillRunProgress(ctx, runID, 0, total); err != nil {
+			h.Logger.Warn("mark initial fill run progress failed", zap.String("run_id", runID.String()), zap.Error(err))
+		}
+	}
+	h.emit(ctx, job, runevent.EventProgress, map[string]any{
+		"message":        "任务已开始",
+		"progress_done":  0,
+		"progress_total": total,
+	})
+}
+
+func step15TracePaths(outDir string) []string {
+	return []string{
+		filepath.Join(outDir, "trace.checkpoint.jsonl"),
+		filepath.Join(outDir, "trace.jsonl"),
+	}
+}
+
+func (s *step15TraceProgressState) scanPaths(h *FillFormPythonHandler, job *Job, runID uuid.UUID, tracePaths []string) {
+	for _, tracePath := range tracePaths {
+		s.scan(h, job, runID, tracePath)
+	}
+}
+
+func (s *step15TraceProgressState) scan(h *FillFormPythonHandler, job *Job, runID uuid.UUID, tracePath string) {
+	data, err := os.ReadFile(tracePath)
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var event step15TraceEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		if event.Step == "run_started" {
+			total := payloadInt(event.Payload, "", "selected_field_count")
+			if total <= 0 {
+				total = payloadInt(event.Payload, "", "fields_total")
+			}
+			if total > 0 && (!s.reportedTotal || total != s.total) {
+				s.total = total
+				s.reportedTotal = true
+				if updater, ok := h.Lifecycle.(fillRunProgressLifecycle); ok && runID != uuid.Nil {
+					if err := updater.MarkFillRunProgress(context.Background(), runID, s.done, total); err != nil {
+						h.Logger.Warn("mark parsed fill run progress failed", zap.String("run_id", runID.String()), zap.Error(err))
+					}
+				}
+				h.emit(context.Background(), job, runevent.EventProgress, map[string]any{
+					"message":        "任务已开始",
+					"progress_done":  s.done,
+					"progress_total": total,
+				})
+			}
+			continue
+		}
+		if event.Step != "field_completed" || event.FieldID == "" || s.seen[event.FieldID] {
+			continue
+		}
+		s.seen[event.FieldID] = true
+		s.done++
+		predictionKey := "final_prediction"
+		if _, ok := event.Payload[predictionKey]; !ok {
+			predictionKey = "raw_prediction"
+		}
+		rowIndex := payloadInt(event.Payload, predictionKey, "row_index")
+		status := payloadString(event.Payload, predictionKey, "answer_status")
+		answerValue := payloadString(event.Payload, predictionKey, "answer_value")
+		total := s.total
+		if updater, ok := h.Lifecycle.(fillRunProgressLifecycle); ok && runID != uuid.Nil {
+			if err := updater.MarkFillRunProgress(context.Background(), runID, s.done, total); err != nil {
+				h.Logger.Warn("mark fill run progress failed", zap.String("run_id", runID.String()), zap.Error(err))
+			}
+		}
+		message := "字段处理完成"
+		if rowIndex > 0 {
+			message = fmt.Sprintf("第 %d 行处理完成", rowIndex)
+		}
+		h.emit(context.Background(), job, runevent.EventProgress, map[string]any{
+			"message":        message,
+			"row_index":      rowIndex,
+			"answer_status":  status,
+			"answer_value":   answerValue,
+			"progress_done":  s.done,
+			"progress_total": total,
+		})
+	}
+}
+
+func estimateRowsTotal(rowsSpec string) int {
+	total := 0
+	for _, part := range strings.Split(rowsSpec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		startText, endText, hasRange := strings.Cut(part, "-")
+		start, err := strconv.Atoi(strings.TrimSpace(startText))
+		if err != nil {
+			continue
+		}
+		if !hasRange {
+			total++
+			continue
+		}
+		end, err := strconv.Atoi(strings.TrimSpace(endText))
+		if err != nil {
+			continue
+		}
+		if end < start {
+			start, end = end, start
+		}
+		total += end - start + 1
+	}
+	return total
+}
+
+func payloadInt(payload map[string]any, parentKey string, key string) int {
+	value := nestedPayloadValue(payload, parentKey, key)
+	switch typed := value.(type) {
+	case float64:
+		return int(typed)
+	case int:
+		return typed
+	case json.Number:
+		parsed, _ := typed.Int64()
+		return int(parsed)
+	case string:
+		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func payloadString(payload map[string]any, parentKey string, key string) string {
+	value := nestedPayloadValue(payload, parentKey, key)
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func nestedPayloadValue(payload map[string]any, parentKey string, key string) any {
+	if payload == nil {
+		return nil
+	}
+	if parentKey == "" {
+		return payload[key]
+	}
+	parent, ok := payload[parentKey].(map[string]any)
+	if !ok || parent == nil {
+		return nil
+	}
+	return parent[key]
 }
 
 func (h *FillFormPythonHandler) emit(ctx context.Context, job *Job, eventType string, payload map[string]any) {
@@ -522,9 +839,13 @@ func mergeModelGatewayEnv(base map[string]string, cfg ModelGatewayEnvConfig, job
 }
 
 type fillFormPythonPayload struct {
-	FillRunID   uuid.UUID `json:"fill_run_id"`
-	WorkspaceID uuid.UUID `json:"workspace_id"`
-	FormFileID  uuid.UUID `json:"form_file_id"`
+	FillRunID       uuid.UUID       `json:"fill_run_id"`
+	WorkspaceID     uuid.UUID       `json:"workspace_id"`
+	FormFileID      uuid.UUID       `json:"form_file_id"`
+	TargetScope     json.RawMessage `json:"target_scope"`
+	GlobalScope     json.RawMessage `json:"global_scope"`
+	TemplatePin     json.RawMessage `json:"template_pin"`
+	IndexScopesJSON string          `json:"index_scopes_json"`
 
 	ConfigPath      string            `json:"config_path"`
 	TargetNamespace string            `json:"target_namespace"`
@@ -548,6 +869,9 @@ type ingestKnowledgePythonPayload struct {
 	WorkspaceID             uuid.UUID         `json:"workspace_id"`
 	KnowledgeBaseID         string            `json:"knowledge_base_id"`
 	IndexVersionID          uuid.UUID         `json:"index_version_id"`
+	StorageContract         string            `json:"storage_contract"`
+	InputSnapshotJSON       string            `json:"input_snapshot_json"`
+	InputSnapshotHash       string            `json:"input_snapshot_hash"`
 	ConfigPath              string            `json:"config_path"`
 	InputDir                string            `json:"input_dir"`
 	Namespace               string            `json:"namespace"`
@@ -557,6 +881,17 @@ type ingestKnowledgePythonPayload struct {
 	QdrantCollection        string            `json:"qdrant_collection"`
 	QdrantNamespace         string            `json:"qdrant_namespace"`
 	Env                     map[string]string `json:"env"`
+}
+
+func (p ingestKnowledgePythonPayload) versionedBuild() bool {
+	return p.StorageContract == "versioned_v1" || p.InputSnapshotJSON != "" || p.InputSnapshotHash != ""
+}
+
+func (p ingestKnowledgePythonPayload) versionedID() string {
+	if !p.versionedBuild() {
+		return ""
+	}
+	return nonNilUUIDString(p.IndexVersionID)
 }
 
 func (h *IngestKnowledgePythonHandler) markIngestionFailed(ctx context.Context, ingestionJobID uuid.UUID, err error) {

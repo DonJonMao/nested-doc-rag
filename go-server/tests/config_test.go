@@ -3,6 +3,7 @@ package tests
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/config"
 	"github.com/stretchr/testify/require"
@@ -13,6 +14,8 @@ func TestLoadConfigExample(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, ":8080", cfg.Server.Addr)
+	require.Equal(t, "30m0s", cfg.Server.ReadTimeout.String())
+	require.Equal(t, "30m0s", cfg.Server.WriteTimeout.String())
 	require.Equal(t, "localhost:6379", cfg.Redis.Addr)
 	require.Equal(t, "minio", cfg.Storage.Type)
 	require.Equal(t, "python", cfg.Python.Executable)
@@ -23,7 +26,7 @@ func TestLoadConfigExample(t *testing.T) {
 	require.Equal(t, int64(1048576), cfg.Python.StderrLogMaxBytes)
 	require.Equal(t, "layered", cfg.Python.Step15DefaultRetrievalMode)
 	require.Equal(t, "step15_compat", cfg.Python.Step15DefaultPromptVersion)
-	require.Equal(t, "4-144", cfg.Python.Step15DefaultRows)
+	require.Equal(t, "all", cfg.Python.Step15DefaultRows)
 	require.True(t, cfg.Python.IngestCommandEnabled)
 	require.Equal(t, 1, cfg.Jobs.FillConcurrency)
 	require.Equal(t, 1, cfg.Jobs.IngestionConcurrency)
@@ -38,7 +41,7 @@ func TestLoadConfigExample(t *testing.T) {
 	require.False(t, cfg.Jobs.EnableNoopJob)
 	require.True(t, cfg.Jobs.EventBusEnabled)
 	require.Equal(t, "gongkan:run_events", cfg.Jobs.EventChannel)
-	require.Equal(t, int64(200*1024*1024), cfg.Files.MaxUploadSize.Bytes)
+	require.Equal(t, int64(2048*1024*1024), cfg.Files.MaxUploadSize.Bytes)
 	require.Equal(t, "./runtime/tmp/uploads", cfg.Files.TempDir)
 	require.Contains(t, cfg.Files.AllowedExtensions, ".xlsx")
 	require.Contains(t, cfg.Files.AllowedExtensions, ".xlsm")
@@ -53,6 +56,8 @@ func TestLoadConfigExample(t *testing.T) {
 
 func TestEnvOverride(t *testing.T) {
 	t.Setenv("GONGKAN_SERVER_ADDR", ":18080")
+	t.Setenv("GONGKAN_SERVER_READ_TIMEOUT", "20m")
+	t.Setenv("GONGKAN_SERVER_WRITE_TIMEOUT", "25m")
 	t.Setenv("GONGKAN_DATABASE_DSN", "postgres://override")
 	t.Setenv("GONGKAN_STORAGE_TYPE", "local")
 	t.Setenv("GONGKAN_STORAGE_LOCAL_DIR", t.TempDir())
@@ -85,6 +90,8 @@ func TestEnvOverride(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, ":18080", cfg.Server.Addr)
+	require.Equal(t, "20m0s", cfg.Server.ReadTimeout.String())
+	require.Equal(t, "25m0s", cfg.Server.WriteTimeout.String())
 	require.Equal(t, "postgres://override", cfg.Database.DSN)
 	require.Equal(t, "local", cfg.Storage.Type)
 	require.Equal(t, "python3", cfg.Python.Executable)
@@ -167,7 +174,7 @@ func TestValidateInvalidJobsConfig(t *testing.T) {
 	cfg := config.Default()
 	cfg.Jobs.WorkerConcurrency = 0
 	cfg.Jobs.MaxAttempts = 0
-	cfg.Jobs.DefaultTimeout = config.NewDuration(0)
+	cfg.Jobs.DefaultTimeout = config.NewDuration(-time.Second)
 	cfg.Jobs.RetryBackoff = config.NewDuration(0)
 	cfg.Jobs.EventBufferSize = 0
 	cfg.Jobs.EventChannel = ""
@@ -187,7 +194,7 @@ func TestValidateInvalidPythonConfig(t *testing.T) {
 	cfg := config.Default()
 	cfg.Python.ProjectDir = ""
 	cfg.Python.ConfigPath = ""
-	cfg.Python.DefaultTimeout = config.NewDuration(0)
+	cfg.Python.DefaultTimeout = config.NewDuration(-time.Second)
 	cfg.Python.KillGracePeriod = config.NewDuration(0)
 	cfg.Python.StdoutLogMaxBytes = 0
 	cfg.Python.StderrLogMaxBytes = 0

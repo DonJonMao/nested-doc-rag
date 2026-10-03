@@ -1,0 +1,199 @@
+{
+  "schema_version": "vnext-clean-image-packaging-results-v1",
+  "recorded_at": "2026-10-02T23:20:43.370059+00:00",
+  "exact_base_commit": "030300065e0d5041f581f573e772f7756e54abd6",
+  "image_source_commit": "f5758db611d5b0fef2075ab934df8580c96e88fe",
+  "latest_engineering_commit": "b61049edf47deca56dcd25ad4c8691751e1cf224",
+  "full_objective_complete": false,
+  "resumed_blocked_audit_turn": 2,
+  "current_turn_classification": "progress: two clean-commit image builds, whole installed package/config/migration parity, offline container config smoke, original and historical evidence preservation",
+  "source_export": {
+    "source_commit": "f5758db611d5b0fef2075ab934df8580c96e88fe",
+    "source_worktree_clean": true,
+    "git_archive_sha256": "9d039ed0ab6d84b859f467b1b0492d7ddd250d9641442c9b7fae0184cc6b70d1",
+    "file_count": 581,
+    "build_relevant_file_count": 396,
+    "build_relevant_files_match_clean_worktree": true,
+    "no_private_root_env_copied": true,
+    "spec_hash_unchanged": "5faf68338b22b4ea266e20d1dbb60c15e002dda9cb4d0d74a4d175947d23676a"
+  },
+  "images": {
+    "api": {
+      "tag": "datacenter-vnext-api:accept-f5758db",
+      "id": "sha256:36df26c7d1ec5d59365a719a026de2e39a0639ae4c6c718db355ee1f5f41d242",
+      "source_commit": "f5758db611d5b0fef2075ab934df8580c96e88fe",
+      "build_exit_code": 0,
+      "labels": {
+        "org.opencontainers.image.description": "git-archive-clean-commit",
+        "org.opencontainers.image.revision": "f5758db611d5b0fef2075ab934df8580c96e88fe"
+      },
+      "config_and_migration_files": 15,
+      "all_packaged_configs_migrations_match_export": true,
+      "binary_sha256": "f26c0d40b8becb3db8a58e103ee9809e5d5b5e1a73b784c776de497d7a2ac149",
+      "architecture": "arm64",
+      "os": "linux"
+    },
+    "worker": {
+      "tag": "datacenter-vnext-worker:accept-f5758db",
+      "id": "sha256:af99e41c771ab261f1aec4d56260d397fce0e6b3e9e50cc4bb220d41c479e615",
+      "source_commit": "f5758db611d5b0fef2075ab934df8580c96e88fe",
+      "architecture": "arm64",
+      "os": "linux",
+      "build_exit_code": 0,
+      "labels": {
+        "org.opencontainers.image.description": "git-archive-clean-commit",
+        "org.opencontainers.image.revision": "f5758db611d5b0fef2075ab934df8580c96e88fe"
+      },
+      "source_parity": {
+        "package": {
+          "expected_count": 82,
+          "actual_count": 82,
+          "missing": [],
+          "extra": [],
+          "changed": []
+        },
+        "python_config": {
+          "expected_count": 3,
+          "actual_count": 3,
+          "missing": [],
+          "extra": [],
+          "changed": []
+        },
+        "go_config": {
+          "expected_count": 2,
+          "actual_count": 2,
+          "missing": [],
+          "extra": [],
+          "changed": []
+        },
+        "migrations": {
+          "expected_count": 13,
+          "actual_count": 13,
+          "missing": [],
+          "extra": [],
+          "changed": []
+        }
+      },
+      "all_packaged_files_match_export": true,
+      "installed_package_root": "/usr/local/lib/python3.11/site-packages/nested_doc_rag",
+      "binary_sha256": "931a1d2c49bf9d5ac1ac82e4bb7c299a3d08b478d053f18f23460cb5e9ebed59",
+      "python_version": "3.11.17 (main, Oct  1 2026, 21:56:25) [GCC 14.2.0]",
+      "distribution_count": 107,
+      "offline_config_smoke_exit_code": 0
+    }
+  },
+  "packaging_scope": "Local acceptance API/Worker images from clean archive; runtime hash readers and Python config command only, no default service entrypoint, mounts or model calls from these inspections; no deployment archive created.",
+  "dependency_reproducibility": "Build dependencies use existing tag/range policy; installed distributions and image IDs recorded. Clean source parity is not a claim of bit-for-bit independent rebuilds or in-image full-regression results.",
+  "tests_reused": {
+    "python_passes": 909,
+    "go_race_leaf_passes": 523,
+    "frontend_passes": 39,
+    "reexecuted_this_turn": false,
+    "reason": "No production source/config/frontend changes since the documented verification; this turn performs packaging and container config smoke only."
+  },
+  "real_model_preflight": {
+    "passed": false,
+    "models_kind": "real",
+    "timestamp": "2026-10-02T23:13:48.885192+00:00",
+    "probes": [
+      {
+        "kind": "embedding",
+        "endpoint": "http://111.19.156.74:8001/v1/embeddings",
+        "requested_model": "qwen3-embedding-8b",
+        "request_sha256": "2724165c9ee192fa4b297351ea6b3c0ea5967c13a2df99495be540c4cde9c944",
+        "models_kind": "real",
+        "passed": false,
+        "error_type": "RemoteDisconnected",
+        "elapsed_seconds": 5.023
+      },
+      {
+        "kind": "rerank",
+        "endpoint": "http://111.19.156.74:8002/rerank",
+        "requested_model": null,
+        "request_sha256": "60abf4c050ce1b036127c03e72da0a45cb021c942a0e06df2e1c66d9709831f4",
+        "models_kind": "real",
+        "passed": false,
+        "error_type": "RemoteDisconnected",
+        "elapsed_seconds": 5.023
+      },
+      {
+        "kind": "chat",
+        "endpoint": "http://111.19.156.30:8006/v1/chat/completions",
+        "requested_model": "deepseek-v4-flash",
+        "request_sha256": "8a39aab5a9dad6ee37ba790d3c839a68d66e847743ff7d98167bc5d974a75d8a",
+        "models_kind": "real",
+        "passed": false,
+        "error_type": "RemoteDisconnected",
+        "elapsed_seconds": 5.023
+      }
+    ],
+    "provider_usage": "unknown",
+    "cost": "unknown",
+    "service_weight_fingerprints": "unknown",
+    "actual_small_requests": 3
+  },
+  "preservation": {
+    "schema_version": "vnext-clean-packaging-preservation-v1",
+    "recorded_at": "2026-10-02T23:16:07.281458+00:00",
+    "original_files_checked": 103,
+    "original_failures": [],
+    "frozen_spec_sha256": "5faf68338b22b4ea266e20d1dbb60c15e002dda9cb4d0d74a4d175947d23676a",
+    "sets": {
+      "latest_bound_evidence": {
+        "checked": 28,
+        "mismatches": []
+      },
+      "prior_bound_evidence": {
+        "checked": 31,
+        "mismatches": []
+      },
+      "old003_run_primary_config": {
+        "checked": 382,
+        "mismatches": []
+      }
+    },
+    "passed": true
+  },
+  "remaining_required_acceptance": [
+    "Three fresh real-model clean Docker upload-to-download pairs",
+    "Real challenge/A0-A3 and same-A3 no-supplement counterfactual",
+    "Old141 current live blank/preserve compatibility reproduction and independent verification before quality claims"
+  ],
+  "optional_not_added_as_gate": [
+    "All-141 human gold signoff",
+    "GC/event outbox",
+    "Browser screenshots",
+    "Arbitrary positive accuracy/gain threshold",
+    "A4 unless separately claiming schema-first quality improvement"
+  ],
+  "evidence_sha256": {
+    "artifacts/vnext/phase5/resume-02/clean-export.json": "5b144eb5901c6b1cedc327e7e82061e1f0525505e5b1b8c3b533caed38b2dc07",
+    "artifacts/vnext/phase5/resume-02/api-build-command.json": "1b9bf6ac17eb9c51ddf9f65569128c3f00a11784bc236c3bce4d7746bf42cbaf",
+    "artifacts/vnext/phase5/resume-02/api-build-inputs.json": "a39a462c49adb7d8a4ed59d4d8bebfddd577b213af0b1eca26610e94750d5648",
+    "artifacts/vnext/phase5/resume-02/api-build.log": "69809101698840c2365577cb705908708724b3d75263272239da63788e5a624c",
+    "artifacts/vnext/phase5/resume-02/api-build-result.json": "0ff705e8d0d6767cc5be7dff498428e7e0ba58965570bba2c053dfa72946ae9a",
+    "artifacts/vnext/phase5/resume-02/api-build-content-command.json": "3606c36755759e9d0036506a991777aa551099de24445a1b8f007399e04bc210",
+    "artifacts/vnext/phase5/resume-02/api-build-content-verification.json": "7f808ee84496c79d4a6ff12ec71105dd6ad3c10476e5b3d627bede5db7e3aaab",
+    "artifacts/vnext/phase5/resume-02/api-build-content-stdout.log": "c16f7d184f5022bf9e602239982d46c195e67867ee820003a086873bcdbe35b1",
+    "artifacts/vnext/phase5/resume-02/api-build-content-stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "artifacts/vnext/phase5/resume-02/worker-build-command.json": "441db7d6d67c1dbd220c2d8a5f562f26b1c2c23209b8d5b1922e16878c7e384b",
+    "artifacts/vnext/phase5/resume-02/worker-build.log": "6a92d4bb59d0e755338f2482dcd525364252cd9ea5aaafb969852ae9a3e13a6b",
+    "artifacts/vnext/phase5/resume-02/worker-image.json": "65e1068fe1eebc7e8736a728cff3698ff8f581986509a197542a7cd4d4aa4f8e",
+    "artifacts/vnext/phase5/resume-02/worker-inspect.py": "6fd130a9d6411f64d8da872812f9d79d7e9e429748593f690f5ef8e2cb041173",
+    "artifacts/vnext/phase5/resume-02/worker-inspection-command.json": "f7bd95a8e331870337fa7217d0a19ab0399311450dfc9a7801f055ffdd7c2d97",
+    "artifacts/vnext/phase5/resume-02/worker-installed-files.json": "ba8d8d49fd229f8e19dcd5068dea5c2497ee22c7b5a2d05660c793dc557dfb67",
+    "artifacts/vnext/phase5/resume-02/worker-inspection-stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "artifacts/vnext/phase5/resume-02/worker-content-verification.json": "11d06684af26de78f3852569d28a66e65317f4f64c9de274fd78fcbd9135b261",
+    "artifacts/vnext/phase5/resume-02/worker-cli-smoke.json": "a56a356f39083cef933198b307d1ea2ce1f572553d87d569459ad949fe376b39",
+    "artifacts/vnext/phase5/resume-02/worker-cli-smoke-stdout.log": "a8155a7969c5c1b29d7306c80c0c273c18c30e17c2a60e520d041f54e48370e3",
+    "artifacts/vnext/phase5/resume-02/worker-cli-smoke-stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "artifacts/vnext/phase5/resume-02/model-preflight-command.json": "557464543f4b592896970969df1759a44c8f96ae7540bc601812f77b3fac101c",
+    "artifacts/vnext/phase5/resume-02/model-preflight.json": "baedf196f756a666a3bfc1eb0e97e18c85b7e0c2082c02ab02ac59dd9b60730e",
+    "artifacts/vnext/phase5/resume-02/model-preflight.log": "0e25a50d22af13a35c4a7d56f3e0f73e340eb8019278bdf4b18f5cfc2a4475f2",
+    "artifacts/vnext/phase5/resume-02/requirements-readonly-review.json": "aba9d008b3f6633e60a19ab54b4fe6b68b7715732e98a05ddddff0580055dca1",
+    "artifacts/vnext/phase5/resume-02/preservation-check.json": "8771c6745af4b15a96519d8c1077b348b94832e22ed5adc7e2fab7adcec462ac",
+    "artifacts/vnext/phase5/resume-02/api-image.json": "c7112573d23443e0015be1274d2a4c30fd2a607e61b6887f0518c17e9cadd6a2",
+    "docs/vnext/CLEAN_IMAGE_PACKAGING.md": "e2a19d11310a5b1266b3a10a757a9fba4f58be7068f0a667a5ff5b56837b4fdf",
+    "docs/vnext/DELIVERY.md": "ff0c5304e6f107a0a96a61c4e8b4ccbd59063c7e3818b66cd878279647b9a1d5"
+  }
+}

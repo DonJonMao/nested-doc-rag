@@ -2,11 +2,11 @@ import axios from 'axios'
 import { useAuthStore } from '@/stores/auth.store'
 import type { ApiResponse } from './types'
 
-export const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
+export const API_BASE = import.meta.env.VITE_API_BASE_URL || window.location.origin
 
 export const http = axios.create({
   baseURL: API_BASE,
-  timeout: 30000,
+  timeout: 1800000,
 })
 
 http.interceptors.request.use((config) => {

@@ -39,13 +39,20 @@ type KnowledgeBaseService struct {
 	authorizer WorkspaceAuthorizer
 	audit      *audit.Service
 	logger     *zap.Logger
+	buildStore *PGXBuildStore
 }
+
+func (s *KnowledgeBaseService) SetBuildStore(store *PGXBuildStore) { s.buildStore = store }
 
 func NewKnowledgeBaseService(repo KnowledgeBaseRepo, versions KnowledgeIndexVersionRepo, authorizer WorkspaceAuthorizer, auditSvc *audit.Service, logger *zap.Logger) *KnowledgeBaseService {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &KnowledgeBaseService{repo: repo, versions: versions, authorizer: authorizer, audit: auditSvc, logger: logger}
+	s := &KnowledgeBaseService{repo: repo, versions: versions, authorizer: authorizer, audit: auditSvc, logger: logger}
+	if pgRepo, ok := repo.(*PGXKnowledgeBaseRepo); ok {
+		s.buildStore = NewPGXBuildStore(pgRepo.pool)
+	}
+	return s
 }
 
 func (s *KnowledgeBaseService) CreateKnowledgeBase(ctx context.Context, req CreateKnowledgeBaseRequest, actor auth.Principal) (*KnowledgeBase, error) {
@@ -96,8 +103,17 @@ func (s *KnowledgeBaseService) GetKnowledgeBase(ctx context.Context, id uuid.UUI
 	if err := s.authorizer.CanReadWorkspace(ctx, kb.WorkspaceID, actor); err != nil {
 		return nil, err
 	}
-	if !auth.IsAdminRoles(actor.Roles) && kb.Status != KnowledgeBaseStatusReady {
-		return nil, httpx.NewAppError(httpx.CodeNotFound, "knowledge base not found", http.StatusNotFound, nil, nil)
+	if !auth.IsAdminRoles(actor.Roles) {
+		usable := kb.Status == KnowledgeBaseStatusReady
+		if s.buildStore != nil {
+			usable, err = s.buildStore.HasUsableCurrent(ctx, kb.ID, kb.WorkspaceID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if !usable {
+			return nil, httpx.NewAppError(httpx.CodeNotFound, "knowledge base not found", http.StatusNotFound, nil, nil)
+		}
 	}
 	return kb, nil
 }
@@ -143,6 +159,13 @@ func (s *KnowledgeBaseService) SetCurrentIndexVersion(ctx context.Context, kbID 
 	}
 	if err := s.authorizer.CanWriteWorkspace(ctx, kb.WorkspaceID, actor); err != nil {
 		return nil, err
+	}
+	if s.buildStore != nil {
+		if err := s.buildStore.ActivateVersion(ctx, kb.ID, kb.WorkspaceID, versionID, kb.CurrentIndexVersionID, kb.ActivationRevision); err != nil {
+			return nil, err
+		}
+		s.record(ctx, actor, kb.WorkspaceID, "knowledge_base.current_version_updated", "knowledge_base", kb.ID.String(), map[string]any{"index_version_id": versionID.String()})
+		return s.repo.GetByID(ctx, kb.ID)
 	}
 	version, err := s.versions.GetByID(ctx, versionID)
 	if err != nil {
@@ -232,7 +255,9 @@ func (s *KnowledgeDocumentService) UploadDocument(ctx context.Context, req Uploa
 	if err := s.docs.Create(ctx, doc); err != nil {
 		return nil, err
 	}
-	_ = s.bases.UpdateStatus(ctx, kb.ID, KnowledgeBaseStatusStale)
+	if err := s.bases.UpdateStatus(ctx, kb.ID, KnowledgeBaseStatusStale); err != nil {
+		return nil, err
+	}
 	s.record(ctx, actor, doc.WorkspaceID, "knowledge_document.uploaded", "knowledge_document", doc.ID.String(), map[string]any{"knowledge_base_id": kb.ID.String(), "file_id": doc.FileID.String(), "namespace": doc.Namespace, "document_role": doc.DocumentRole})
 	return &doc, nil
 }
@@ -282,7 +307,9 @@ func (s *KnowledgeDocumentService) RegisterExistingFileAsDocument(ctx context.Co
 	if err := s.docs.Create(ctx, doc); err != nil {
 		return nil, err
 	}
-	_ = s.bases.UpdateStatus(ctx, kb.ID, KnowledgeBaseStatusStale)
+	if err := s.bases.UpdateStatus(ctx, kb.ID, KnowledgeBaseStatusStale); err != nil {
+		return nil, err
+	}
 	s.record(ctx, actor, doc.WorkspaceID, "knowledge_document.registered", "knowledge_document", doc.ID.String(), map[string]any{"knowledge_base_id": kb.ID.String(), "file_id": doc.FileID.String()})
 	return &doc, nil
 }
@@ -320,12 +347,19 @@ func (s *KnowledgeDocumentService) DeleteDocument(ctx context.Context, docID uui
 		return nil, err
 	}
 	nextStatus := KnowledgeBaseStatusStale
-	if active, err := s.docs.ListActiveByKnowledgeBase(ctx, doc.KnowledgeBaseID); err == nil && len(active) == 0 {
+	active, err := s.docs.ListActiveByKnowledgeBase(ctx, doc.KnowledgeBaseID)
+	if err != nil {
+		return nil, err
+	}
+	if len(active) == 0 {
 		nextStatus = KnowledgeBaseStatusEmpty
 	}
-	_ = s.bases.UpdateStatus(ctx, doc.KnowledgeBaseID, nextStatus)
-	if deleted, err := s.docs.GetByID(ctx, doc.ID); err == nil {
-		doc = deleted
+	if err := s.bases.UpdateStatus(ctx, doc.KnowledgeBaseID, nextStatus); err != nil {
+		return nil, err
+	}
+	doc, err = s.docs.GetByID(ctx, doc.ID)
+	if err != nil {
+		return nil, err
 	}
 	s.record(ctx, actor, doc.WorkspaceID, "knowledge_document.deleted", "knowledge_document", doc.ID.String(), map[string]any{"knowledge_base_id": doc.KnowledgeBaseID.String(), "file_id": doc.FileID.String()})
 	return doc, nil
@@ -347,13 +381,20 @@ type IngestionService struct {
 	audit      *audit.Service
 	logger     *zap.Logger
 	cfg        config.Config
+	buildStore *PGXBuildStore
 }
+
+func (s *IngestionService) SetBuildStore(store *PGXBuildStore) { s.buildStore = store }
 
 func NewIngestionService(bases KnowledgeBaseRepo, docs KnowledgeDocumentRepo, versions KnowledgeIndexVersionRepo, ingestions IngestionJobRepo, jobs JobService, authorizer WorkspaceAuthorizer, auditSvc *audit.Service, logger *zap.Logger, cfg config.Config) *IngestionService {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &IngestionService{bases: bases, docs: docs, versions: versions, ingestions: ingestions, jobs: jobs, authorizer: authorizer, audit: auditSvc, logger: logger, cfg: cfg}
+	s := &IngestionService{bases: bases, docs: docs, versions: versions, ingestions: ingestions, jobs: jobs, authorizer: authorizer, audit: auditSvc, logger: logger, cfg: cfg}
+	if pgRepo, ok := bases.(*PGXKnowledgeBaseRepo); ok {
+		s.buildStore = NewPGXBuildStore(pgRepo.pool)
+	}
+	return s
 }
 
 func (s *IngestionService) CreateIngestionRun(ctx context.Context, req CreateIngestionRunRequest, actor auth.Principal) (*IngestionJob, error) {
@@ -369,6 +410,23 @@ func (s *IngestionService) CreateIngestionRun(ctx context.Context, req CreateIng
 	}
 	if !s.cfg.Python.IngestCommandEnabled {
 		return nil, httpx.NewAppError(httpx.CodeFeatureDisabled, "ingest-knowledge command is disabled", http.StatusConflict, nil, nil)
+	}
+	if s.buildStore != nil {
+		dispatcher, ok := s.jobs.(interface {
+			EnqueuePersistedJob(context.Context, *jobs.Job) error
+		})
+		if !ok {
+			return nil, httpx.NewAppError(httpx.CodeInternal, "transactional ingestion dispatcher is not configured", http.StatusInternalServerError, nil, nil)
+		}
+		creation, err := s.buildStore.CreateBuild(ctx, CreateBuildRequest{KnowledgeBaseID: kb.ID, WorkspaceID: kb.WorkspaceID, ActorID: actor.UserID, Request: req, Config: s.cfg})
+		if err != nil {
+			return nil, err
+		}
+		if err := dispatcher.EnqueuePersistedJob(ctx, creation.Job); err != nil {
+			s.logger.Warn("ingestion persisted; dispatch will recover", zap.String("ingestion_job_id", creation.Ingestion.ID.String()), zap.Error(err))
+		}
+		s.record(ctx, actor, kb.WorkspaceID, "ingestion.created", "ingestion_job", creation.Ingestion.ID.String(), map[string]any{"knowledge_base_id": kb.ID.String(), "index_version_id": creation.Version.ID.String(), "job_id": creation.Job.ID.String()})
+		return s.ingestions.GetByID(ctx, creation.Ingestion.ID)
 	}
 	documents, err := s.docs.ListActiveByKnowledgeBase(ctx, kb.ID)
 	if err != nil {
@@ -492,15 +550,33 @@ func (s *IngestionService) CancelIngestionJob(ctx context.Context, id uuid.UUID,
 	if ingestion.JobID == nil {
 		return nil, httpx.NewAppError(httpx.CodeConflict, "ingestion job has no worker job", http.StatusConflict, nil, nil)
 	}
+	if s.buildStore != nil {
+		canceled, err := s.buildStore.CancelBuild(ctx, ingestion.ID, actor.UserID)
+		if err != nil {
+			return nil, err
+		}
+		if notifier, ok := s.jobs.(interface {
+			NotifyCommittedCancellation(context.Context, uuid.UUID) error
+		}); ok {
+			if err := notifier.NotifyCommittedCancellation(ctx, *ingestion.JobID); err != nil {
+				s.logger.Warn("ingestion cancellation committed; notification failed", zap.String("ingestion_job_id", ingestion.ID.String()), zap.Error(err))
+			}
+		}
+		s.record(ctx, actor, ingestion.WorkspaceID, "ingestion.cancel_requested", "ingestion_job", ingestion.ID.String(), map[string]any{"job_id": ingestion.JobID.String(), "status": canceled.Status})
+		return canceled, nil
+	}
 	job, err := s.jobs.CancelJob(ctx, *ingestion.JobID, actor)
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
 	if job.Status == jobs.JobStatusCanceled {
-		_ = s.ingestions.MarkCanceled(ctx, ingestion.ID, now)
+		err = s.ingestions.MarkCanceled(ctx, ingestion.ID, now)
 	} else {
-		_ = s.ingestions.RequestCancel(ctx, ingestion.ID, now)
+		err = s.ingestions.RequestCancel(ctx, ingestion.ID, now)
+	}
+	if err != nil {
+		return nil, err
 	}
 	s.record(ctx, actor, ingestion.WorkspaceID, "ingestion.cancel_requested", "ingestion_job", ingestion.ID.String(), map[string]any{"job_id": ingestion.JobID.String()})
 	return s.ingestions.GetByID(ctx, ingestion.ID)

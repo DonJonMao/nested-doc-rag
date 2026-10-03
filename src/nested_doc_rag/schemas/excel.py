@@ -35,6 +35,9 @@ class WritebackAuditRecord:
     image_evidence_count: int = 0
     error_code: str | None = None
     comment_length: int = 0
+    old_value: Any = None
+    new_value: Any = None
+    policy: str = "preserve"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -58,6 +61,9 @@ class WritebackAuditRecord:
             "image_evidence_count": self.image_evidence_count,
             "error_code": self.error_code,
             "comment_length": self.comment_length,
+            "old_value": self.old_value,
+            "new_value": self.new_value,
+            "policy": self.policy,
         }
 
 

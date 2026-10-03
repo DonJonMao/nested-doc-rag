@@ -5,7 +5,7 @@ import json
 import os
 from collections import Counter
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from time import perf_counter, sleep
 from typing import Any, Literal
@@ -17,17 +17,32 @@ from nested_doc_rag.embedding import RerankClient
 from nested_doc_rag.evaluation.step15_engine import (
     Step15RetrievalResult,
     add_room_context,
-    all_base_cloud_rows,
     build_qdrant_answer_messages,
     run_step15_retrieval,
 )
+from nested_doc_rag.evidence_record import EvidenceAddress
+from nested_doc_rag.evidence_resolver import resolve_evidence_refs, validate_evidence_ref
 from nested_doc_rag.excel.writeback import patch_workbook
-from nested_doc_rag.gongkan_eval import build_judge_messages, build_masked_query, call_deepseek_json
+from nested_doc_rag.form.input_snapshot import (
+    EVIDENCE_CONTRACT_VERSION,
+    build_acquisition_contract,
+    build_form_input_snapshot,
+    persist_form_input_snapshot,
+)
+from nested_doc_rag.gongkan_eval import build_judge_messages, build_masked_query, call_deepseek_json, select_form_items
 from nested_doc_rag.grounding import EvidenceStrengthEvaluator, EvidenceStrengthResult, apply_evidence_strength_to_overlay
 from nested_doc_rag.grounding.evidence_strength import max_risk_level
+from nested_doc_rag.grounding.provenance import build_field_evidence, finalize_evidence, source_reference
+from nested_doc_rag.grounding.sufficiency import (
+    EvidenceSufficiency,
+    build_sufficiency_messages,
+    build_targeted_query,
+    normalize_sufficiency,
+)
 from nested_doc_rag.io import display_text, read_jsonl, write_json, write_jsonl
 from nested_doc_rag.llm import JsonRepairError
 from nested_doc_rag.retrieval import QdrantRetriever, attach_parent_payloads
+from nested_doc_rag.retrieval.layered import constrain_layered_plan, filter_hits_by_plan
 from nested_doc_rag.schemas.eval import FieldPrediction
 
 from .binding import (
@@ -56,7 +71,7 @@ RetrievalFn = Callable[[str], Step15RetrievalResult]
 WritebackFn = Callable[..., Any]
 
 ANSWER_STATUSES = {"answered", "partial_clue", "not_found", "conflict_unresolved"}
-PROMPT_VERSIONS = {"step15_compat", "agent_v2"}
+PROMPT_VERSIONS = {"step15_compat", "agent_v2", "agentic_v1"}
 UNSAFE_WRITEBACK_FLAGS = {
     "answered_without_source",
     "invalid_source_reference",
@@ -164,25 +179,28 @@ class Step15AgentRunner:
         config: AppConfig,
         target_namespace: str,
         out_dir: Path,
-        global_namespace: str = "global",
+        global_namespace: str,
         room_context: str | None = None,
         retrieval_plan: Literal["layered"] = "layered",
         vector_top_k: int | None = None,
         rerank_top_n: int | None = None,
         judge_enabled: bool = False,
         writeback_enabled: bool = False,
+        overwrite_all_cli: bool = False,
         template_path: Path | None = None,
         checkpoint_every: int = 1,
         resume: bool = False,
+        form_input_snapshot: dict[str, Any] | None = None,
         timeout_seconds: int | None = None,
         chat_max_retries: int = 2,
         chat_retry_backoff_seconds: int = 3,
-        prompt_version: Literal["step15_compat", "agent_v2"] = "step15_compat",
+        prompt_version: str = "step15_compat",
         judge_cache_path: Path | None = None,
         use_judge_cache: bool = False,
         deepseek_api_key_env: str | None = None,
         qdrant_path: Path | None = None,
         collection_name: str | None = None,
+        index_scopes: list[dict[str, Any]] | None = None,
         embedding_endpoint: str | None = None,
         embedding_model: str | None = None,
         rerank_endpoint: str | None = None,
@@ -202,6 +220,7 @@ class Step15AgentRunner:
         judge_caller: JudgeCaller | None = None,
         slot_decomposer_caller: SlotDecomposerCaller | None = None,
         field_binding_judge_caller: FieldBindingJudgeCaller | None = None,
+        sufficiency_caller: AnswerCaller | None = None,
         writeback_fn: WritebackFn = patch_workbook,
     ) -> None:
         self.config = config
@@ -217,17 +236,34 @@ class Step15AgentRunner:
         self.rerank_top_n = rerank_top_n or config.retrieval.rerank_top_n
         self.judge_enabled = judge_enabled
         self.writeback_enabled = writeback_enabled
+        self.overwrite_all_cli = overwrite_all_cli
+        if config.writeback.existing_value_policy == "overwrite_all" and not overwrite_all_cli:
+            raise ValueError("overwrite_all requires an explicit CLI option")
         self.template_path = template_path
         self.checkpoint_every = max(1, checkpoint_every)
         self.resume = resume
+        self.form_input_snapshot = form_input_snapshot
         self.timeout_seconds = timeout_seconds or config.services.timeout_seconds
         self.chat_max_retries = max(0, chat_max_retries)
         if model_gateway.is_enabled():
             self.chat_max_retries = min(self.chat_max_retries, 1)
         self.chat_retry_backoff_seconds = max(0, chat_retry_backoff_seconds)
+        self.mas_mode = config.agentscope.mode if config.agentscope.enabled or config.agentscope.mode != "off" else "off"
+        self.sufficiency_enabled = bool(config.retrieval.sufficiency_enabled)
+        self.schema_first_enabled = bool(config.retrieval.schema_first_enabled)
+        if self.schema_first_enabled and retrieval_fn is not None:
+            raise ValueError("schema-first retrieval requires the schema and value retriever; a value-only retrieval_fn cannot run A4")
+        if self.sufficiency_enabled and self.mas_mode != "off":
+            raise ValueError("sufficiency-guided retrieval requires agentscope.mode=off; explicitly disable sufficiency for legacy MAS")
+        if self.mas_mode not in {"off", "equivalent_mas", "trace_only", "agentic_mas"}:
+            raise ValueError(f"unsupported agentscope.mode: {self.mas_mode}")
+        self.agentic_mas_config = config.agentic_mas
         if prompt_version not in PROMPT_VERSIONS:
             raise ValueError(f"unsupported prompt_version: {prompt_version}")
         self.prompt_version = prompt_version
+        self.agentic_prompt_version = config.agentic_mas.prompt_version if self.mas_mode == "agentic_mas" else self.prompt_version
+        if self.agentic_prompt_version not in PROMPT_VERSIONS:
+            raise ValueError(f"unsupported agentic_mas.prompt_version: {self.agentic_prompt_version}")
         self.judge_cache_path = judge_cache_path
         self.use_judge_cache = use_judge_cache
         self.judge_cache: dict[str, dict[str, Any]] = load_judge_cache(judge_cache_path) if use_judge_cache and judge_cache_path else {}
@@ -236,6 +272,11 @@ class Step15AgentRunner:
         self.qdrant_url = config.qdrant.url
         self.qdrant_api_key_env = config.qdrant.api_key_env
         self.collection_name = collection_name or config.qdrant.collection_name
+        from nested_doc_rag.retrieval.version_scope import normalize_index_scopes
+        self.index_scopes = normalize_index_scopes(index_scopes, collection_name=self.collection_name,
+                                                  namespaces=[target_namespace, global_namespace])
+        if self.index_scopes is not None and {scope["namespace"] for scope in self.index_scopes} != {target_namespace, global_namespace}:
+            raise ValueError("fill index scopes must contain exactly the target and global namespaces")
         self.embedding_endpoint = embedding_endpoint or config.services.embedding_endpoint
         self.embedding_model = embedding_model or config.services.embedding_model
         self.rerank_endpoint = rerank_endpoint or config.services.rerank_endpoint
@@ -262,6 +303,7 @@ class Step15AgentRunner:
         self.judge_caller = judge_caller
         self.slot_decomposer_caller = slot_decomposer_caller
         self.field_binding_judge_caller = field_binding_judge_caller
+        self.sufficiency_caller = sufficiency_caller
         self.writeback_fn = writeback_fn
         self.retrieval_fn = retrieval_fn
         self.run_id = f"step15_agent_{uuid4().hex[:12]}"
@@ -275,6 +317,7 @@ class Step15AgentRunner:
                 "collection_name": self.collection_name,
                 "chat_model": self.chat_model,
                 "prompt_version": self.prompt_version,
+                "agentic_prompt_version": self.agentic_prompt_version,
                 "use_judge_cache": self.use_judge_cache,
                 "judge_enabled": self.judge_enabled,
                 "writeback_enabled": self.writeback_enabled,
@@ -286,18 +329,18 @@ class Step15AgentRunner:
         )
         self.review_items: list[dict[str, Any]] = []
         self.eval_results: list[dict[str, Any]] = []
+        self.retrieval_evidence_by_field_id: dict[str, list[dict[str, Any]]] = {}
         self.agent_overlays: list[AgentOverlay] = []
+        self.evidence_provenance_by_field_id: dict[str, dict[str, Any]] = {}
+        self.evidence_items_by_field_id: dict[str, dict[str, Any]] = {}
         self.grounding_trace_records: list[dict[str, Any]] = []
         self.slot_trace_records: list[dict[str, Any]] = []
         self.slot_decomposition_cache: dict[str, SlotDecomposition] = {}
         self.writeback_status = "skipped: writeback disabled"
         self.writeback_summary: dict[str, Any] | None = None
-        self.mas_mode = config.agentscope.mode if config.agentscope.enabled or config.agentscope.mode != "off" else "off"
-        if self.mas_mode not in {"off", "equivalent_mas", "trace_only"}:
-            raise ValueError(f"unsupported agentscope.mode: {self.mas_mode}")
         self.mas_controller = (
             Step15MASController(self, mode=self.mas_mode, agentscope_enabled=config.agentscope.enabled)
-            if self.mas_mode in {"equivalent_mas", "trace_only"}
+            if self.mas_mode in {"equivalent_mas", "trace_only", "agentic_mas"}
             else None
         )
         self._owns_retriever = retriever is None and retrieval_fn is None
@@ -309,6 +352,7 @@ class Step15AgentRunner:
                 qdrant_url=self.qdrant_url,
                 qdrant_api_key_env=self.qdrant_api_key_env,
                 collection_name=self.collection_name,
+                index_scopes=self.index_scopes,
                 embedding_endpoint=self.embedding_endpoint,
                 embedding_model=self.embedding_model,
                 prefer_grpc=config.qdrant.prefer_grpc,
@@ -319,12 +363,38 @@ class Step15AgentRunner:
                 model=self.rerank_model,
                 timeout_seconds=self.timeout_seconds,
             )
+            if self.index_scopes is not None and normalize_index_scopes(
+                getattr(self.retriever, "index_scopes", None), collection_name=self.collection_name,
+                namespaces=[target_namespace, global_namespace],
+            ) != self.index_scopes:
+                raise ValueError("injected retriever does not match the frozen index scopes")
     def run(self, items: list[dict[str, Any]]) -> list[FieldPrediction]:
+        items = select_form_items(items, None)
+        snapshot = self.form_input_snapshot or build_form_input_snapshot(
+            items,
+            template_path=self.template_path,
+            target_namespace=self.target_namespace,
+            global_namespace=self.global_namespace,
+            room_context=self.room_context,
+            acquisition_contract=self.acquisition_contract(),
+        )
+        if snapshot["selected_field_ids"] != [str(item["form_item_id"]) for item in items]:
+            raise RuntimeError("form input snapshot does not match the selected runtime fields")
+        if snapshot.get("evidence_contract_version") != EVIDENCE_CONTRACT_VERSION:
+            raise RuntimeError("cannot resume: evidence contract version changed; start a new run directory")
+        if snapshot.get("acquisition_contract") != self.acquisition_contract():
+            raise RuntimeError("cannot resume: retrieval strategy or prompt version changed; start a new run directory")
+        persist_form_input_snapshot(self.out_dir, snapshot, resume=self.resume)
+        self.form_input_snapshot = snapshot
         self.out_dir.mkdir(parents=True, exist_ok=True)
+        if self.index_scopes is not None:
+            write_json(self.out_dir / "index_scopes.json", self.index_scopes)
+        self.evidence_items_by_field_id = {field_id_for_item(item): item for item in items}
         checkpoint_predictions = self.load_checkpoint_predictions() if self.resume else {}
         completed_keys = completed_item_keys(checkpoint_predictions.values())
         if self.resume:
             self.load_checkpoint_sidecars()
+            self.validate_checkpoint_evidence(checkpoint_predictions, items)
 
         skipped_completed_count = sum(1 for item in items if item_key(item) in completed_keys)
         run_state: dict[str, Any] = {
@@ -336,6 +406,7 @@ class Step15AgentRunner:
             "rows": rows_label_for_items(items),
             "retrieval_plan": self.retrieval_plan,
             "retrieval_fusion_mode": "dense",
+            "acquisition_contract": self.acquisition_contract(),
             "fields_total": len(items),
             "fields_completed": skipped_completed_count,
             "fields_failed": 0,
@@ -376,7 +447,15 @@ class Step15AgentRunner:
                     result = self.failed_item_result(item, exc)
 
                 predictions_by_field_id[result.prediction.field_id] = result.prediction
+                self.retrieval_evidence_by_field_id[result.prediction.field_id] = result.top_hits
                 overlays_by_field_id[result.overlay.field_id] = result.overlay
+                self.evidence_provenance_by_field_id[result.prediction.field_id] = build_field_evidence(
+                    item=result.item,
+                    prediction=result.prediction,
+                    generated=result.generated,
+                    top_hits=result.top_hits,
+                    overlay=result.overlay,
+                )
                 if result.eval_result is not None:
                     self.eval_results.append(result.eval_result)
                 if result.review_item is not None:
@@ -420,12 +499,159 @@ class Step15AgentRunner:
         return ordered_predictions
 
     def process_item(self, item: dict[str, Any]) -> Step15FieldResult:
-        if self.mas_mode == "equivalent_mas" and self.mas_controller is not None:
-            return self._process_item_equivalent_mas(item)
-        result = self._process_item_original(item)
-        if self.mas_mode == "trace_only" and self.mas_controller is not None:
-            self.mas_controller.record_trace_only_result(item, result)
+        if self.mas_mode == "agentic_mas" and self.mas_controller is not None:
+            base_result = self._process_item_original(item)
+            if base_result.overlay.writeback_allowed:
+                self.mas_controller.record_live_base_preserved(item=item, base_result=base_result)
+                result = base_result
+            else:
+                result = self.mas_controller.process_item_agentic_from_base(
+                    item,
+                    base_result=base_result,
+                    config=self.agentic_mas_config,
+                )
+        elif self.mas_mode == "equivalent_mas" and self.mas_controller is not None:
+            result = self._process_item_equivalent_mas(item)
+        else:
+            result = self._process_item_original(item)
+            if self.mas_mode == "trace_only" and self.mas_controller is not None:
+                self.mas_controller.record_trace_only_result(item, result)
+        self.validate_pinned_hits(result.top_hits)
+        self.validate_pinned_hits(result.vector_hits)
+        prediction = attach_addressed_evidence(result.prediction, result.top_hits)
+        overlay = apply_addressed_evidence_gate(prediction, result.overlay)
+        if self.sufficiency_enabled:
+            overlay = apply_sufficiency_gate(prediction, overlay, result.top_hits)
+        result = replace(
+            result, prediction=prediction, overlay=overlay,
+            critic_flags=overlay.critic_flags,
+            review_item=make_step15_review_item(item, prediction, overlay, result.top_hits),
+        )
+        self.trace.record(prediction.field_id, "evidence_refs_resolved", prediction.validation["addressable_evidence"])
         return result
+
+    def validate_checkpoint_evidence(self, predictions: dict[str, FieldPrediction], items: list[dict[str, Any]]) -> None:
+        """Recheck saved references before a completed field can be reused."""
+        overlays = {overlay.field_id: overlay for overlay in self.agent_overlays}
+        items_by_id = {field_id_for_item(item): item for item in items}
+        for field_id, prediction in predictions.items():
+            if field_id not in self.retrieval_evidence_by_field_id:
+                raise RuntimeError(f"cannot resume: retrieval authority missing for {field_id}; start a new run directory")
+            hits = self.retrieval_evidence_by_field_id[field_id]
+            resolved = attach_addressed_evidence(prediction, hits)
+            if [ref.to_dict() for ref in resolved.evidence_refs] != [ref.to_dict() for ref in prediction.evidence_refs]:
+                raise RuntimeError(f"cannot resume: evidence references changed or failed verification for {field_id}")
+            authority = hit_index(hits)
+            for ref in prediction.evidence_refs:
+                if validate_evidence_ref(ref, authority.get(ref.chunk_id)):
+                    raise RuntimeError(f"cannot resume: invalid evidence reference for {field_id}")
+            overlay = overlays.get(field_id)
+            if overlay is None:
+                overlay = build_agent_overlay_for_step15_prediction(prediction, hits, list(prediction.validation.get("critic_flags") or []))
+            overlay = apply_addressed_evidence_gate(resolved, overlay)
+            if self.sufficiency_enabled:
+                overlay = apply_sufficiency_gate(prediction, overlay, hits)
+            overlays[field_id] = overlay
+            if overlay.review_required:
+                review = make_step15_review_item(items_by_id.get(field_id, {}), prediction, overlay, hits)
+                self.review_items = merge_review_items(self.review_items, [review] if review else [])
+        self.agent_overlays = list(overlays.values())
+
+    def acquisition_contract(self) -> dict[str, Any]:
+        return build_acquisition_contract(
+            self.config, prompt_version=self.prompt_version, collection_name=self.collection_name,
+            layered_plan=self.layered_plan, allowed_layers=self.allowed_layers,
+            overwrite_all_cli=self.overwrite_all_cli,
+            index_scopes=self.index_scopes,
+        )
+
+    def check_sufficiency(self, item: dict[str, Any], hits: list[dict[str, Any]], decomposition: SlotDecomposition, *, retrieval_round: int) -> EvidenceSufficiency:
+        messages = build_sufficiency_messages(
+            item, hits, target_namespace=self.target_namespace, room_context=self.room_context,
+            slot_schema=decomposition.to_prompt_dict(),
+        )
+        parse_error = None
+        try:
+            response = self.call_chat_with_retries(
+                call_kind="sufficiency", field_id=field_id_for_item(item), caller=self.sufficiency_caller,
+                kwargs={"messages": messages, "item": item, "hits": hits, "retrieval_round": retrieval_round},
+            )
+        except Exception as exc:
+            if not is_json_parse_error(exc):
+                raise
+            response = None
+            parse_error = {"code": "SUFFICIENCY_SCHEMA_INVALID", "reason": "json_parse_retries_exhausted", "detail": display_text(str(exc), 240)}
+        result = normalize_sufficiency(response, hits, item=item, slot_schema=decomposition.to_prompt_dict())
+        if parse_error is not None:
+            result = replace(result, diagnostics=[*result.diagnostics, parse_error])
+        self.trace.record(field_id_for_item(item), "evidence_sufficiency_checked", {
+            "retrieval_round": retrieval_round, **result.to_dict(),
+        })
+        return result
+
+    def collect_sufficient_evidence(self, item: dict[str, Any], query: str, decomposition: SlotDecomposition) -> tuple[Step15RetrievalResult, EvidenceSufficiency]:
+        """One primary acquisition and, only for a gap, one supplement."""
+        field_id = field_id_for_item(item)
+        configured_layers = {str(spec["layer_name"]) for spec in self.layered_plan}
+        primary_layers = [name for name in ("target_structured_fact", "target_table_detail") if name in configured_layers]
+        supplementary_layers = [name for name in (
+            "target_structured_fact", "target_table_detail", "target_text_detail", "global_detail", "global_intro",
+        ) if name in configured_layers]
+        retrieval_started = perf_counter_ms()
+        schema_queries = [build_targeted_query(
+            item, [slot.label], target_namespace=self.target_namespace, room_context=self.room_context,
+        ) for slot in decomposition.slots if slot.required and slot.evidence_required] or [query]
+        primary = self.retrieve(query, layer_names=primary_layers, schema_queries=schema_queries)
+        retrieval_latency = perf_counter_ms() - retrieval_started
+        primary_hits = tag_acquisition_hits(self.attach_parent_payloads(primary.reranked_hits), 0, [])
+        primary_vectors = tag_acquisition_hits(self.attach_parent_payloads(primary.vector_hits), 0, [])
+        rounds = [{"retrieval_round": 0, "query": query, "hit_count": len(primary_hits), **(primary.metadata or {})}]
+        for selection in (primary.metadata or {}).get("schema_first", {}).get("selections", []):
+            self.trace.record(field_id, "field_schema_selected", {"retrieval_round": 0, **selection})
+        self.trace.record(field_id, "primary_retrieval_completed", rounds[0])
+        sufficiency_started = perf_counter_ms()
+        sufficient = self.check_sufficiency(item, primary_hits, decomposition, retrieval_round=0)
+        sufficiency_latency = perf_counter_ms() - sufficiency_started
+        hits, vectors = primary_hits, primary_vectors
+        conflicts: list[dict[str, Any]] = []
+        if not sufficient.sufficient:
+            missing = sufficient.missing_facts
+            supplement_query = build_targeted_query(item, missing, target_namespace=self.target_namespace, room_context=self.room_context)
+            self.trace.record(field_id, "targeted_retrieval_started", {
+                "retrieval_round": 1, "missing_facts": missing, "query": supplement_query,
+            })
+            retrieval_started = perf_counter_ms()
+            supplement = self.retrieve(supplement_query, layer_names=supplementary_layers, schema_queries=[
+                build_targeted_query(item, [fact], target_namespace=self.target_namespace, room_context=self.room_context)
+                for fact in missing
+            ])
+            retrieval_latency += perf_counter_ms() - retrieval_started
+            supplement_hits = tag_acquisition_hits(self.attach_parent_payloads(supplement.reranked_hits), 1, missing)
+            supplement_vectors = tag_acquisition_hits(self.attach_parent_payloads(supplement.vector_hits), 1, missing)
+            for selection in (supplement.metadata or {}).get("schema_first", {}).get("selections", []):
+                self.trace.record(field_id, "field_schema_selected", {"retrieval_round": 1, **selection})
+            before_ids = set(chunk_ids(primary_hits))
+            hits, conflicts = merge_acquisition_hits(primary_hits, supplement_hits, target_namespace=self.target_namespace)
+            vectors, _ = merge_acquisition_hits(primary_vectors, supplement_vectors, target_namespace=self.target_namespace)
+            rounds.append({"retrieval_round": 1, "query": supplement_query, "missing_facts": missing,
+                           "hit_count": len(supplement_hits), "evidence_gain": len(set(chunk_ids(hits)) - before_ids), **(supplement.metadata or {})})
+            self.trace.record(field_id, "targeted_retrieval_completed", {**rounds[-1], "conflicting_evidence": conflicts})
+            sufficiency_started = perf_counter_ms()
+            sufficient = self.check_sufficiency(item, hits, decomposition, retrieval_round=1)
+            sufficiency_latency += perf_counter_ms() - sufficiency_started
+        if conflicts:
+            sufficient = replace(sufficient, sufficient=False, missing_facts=sufficient.missing_facts or ["冲突来源的可核验事实"],
+                                 reason="Same evidence ID has conflicting or invalid source origins", diagnostics=[*sufficient.diagnostics, *conflicts])
+            self.trace.record(field_id, "evidence_sufficiency_conflict_blocked", sufficient.to_dict())
+        backend_calls = [entry.get("qdrant_query_calls") for entry in rounds]
+        metadata = {
+            "strategy": "sufficiency_guided", "acquisition_rounds": len(rounds), "rounds": rounds,
+            "qdrant_query_calls": sum(backend_calls) if all(isinstance(value, int) for value in backend_calls) else None,
+            "retrieval_attempts": sum(int(entry.get("retrieval_attempts", 1)) for entry in rounds),
+            "retrieval_latency_ms": round(retrieval_latency, 3), "sufficiency_latency_ms": round(sufficiency_latency, 3),
+            "final_sufficiency": sufficient.to_dict(), "conflicting_evidence": conflicts,
+        }
+        return Step15RetrievalResult(reranked_hits=hits, vector_hits=vectors, retrieval_mode=self.retrieval_plan, metadata=metadata), sufficient
 
     def _process_item_original(self, item: dict[str, Any]) -> Step15FieldResult:
         field_id = field_id_for_item(item)
@@ -445,9 +671,17 @@ class Step15AgentRunner:
             },
         )
 
+        slot_decomposition = self.decompose_slots(item)
+        self.trace.record(field_id, "slot_decomposed", slot_decomposition.to_dict())
         retrieval_started = perf_counter_ms()
-        retrieval_result = self.retrieve(retrieval_query)
+        sufficiency = None
+        if self.sufficiency_enabled:
+            retrieval_result, sufficiency = self.collect_sufficient_evidence(item, retrieval_query, slot_decomposition)
+        else:
+            retrieval_result = self.retrieve(retrieval_query)
         retrieval_latency_ms = round(perf_counter_ms() - retrieval_started, 3)
+        if self.sufficiency_enabled:
+            retrieval_latency_ms = float((retrieval_result.metadata or {}).get("retrieval_latency_ms") or 0)
         top_hits = self.attach_parent_payloads(retrieval_result.reranked_hits)
         vector_hits = self.attach_parent_payloads(retrieval_result.vector_hits)
         self.trace.record(
@@ -460,11 +694,10 @@ class Step15AgentRunner:
                 "layer_counts": count_layers(top_hits),
                 "retrieval_latency_ms": retrieval_latency_ms,
                 "top_chunk_ids": chunk_ids(top_hits),
+                "acquisition": retrieval_result.metadata or {},
             },
         )
 
-        slot_decomposition = self.decompose_slots(item)
-        self.trace.record(field_id, "slot_decomposed", slot_decomposition.to_dict())
         generation_started = perf_counter_ms()
         messages = build_qdrant_answer_messages(
             item,
@@ -474,7 +707,17 @@ class Step15AgentRunner:
             prompt_version=self.prompt_version,
             slot_schema=slot_decomposition.to_prompt_dict(),
         )
-        generated = self.call_answer(messages=messages, item=item, query_text=retrieval_query, hits=top_hits)
+        if sufficiency is not None and not sufficiency.sufficient:
+            # This is a system abstention before generation, not a rewritten LLM answer.
+            generated = {
+                "answer_value": "未找到", "answer_status": "partial_clue" if top_hits else "not_found",
+                "confidence": 0.0, "source_chunk_ids": [], "evidence_attachment_ids": [],
+                "reference_source_documents": [{"chunk_id": hit["chunk_id"], "quote": "", "reason": sufficiency.reason} for hit in top_hits if hit.get("chunk_id")],
+                "missing_fields": sufficiency.missing_facts, "notes": sufficiency.reason,
+                "origin": "system_sufficiency_abstention", "evidence_sufficiency": sufficiency.to_dict(),
+            }
+        else:
+            generated = self.call_answer(messages=messages, item=item, query_text=retrieval_query, hits=top_hits)
         generation_latency_ms = round(perf_counter_ms() - generation_started, 3)
         self.trace.record(
             field_id,
@@ -486,10 +729,13 @@ class Step15AgentRunner:
                 "source_chunk_ids": generated.get("source_chunk_ids") or [],
                 "reference_source_documents_count": len(generated.get("reference_source_documents") or []),
                 "generation_latency_ms": generation_latency_ms,
+                "origin": generated.get("origin", "model"),
             },
         )
 
         prediction = convert_step15_generated_to_prediction(item, generated, top_hits, retrieval_mode=self.retrieval_plan)
+        if self.sufficiency_enabled:
+            prediction = replace(prediction, validation={**prediction.validation, "acquisition": retrieval_result.metadata})
         prediction = attach_slot_validation(prediction, generated, slot_decomposition)
         critic_flags = critic_check_step15_answer(item, generated, top_hits)
         overlay = build_agent_overlay_for_step15_prediction(prediction, top_hits, critic_flags)
@@ -834,12 +1080,44 @@ class Step15AgentRunner:
             critic_flags=["field_failed"],
         )
 
-    def retrieve(self, query_text: str) -> Step15RetrievalResult:
+    def retrieve(
+        self, query_text: str, *, layer_names: list[str] | None = None, source_types: list[str] | None = None,
+        schema_queries: list[str] | None = None,
+    ) -> Step15RetrievalResult:
+        try:
+            plan = constrain_layered_plan(self.layered_plan, layer_names=layer_names, source_types=source_types)
+        except ValueError as exc:
+            # A model-proposed invalid action must neither broaden retrieval nor
+            # discard the field's original prediction by failing the whole run.
+            reason = str(exc)
+            self.trace.record(None, "retrieval_constraint_rejected", {"reason": reason})
+            return Step15RetrievalResult(
+                reranked_hits=[], vector_hits=[], retrieval_mode=self.retrieval_plan,
+                metadata={"constraint_rejected": True, "reason": reason, "qdrant_query_calls": 0, "retrieval_attempts": 0},
+            )
+        if not plan:
+            return Step15RetrievalResult(reranked_hits=[], vector_hits=[], retrieval_mode=self.retrieval_plan,
+                                         metadata={"qdrant_query_calls": 0, "retrieval_attempts": 0})
+        query_calls_before = getattr(self.retriever, "qdrant_query_calls", None)
         attempts = self.chat_max_retries + 1
         for attempt in range(1, attempts + 1):
             try:
                 if self.retrieval_fn is not None:
                     result = self.retrieval_fn(query_text)
+                    self.validate_pinned_hits(result.reranked_hits)
+                    self.validate_pinned_hits(result.vector_hits)
+                    if layer_names is not None or source_types is not None:
+                        constraints = {
+                            "layered_plan": plan,
+                            "target_namespace": self.target_namespace,
+                            "global_namespace": self.global_namespace,
+                            "allowed_layers": self.allowed_layers,
+                        }
+                        result = replace(
+                            result,
+                            reranked_hits=filter_hits_by_plan(result.reranked_hits, **constraints),
+                            vector_hits=filter_hits_by_plan(result.vector_hits, **constraints),
+                        )
                 else:
                     if self.retriever is None or self.reranker is None:
                         raise RuntimeError("Step15AgentRunner requires retriever and reranker")
@@ -853,7 +1131,9 @@ class Step15AgentRunner:
                         retrieval_mode=self.retrieval_plan,
                         vector_top_k=self.vector_top_k,
                         rerank_top_n=self.rerank_top_n,
-                        layered_plan=self.layered_plan,
+                        layered_plan=plan,
+                        schema_first_enabled=self.schema_first_enabled,
+                        schema_queries=schema_queries,
                     )
             except Exception as exc:  # noqa: BLE001 - network retries wrap injected and real retrieval
                 retryable = is_retryable_service_error(exc) or is_json_parse_error(exc)
@@ -883,9 +1163,17 @@ class Step15AgentRunner:
                 if self.chat_retry_backoff_seconds:
                     sleep(self.chat_retry_backoff_seconds)
                 continue
+            self.validate_pinned_hits(result.reranked_hits)
+            self.validate_pinned_hits(result.vector_hits)
             if attempt > 1:
                 self.trace.record(None, "retrieval_retry_succeeded", {"attempt": attempt, "max_retries": self.chat_max_retries})
-            return result
+            query_calls_after = getattr(self.retriever, "qdrant_query_calls", None)
+            metadata = {**(result.metadata or {}), "retrieval_attempts": attempt}
+            if isinstance(query_calls_before, int) and isinstance(query_calls_after, int):
+                metadata["qdrant_query_calls"] = query_calls_after - query_calls_before
+            else:
+                metadata.setdefault("qdrant_query_calls", None)
+            return replace(result, metadata=metadata)
         raise RuntimeError("retrieval retry loop exited unexpectedly")
 
     def call_answer(self, **kwargs: Any) -> dict[str, Any]:
@@ -959,6 +1247,8 @@ class Step15AgentRunner:
                         operation = "step15_slot_decomposition"
                     elif call_kind == "field_binding":
                         operation = "step15_field_binding"
+                    elif call_kind == "sufficiency":
+                        operation = "step15_sufficiency"
                     endpoint, headers = model_gateway.request_options(
                         model_gateway.KIND_CHAT,
                         self.chat_endpoint,
@@ -1030,16 +1320,31 @@ class Step15AgentRunner:
         predictions: dict[str, FieldPrediction] = {}
         for record in read_jsonl(checkpoint):
             prediction = FieldPrediction.from_dict(record)
+            if prediction.field_id in predictions:
+                raise RuntimeError(f"cannot resume: duplicate prediction identity: {prediction.field_id}")
             predictions[prediction.field_id] = prediction
         return predictions
 
     def load_checkpoint_sidecars(self) -> None:
+        retrieval_checkpoint = self.out_dir / "retrieval_evidence.checkpoint.jsonl"
+        if retrieval_checkpoint.is_file():
+            for record in read_jsonl(retrieval_checkpoint):
+                field_id = str(record.get("field_id") or "")
+                hits = record.get("top_hits")
+                if not field_id or field_id in self.retrieval_evidence_by_field_id or not isinstance(hits, list) or any(not isinstance(hit, dict) for hit in hits):
+                    raise RuntimeError("cannot resume: malformed or duplicate retrieval authority")
+                self.retrieval_evidence_by_field_id[field_id] = hits
+                self.validate_pinned_hits(hits)
         if self.review_checkpoint_path().exists():
             self.review_items = read_jsonl(self.review_checkpoint_path())
         if self.eval_checkpoint_path().exists():
             self.eval_results = read_jsonl(self.eval_checkpoint_path())
         if self.overlay_checkpoint_path().exists():
             self.agent_overlays = [AgentOverlay.from_dict(record) for record in read_jsonl(self.overlay_checkpoint_path())]
+        if self.evidence_checkpoint_path().exists():
+            self.evidence_provenance_by_field_id = {
+                str(record["field_id"]): record for record in read_jsonl(self.evidence_checkpoint_path()) if record.get("field_id")
+            }
         self.trace.load_jsonl(self.trace_checkpoint_path())
 
     def write_checkpoint(
@@ -1051,8 +1356,13 @@ class Step15AgentRunner:
     ) -> None:
         predictions = ordered_predictions_for_items(items, predictions_by_field_id)
         overlays = ordered_overlays_for_predictions(predictions, overlays_by_field_id)
+        write_jsonl(self.out_dir / "retrieval_evidence.checkpoint.jsonl", [
+            {"field_id": prediction.field_id, "top_hits": self.retrieval_evidence_by_field_id.get(prediction.field_id, [])}
+            for prediction in predictions
+        ])
         write_jsonl(self.predictions_checkpoint_path(), [prediction.to_dict() for prediction in predictions])
         write_jsonl(self.overlay_checkpoint_path(), [overlay.to_dict() for overlay in overlays])
+        write_jsonl(self.evidence_checkpoint_path(), self.evidence_fields_for_predictions(predictions, overlays))
         if self.judge_enabled:
             write_jsonl(self.eval_checkpoint_path(), ordered_eval_results_for_items(items, self.eval_results))
         write_jsonl(self.review_checkpoint_path(), self.review_items)
@@ -1060,6 +1370,7 @@ class Step15AgentRunner:
         write_json(self.out_dir / "run_state.json", run_state)
 
     def attach_parent_payloads(self, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        self.validate_pinned_hits(hits)
         if not self.parent_payload_enabled:
             return hits
         return attach_parent_payloads(
@@ -1069,6 +1380,11 @@ class Step15AgentRunner:
             neighbor_window=self.config.retrieval.parent_payload_neighbor_window,
             include_raw_parent_text=self.config.retrieval.parent_payload_include_raw_parent_text,
         )
+
+    def validate_pinned_hits(self, hits: list[dict[str, Any]]) -> None:
+        from nested_doc_rag.retrieval.version_scope import validate_hits_in_index_scopes
+        validate_hits_in_index_scopes(hits, self.index_scopes, collection_name=self.collection_name,
+                                     namespaces=[self.target_namespace, self.global_namespace] if self.index_scopes is not None else None)
 
     def apply_grounding_overlay(
         self,
@@ -1303,6 +1619,12 @@ class Step15AgentRunner:
         )
 
     def write_outputs(self, predictions: list[FieldPrediction], overlays: list[AgentOverlay], run_state: dict[str, Any]) -> None:
+        authority_rows = [
+            {"field_id": prediction.field_id, "top_hits": self.retrieval_evidence_by_field_id.get(prediction.field_id, [])}
+            for prediction in predictions
+        ]
+        write_jsonl(self.out_dir / "retrieval_evidence.jsonl", authority_rows)
+        write_jsonl(self.out_dir / "retrieval_evidence.checkpoint.jsonl", authority_rows)
         predictions_path = self.out_dir / "predictions.jsonl"
         trace_path = self.out_dir / "trace.jsonl"
         review_items_path = self.out_dir / "review_items.jsonl"
@@ -1318,6 +1640,19 @@ class Step15AgentRunner:
         write_json(self.out_dir / "trace_summary.json", trace_summary)
         self.trace.write_markdown(self.out_dir / "trace.md", trace_summary)
         self.maybe_writeback(predictions, overlays)
+        audit_records = (
+            read_jsonl(self.out_dir / "writeback_audit.jsonl") if self.writeback_status == "completed" else []
+        )
+        # Custom writers may return field-level audits without writing a JSONL.
+        if not audit_records and self.writeback_status == "completed" and self.writeback_summary:
+            audit_records = list(self.writeback_summary.get("fields") or [])
+        evidence = finalize_evidence(
+            self.evidence_fields_for_predictions(predictions, overlays),
+            audit_records=audit_records,
+            writeback_status=self.writeback_status,
+        )
+        write_jsonl(self.out_dir / "evidence_provenance.jsonl", evidence["fields"])
+        write_jsonl(self.evidence_checkpoint_path(), evidence["fields"])
         if self.mas_controller is not None:
             self.mas_controller.write_optional_artifacts(self.out_dir)
         if self.config.grounding.write_grounding_trace and self.grounding_trace_records:
@@ -1342,10 +1677,29 @@ class Step15AgentRunner:
             judge_enabled=self.judge_enabled,
             writeback_enabled=self.writeback_enabled,
         )
+        manifest["evidence"] = evidence
+        manifest["writeback"]["config"] = asdict(self.config.writeback)
+        manifest["writeback"]["overwrite_all_cli"] = self.overwrite_all_cli
+        manifest["form_input"] = self.form_input_snapshot
+        manifest["index_scopes"] = self.index_scopes
+        manifest["artifacts"]["form_input_snapshot"] = "form_input_snapshot.json"
+        if self.index_scopes is not None:
+            manifest["artifacts"]["index_scopes"] = "index_scopes.json"
+        for name in ("form_items.jsonl", "form_parse_report.json"):
+            if (self.out_dir / name).is_file():
+                manifest["artifacts"][name.split(".")[0]] = name
+        manifest["artifacts"]["evidence_provenance"] = "evidence_provenance.jsonl"
+        manifest["artifacts"]["retrieval_evidence"] = "retrieval_evidence.jsonl"
         if (self.out_dir / "mas_trace.jsonl").exists():
             manifest["artifacts"]["mas_trace"] = "mas_trace.jsonl"
         if (self.out_dir / "agentscope_events.jsonl").exists():
             manifest["artifacts"]["agentscope_events"] = "agentscope_events.jsonl"
+        if (self.out_dir / "agentic_mas_trace.jsonl").exists():
+            manifest["artifacts"]["agentic_mas_trace"] = "agentic_mas_trace.jsonl"
+        if (self.out_dir / "agentic_round_states.jsonl").exists():
+            manifest["artifacts"]["agentic_round_states"] = "agentic_round_states.jsonl"
+        if (self.out_dir / "agentic_summary.json").exists():
+            manifest["artifacts"]["agentic_summary"] = "agentic_summary.json"
         if (self.out_dir / "grounding_trace.jsonl").exists():
             manifest["artifacts"]["grounding_trace"] = "grounding_trace.jsonl"
         if (self.out_dir / "slot_trace.jsonl").exists():
@@ -1374,6 +1728,9 @@ class Step15AgentRunner:
             self.writeback_status = "skipped: template file does not exist"
             return
 
+        for hits in self.retrieval_evidence_by_field_id.values():
+            self.validate_pinned_hits(hits)
+
         agent_review_items = list(self.review_items)
         overlay_by_field_id = {overlay.field_id: overlay for overlay in overlays}
         summary = self.writeback_fn(
@@ -1382,7 +1739,9 @@ class Step15AgentRunner:
             output_path=self.out_dir / "filled_form.xlsx",
             trace_by_field={prediction.field_id: f"{self.run_id}:{prediction.field_id}" for prediction in predictions},
             overlays_by_field_id=overlay_by_field_id,
+            retrieval_hits_by_field_id=self.retrieval_evidence_by_field_id,
             writeback_config=self.config.writeback,
+            overwrite_all_cli=self.overwrite_all_cli,
             run_id=self.run_id,
         )
         writeback_review_items = read_jsonl(self.out_dir / "review_items.jsonl")
@@ -1393,6 +1752,31 @@ class Step15AgentRunner:
 
     def predictions_checkpoint_path(self) -> Path:
         return self.out_dir / "predictions.checkpoint.jsonl"
+
+    def evidence_checkpoint_path(self) -> Path:
+        return self.out_dir / "evidence_provenance.checkpoint.jsonl"
+
+    def evidence_fields_for_predictions(
+        self, predictions: list[FieldPrediction], overlays: list[AgentOverlay]
+    ) -> list[dict[str, Any]]:
+        overlays_by_id = {overlay.field_id: overlay for overlay in overlays}
+        fields: list[dict[str, Any]] = []
+        for prediction in predictions:
+            field = self.evidence_provenance_by_field_id.get(prediction.field_id)
+            if field is None:
+                # Old checkpoints lack the original model references and hits.
+                # Never upgrade auto-enriched previews to verifiable quotes.
+                field = build_field_evidence(
+                    item=self.evidence_items_by_field_id.get(prediction.field_id, {}),
+                    prediction=prediction,
+                    generated={},
+                    top_hits=[],
+                    overlay=overlays_by_id.get(prediction.field_id),
+                    unavailable_reason="provenance_checkpoint_missing",
+                )
+                self.evidence_provenance_by_field_id[prediction.field_id] = field
+            fields.append(field)
+        return fields
 
     def trace_checkpoint_path(self) -> Path:
         return self.out_dir / "trace.checkpoint.jsonl"
@@ -1408,12 +1792,17 @@ class Step15AgentRunner:
 
     def run_metadata(self) -> dict[str, Any]:
         return {
+            "fields_total": (self.form_input_snapshot or {}).get("selected_field_count", 0),
+            "selected_field_count": (self.form_input_snapshot or {}).get("selected_field_count", 0),
+            "form_input_fingerprint": (self.form_input_snapshot or {}).get("input_fingerprint"),
             "engine": "step15_agent",
             "target_namespace": self.target_namespace,
             "global_namespace": self.global_namespace,
             "room_context": display_text(self.room_context),
             "retrieval_plan": self.retrieval_plan,
             "retrieval_fusion_mode": "dense",
+            "sufficiency_enabled": self.sufficiency_enabled,
+            "acquisition_contract": self.acquisition_contract(),
             "grounding_enabled": self.grounding_enabled,
             "field_binding_enabled": self.field_binding_enabled,
             "field_binding_agent_enabled": self.field_binding_agent_enabled,
@@ -1431,11 +1820,89 @@ class Step15AgentRunner:
             "chat_max_retries": self.chat_max_retries,
             "chat_retry_backoff_seconds": self.chat_retry_backoff_seconds,
             "prompt_version": self.prompt_version,
+            "agentic_prompt_version": self.agentic_prompt_version,
             "use_judge_cache": self.use_judge_cache,
             "judge_cache_path": str(self.judge_cache_path) if self.judge_cache_path else "",
             "judge_enabled": self.judge_enabled,
             "writeback_enabled": self.writeback_enabled,
         }
+
+
+def tag_acquisition_hits(hits: list[dict[str, Any]], retrieval_round: int, missing_facts: list[str]) -> list[dict[str, Any]]:
+    return [{**hit, "retrieval_round": retrieval_round, "triggered_by": list(missing_facts)} for hit in hits]
+
+
+def merge_acquisition_hits(primary: list[dict[str, Any]], supplement: list[dict[str, Any]], *, target_namespace: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Deduplicate identity; retain an observable veto for differing origins."""
+    merged: dict[str, dict[str, Any]] = {}
+    conflicts: list[dict[str, Any]] = []
+    for hit in [*primary, *supplement]:
+        evidence_id = str(hit.get("evidence_id") or hit.get("chunk_id") or "")
+        if not evidence_id:
+            continue
+        if evidence_id not in merged:
+            merged[evidence_id] = dict(hit)
+            continue
+        previous = merged[evidence_id]
+        resolved = resolve_evidence_refs([evidence_id], [previous, hit])
+        if resolved.errors:
+            conflicts.append({"code": "EV_REF_NOT_IN_RETRIEVAL", "chunk_id": evidence_id,
+                              "reason": "conflicting_or_invalid_acquisition_origins", "errors": resolved.errors,
+                              "origin_hits": [previous, hit]})
+    kind_order = {"structured_field": 0, "table_row": 1, "paragraph": 2, "document_chunk": 3, "document_intro": 4}
+    hits = sorted(merged.values(), key=lambda hit: (
+        0 if hit.get("namespace") == target_namespace else 1,
+        kind_order.get(str(hit.get("evidence_kind") or ""), 5),
+        int(hit.get("layer_priority") or 99), int(hit.get("retrieval_round") or 0),
+        int(hit.get("final_rank") or hit.get("rerank_rank") or hit.get("vector_rank") or 99),
+    ))
+    return hits, conflicts
+
+
+def attach_addressed_evidence(prediction: FieldPrediction, top_hits: list[dict[str, Any]]) -> FieldPrediction:
+    """Derive full references from the scoped retrieval pack, never answer JSON."""
+    resolution = resolve_evidence_refs(prediction.source_chunk_ids, top_hits)
+    errors = list(resolution.errors)
+    if prediction.answer_status == "answered" and not resolution.refs:
+        errors.append({"code": "EV_REF_MISSING_ADDRESS", "chunk_id": "", "reason": "answered_without_addressable_evidence"})
+    attachment_ids = {value for ref in resolution.refs for value in ref.attachment_ids}
+    for attachment_id in prediction.evidence_attachment_ids:
+        if attachment_id not in attachment_ids:
+            errors.append({"code": "EV_ATTACHMENT_NOT_FOUND", "chunk_id": "", "reason": "attachment_not_in_selected_evidence", "attachment_id": attachment_id})
+    validation = {**prediction.validation, "addressable_evidence": {
+        "resolvable": bool(resolution.refs) and not errors,
+        "resolved_count": len(resolution.refs), "errors": errors,
+    }}
+    return replace(prediction, evidence_refs=resolution.refs, validation=validation)
+
+
+def apply_addressed_evidence_gate(prediction: FieldPrediction, overlay: AgentOverlay) -> AgentOverlay:
+    diagnostics = prediction.validation.get("addressable_evidence") or {}
+    errors = diagnostics.get("errors") or []
+    if prediction.answer_status != "answered" or diagnostics.get("resolvable"):
+        return overlay
+    flags = dedupe([*overlay.critic_flags, *(str(error["code"]) for error in errors), "addressable_evidence_required"])
+    return replace(
+        overlay, critic_flags=flags, review_required=True, writeback_allowed=False,
+        risk_level="high", suggested_status=overlay.suggested_status or "partial_clue",
+        suggested_answer_value=overlay.suggested_answer_value or "证据无法定位至已检索原文；请人工复核。",
+        reasons=dedupe([*overlay.reasons, "addressable_evidence_required", *(str(error["code"]) for error in errors)]),
+    )
+
+
+def apply_sufficiency_gate(prediction: FieldPrediction, overlay: AgentOverlay, hits: list[dict[str, Any]]) -> AgentOverlay:
+    if prediction.answer_status != "answered":
+        return overlay
+    acquisition = prediction.validation.get("acquisition") or {}
+    final = acquisition.get("final_sufficiency") or {}
+    check = normalize_sufficiency({key: final.get(key) for key in ("sufficient", "missing_facts", "supporting_evidence_ids", "reason")}, hits)
+    if check.sufficient and not acquisition.get("conflicting_evidence"):
+        return overlay
+    return replace(overlay, writeback_allowed=False, review_required=True, risk_level="high",
+                   critic_flags=dedupe([*overlay.critic_flags, "evidence_insufficient"]),
+                   reasons=dedupe([*overlay.reasons, "evidence_insufficient"]),
+                   suggested_status=overlay.suggested_status or "partial_clue",
+                   suggested_answer_value=overlay.suggested_answer_value or "必要事实尚缺证据；请人工复核。")
 
 
 def convert_step15_generated_to_prediction(
@@ -1465,7 +1932,7 @@ def convert_step15_generated_to_prediction(
         "source_ids_valid": source_ids_valid,
         "step15_generated": generated,
     }
-    return FieldPrediction(
+    return attach_addressed_evidence(FieldPrediction(
         field_id=field_id_for_item(item),
         row_index=int(item.get("row_index") or 0),
         target_cell=item.get("target_cell"),
@@ -1479,7 +1946,7 @@ def convert_step15_generated_to_prediction(
         reference_snippets=reference_snippets(reference_source_documents, top_hits),
         validation=validation,
         method_name=method_name,
-    )
+    ), top_hits)
 
 
 def attach_slot_validation(
@@ -1623,6 +2090,7 @@ def make_step15_review_item(
         "answer_value": prediction.answer_value,
         "confidence": prediction.confidence,
         "source_chunk_ids": prediction.source_chunk_ids,
+        "evidence_refs": [ref.to_dict() for ref in prediction.evidence_refs],
         "reference_source_documents": prediction.reference_source_documents,
         "critic_flags": overlay.critic_flags,
         "agent_overlay": overlay.to_dict(),
@@ -1637,10 +2105,10 @@ def make_step15_review_item(
     }
 
 
-def parse_rows_arg(rows_text: str | None, *, step12_dir: Path) -> list[int]:
+def parse_rows_arg(rows_text: str | None, *, step12_dir: Path | None = None) -> list[int] | None:
     text = (rows_text or "").strip()
     if not text or text.lower() == "all":
-        return all_base_cloud_rows(step12_dir)
+        return None
     rows: list[int] = []
     for part in text.split(","):
         token = part.strip()
@@ -1655,7 +2123,9 @@ def parse_rows_arg(rows_text: str | None, *, step12_dir: Path) -> list[int]:
             rows.extend(range(start, end + 1))
         else:
             rows.append(int(token))
-    return rows
+    if not rows or any(row < 1 for row in rows):
+        raise ValueError("rows must contain positive Excel row numbers")
+    return list(dict.fromkeys(rows))
 
 
 def validate_step15_agent_config(
@@ -1741,35 +2211,15 @@ def normalize_reference_source_documents(generated: dict[str, Any], top_hits: li
         if not isinstance(item, dict):
             continue
         chunk_id = str(item.get("chunk_id") or "")
-        hit = hits.get(chunk_id, {})
-        source = hit_source(hit)
-        output.append(
-            {
-                "chunk_id": chunk_id,
-                "namespace": item.get("namespace") or hit.get("namespace"),
-                "source_type": item.get("source_type") or hit.get("source_type"),
-                "corpus_layer": item.get("corpus_layer") or hit.get("corpus_layer"),
-                "retrieval_layer": item.get("retrieval_layer") or hit.get("retrieval_layer"),
-                "source_anchor": item.get("source_anchor") or item.get("anchor") or hit.get("anchor"),
-                "file_name": item.get("file_name") or hit.get("file_name"),
-                "relative_path": item.get("relative_path") or hit.get("relative_path") or source.get("relative_path"),
-                "anchor": item.get("anchor") or hit.get("anchor"),
-                "document_id": item.get("document_id") or source.get("document_id") or source.get("file_id") or hit.get("document_id"),
-                "object_key": item.get("object_key") or source.get("object_key") or hit.get("object_key"),
-                "object_version_id": item.get("object_version_id") or source.get("object_version_id") or "",
-                "qdrant_point_id": item.get("qdrant_point_id") or hit.get("point_id") or hit.get("id"),
-                "page": item.get("page") or source.get("page"),
-                "sheet_name": item.get("sheet_name") or source.get("sheet_name"),
-                "cell": item.get("cell") or source.get("cell") or source.get("cell_range"),
-                "bbox": item.get("bbox") or source.get("bbox") or [],
-                "caption": item.get("caption") or source.get("caption") or "",
-                "image_object_key": item.get("image_object_key") or source.get("image_object_key") or "",
-                "proof_attachment_ids": item.get("proof_attachment_ids") or hit.get("proof_attachment_ids") or source.get("proof_attachment_ids") or [],
-                "proof_attachments": item.get("proof_attachments") or hit.get("proof_attachments") or source.get("proof_attachments") or [],
-                "reason": item.get("reason") or "",
-                "text_preview": item.get("text_preview") or display_text(hit.get("raw_text") or hit.get("text_for_embedding"), 180),
-            }
-        )
+        hit = hits.get(chunk_id)
+        reference = source_reference(hit, chunk_id=chunk_id)
+        if hit is not None:
+            address = EvidenceAddress.from_payload(hit).to_dict()
+            reference.update({key: value for key, value in address.items() if value is not None})
+            reference["cell"] = address["cell_range"] or reference["cell"]
+        # Only selection, quote and explanation originate from the model.
+        reference.update(reason=str(item.get("reason") or ""), quote=str(item.get("quote") or ""))
+        output.append(reference)
     return output
 
 
@@ -1949,6 +2399,9 @@ def make_eval_result(
     room_context: str | None,
 ) -> dict[str, Any]:
     return {
+        "field_id": field_id_for_item(item),
+        "file_name": item.get("file_name"),
+        "sheet_name": item.get("sheet_name"),
         "row_index": item.get("row_index"),
         "target_cell": item.get("target_cell"),
         "category_path": item.get("category_path") or [],
@@ -2015,6 +2468,11 @@ def build_trace_summary(
         if event.step == "slot_consistency_checked"
         for flag in event.payload.get("flags") or []
     )
+    field_failed_errors = Counter(
+        summarize_trace_error(event.payload.get("error"))
+        for event in events
+        if event.step == "field_failed" and event.payload.get("error")
+    )
     return {
         "total_fields": len(predictions),
         "answered_count": status_counts.get("answered", 0),
@@ -2028,6 +2486,11 @@ def build_trace_summary(
         "avg_retrieval_latency_ms": round(sum(retrieval_latencies) / len(retrieval_latencies), 3) if retrieval_latencies else 0,
         "avg_generation_latency_ms": round(sum(generation_latencies) / len(generation_latencies), 3) if generation_latencies else 0,
         "failed_count": sum(1 for event in events if event.step == "field_failed"),
+        "field_failed_error_counts": dict(field_failed_errors.most_common(10)),
+        "field_failed_error_examples": [
+            {"error": error, "count": count}
+            for error, count in field_failed_errors.most_common(10)
+        ],
         "resumed_count": sum(1 for event in events if event.step == "resume_started"),
         "skipped_completed_count": sum(int(event.payload.get("skipped_completed_count") or 0) for event in events if event.step == "resume_started"),
         "evidence_strength_distribution": dict(evidence_strengths),
@@ -2036,6 +2499,32 @@ def build_trace_summary(
         "field_binding_agent_flag_counts": dict(field_binding_agent_flags),
         "slot_consistency_distribution": dict(slot_checks),
         "slot_consistency_flag_counts": dict(slot_flags),
+        "retrieval_metrics": build_acquisition_metrics(predictions),
+    }
+
+
+def summarize_trace_error(value: Any, limit: int = 500) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) > limit:
+        return text[: limit - 3] + "..."
+    return text
+
+
+def build_acquisition_metrics(predictions: list[FieldPrediction]) -> dict[str, Any]:
+    measurements = [prediction.validation["acquisition"] for prediction in predictions if isinstance(prediction.validation.get("acquisition"), dict)]
+    measured = len(measurements)
+    rounds = sum(int(record.get("acquisition_rounds") or 0) for record in measurements)
+    supplemented = sum(int(record.get("acquisition_rounds") or 0) == 2 for record in measurements)
+    calls = [record.get("qdrant_query_calls") for record in measurements]
+    observed_calls = sum(calls) if measured and all(type(value) is int for value in calls) else None
+    return {
+        "total_fields": len(predictions), "measured_fields": measured,
+        "acquisition_rounds": rounds if measured else None,
+        "average_acquisition_rounds_per_measured_field": rounds / measured if measured else None,
+        "second_round_trigger_rate": supplemented / measured if measured else None,
+        "qdrant_query_calls": observed_calls,
+        "average_qdrant_queries_per_measured_field": observed_calls / measured if observed_calls is not None else None,
+        "evidence_gain": sum(int(entry.get("evidence_gain") or 0) for record in measurements for entry in record.get("rounds") or []) if measured else None,
     }
 
 
@@ -2060,6 +2549,7 @@ def build_summary_json(
         "raw_status_counts": dict(Counter(prediction.answer_status for prediction in predictions)),
         "overlay_counts": build_overlay_counts(overlays),
         "trace_summary": trace_summary,
+        "retrieval_metrics": trace_summary.get("retrieval_metrics", {}),
         "field_binding_distribution": trace_summary.get("field_binding_distribution", {}),
         "field_binding_agent_distribution": trace_summary.get("field_binding_agent_distribution", {}),
         "field_binding_agent_flag_counts": trace_summary.get("field_binding_agent_flag_counts", {}),
@@ -2119,7 +2609,7 @@ def build_run_manifest(
         "fields": writeback_fields,
     }
     return {
-        "schema_version": "1.1",
+        "schema_version": "1.3",
         "run_id": summary.get("run_id"),
         "created_at": run_state.get("started_at"),
         "finished_at": run_state.get("finished_at"),
@@ -2238,7 +2728,7 @@ def ordered_predictions_for_items(items: list[dict[str, Any]], predictions_by_fi
         prediction = by_key.get(item_key(item)) or by_key.get(f"field:{field_id_for_item(item)}")
         if prediction is not None and prediction not in ordered:
             ordered.append(prediction)
-    return sorted(ordered, key=lambda prediction: (prediction.row_index, prediction.field_id))
+    return ordered
 
 
 def rows_label_for_items(items: list[dict[str, Any]]) -> str:
@@ -2327,13 +2817,15 @@ def stable_hash(value: Any) -> str:
 
 
 def ordered_eval_results_for_items(items: list[dict[str, Any]], eval_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_row = {int(result.get("row_index") or 0): result for result in eval_results}
-    return [by_row[int(item.get("row_index") or 0)] for item in items if int(item.get("row_index") or 0) in by_row]
+    by_field = {str(result["field_id"]): result for result in eval_results if result.get("field_id")}
+    legacy_by_row = {int(result.get("row_index") or 0): result for result in eval_results if not result.get("field_id")}
+    return [result for item in items if (result := by_field.get(field_id_for_item(item)) or legacy_by_row.get(int(item.get("row_index") or 0))) is not None]
 
 
 def ordered_eval_results_for_items_by_predictions(predictions: list[FieldPrediction], eval_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_row = {int(result.get("row_index") or 0): result for result in eval_results}
-    return [by_row[prediction.row_index] for prediction in predictions if prediction.row_index in by_row]
+    by_field = {str(result["field_id"]): result for result in eval_results if result.get("field_id")}
+    legacy_by_row = {int(result.get("row_index") or 0): result for result in eval_results if not result.get("field_id")}
+    return [result for prediction in predictions if (result := by_field.get(prediction.field_id) or legacy_by_row.get(prediction.row_index)) is not None]
 
 
 def count_layers(hits: list[dict[str, Any]]) -> dict[str, int]:

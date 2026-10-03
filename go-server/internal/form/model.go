@@ -3,6 +3,7 @@ package form
 import (
 	"time"
 
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/knowledge"
 	"github.com/google/uuid"
 )
 
@@ -22,8 +23,13 @@ type FillRun struct {
 	JobID       *uuid.UUID `json:"job_id,omitempty"`
 	Name        string     `json:"name"`
 
-	KnowledgeBaseID *uuid.UUID `json:"knowledge_base_id,omitempty"`
-	IndexVersionID  *uuid.UUID `json:"index_version_id,omitempty"`
+	KnowledgeBaseID          *uuid.UUID            `json:"knowledge_base_id,omitempty"`
+	IndexVersionID           *uuid.UUID            `json:"index_version_id,omitempty"`
+	TargetScope              *knowledge.IndexScope `json:"target_scope,omitempty"`
+	GlobalScope              *knowledge.IndexScope `json:"global_scope,omitempty"`
+	TargetActivationRevision *int64                `json:"target_activation_revision,omitempty"`
+	GlobalActivationRevision *int64                `json:"global_activation_revision,omitempty"`
+	TemplatePin              *TemplatePin          `json:"template_pin,omitempty"`
 
 	TargetNamespace string `json:"target_namespace"`
 	GlobalNamespace string `json:"global_namespace"`
@@ -62,6 +68,16 @@ type FillRun struct {
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+// TemplatePin identifies the immutable input object chosen when a run is created.
+type TemplatePin struct {
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+	FileID      uuid.UUID `json:"file_id"`
+	ObjectKey   string    `json:"object_key"`
+	SHA256      string    `json:"sha256"`
+	FileSize    int64     `json:"file_size"`
+	Filename    string    `json:"filename"`
 }
 
 type FillRunCompletionUpdate struct {

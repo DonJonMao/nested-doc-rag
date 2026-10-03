@@ -1,0 +1,47 @@
+{
+  "phase": "3B",
+  "python": {
+    "tests": 624,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "expected_legacy_warnings": 4,
+    "elapsed_seconds": 86.71
+  },
+  "schema_related_cases_from_full_junit": {
+    "field_schema": 24,
+    "schema_qdrant": 17,
+    "schema_layered": 5,
+    "schema_first_real_cli_integration": 6
+  },
+  "go_exit_code": 0,
+  "ruff_exit_code": 0,
+  "diff_check_exit_code": 0,
+  "schema_first_enabled_by_default": false,
+  "field_schema_contract_version": "field-schema-v1",
+  "external_model_calls": 0,
+  "localhost_model_substitute": true,
+  "controlled_real_qdrant_vectors": true,
+  "real_model_semantic_acceptance": "not executed",
+  "a4_quality_comparison": "not executed",
+  "added_real_cli_cases": 6,
+  "maximum_sufficiency_acquisition_rounds": 2,
+  "unretried_single_slot_default_plan_verified_counts": {
+    "sufficient_primary": {
+      "acquisition_rounds": 1,
+      "actual_schema_qdrant_query_calls": 1,
+      "actual_value_qdrant_query_calls": 2,
+      "actual_total_qdrant_query_calls": 3
+    },
+    "primary_and_supplement": {
+      "acquisition_rounds": 2,
+      "actual_schema_qdrant_query_calls": 3,
+      "actual_value_qdrant_query_calls": 7,
+      "actual_total_qdrant_query_calls": 10
+    }
+  },
+  "original_workspace_files_verified": 103,
+  "original_workspace_changed_files": [],
+  "artifacts": "artifacts/vnext/phase3b",
+  "fresh_docker_e2e_count": 0
+}

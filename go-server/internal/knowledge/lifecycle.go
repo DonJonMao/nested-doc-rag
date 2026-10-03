@@ -15,17 +15,34 @@ type IngestionLifecycleAdapter struct {
 	Bases      KnowledgeBaseRepo
 	Documents  KnowledgeDocumentRepo
 	Logger     *zap.Logger
+	buildStore *PGXBuildStore
+}
+
+func (l *IngestionLifecycleAdapter) SetBuildStore(store *PGXBuildStore) { l.buildStore = store }
+
+func (l *IngestionLifecycleAdapter) ReadPublishedIngestion(ctx context.Context, id uuid.UUID) (*pythonpkg.IngestionResult, bool, error) {
+	if l == nil || l.buildStore == nil {
+		return nil, false, buildConflict("versioned publication store is not configured")
+	}
+	return l.buildStore.ReadPublishedIngestion(ctx, id)
 }
 
 func NewIngestionLifecycleAdapter(ingestions IngestionJobRepo, versions KnowledgeIndexVersionRepo, bases KnowledgeBaseRepo, documents KnowledgeDocumentRepo, logger *zap.Logger) *IngestionLifecycleAdapter {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &IngestionLifecycleAdapter{Ingestions: ingestions, Versions: versions, Bases: bases, Documents: documents, Logger: logger}
+	l := &IngestionLifecycleAdapter{Ingestions: ingestions, Versions: versions, Bases: bases, Documents: documents, Logger: logger}
+	if repo, ok := ingestions.(*PGXIngestionJobRepo); ok {
+		l.buildStore = NewPGXBuildStore(repo.pool)
+	}
+	return l
 }
 
 func (l *IngestionLifecycleAdapter) MarkIngestionRunning(ctx context.Context, ingestionJobID uuid.UUID, jobID uuid.UUID) error {
 	_ = jobID
+	if l != nil && l.buildStore != nil {
+		return l.buildStore.MarkRunning(ctx, ingestionJobID)
+	}
 	if l == nil || l.Ingestions == nil || ingestionJobID == uuid.Nil {
 		return nil
 	}
@@ -33,18 +50,22 @@ func (l *IngestionLifecycleAdapter) MarkIngestionRunning(ctx context.Context, in
 	if err := l.Ingestions.MarkRunning(ctx, ingestionJobID, startedAt); err != nil {
 		return err
 	}
-	if ingestion, err := l.Ingestions.GetByID(ctx, ingestionJobID); err == nil {
-		if l.Bases != nil {
-			_ = l.Bases.UpdateStatus(ctx, ingestion.KnowledgeBaseID, KnowledgeBaseStatusBuilding)
-		}
-		if l.Documents != nil {
-			l.markDocuments(ctx, ingestion.KnowledgeBaseID, KnowledgeDocumentStatusIndexing, "")
+	ingestion, err := l.Ingestions.GetByID(ctx, ingestionJobID)
+	if err != nil {
+		return err
+	}
+	if l.Bases != nil {
+		if err := l.Bases.UpdateStatus(ctx, ingestion.KnowledgeBaseID, KnowledgeBaseStatusBuilding); err != nil {
+			return err
 		}
 	}
-	return nil
+	return l.markDocuments(ctx, ingestion.KnowledgeBaseID, KnowledgeDocumentStatusIndexing, "")
 }
 
 func (l *IngestionLifecycleAdapter) MarkIngestionSucceeded(ctx context.Context, ingestionJobID uuid.UUID, result *pythonpkg.IngestionResult) error {
+	if l != nil && l.buildStore != nil {
+		return l.buildStore.CompleteBuild(ctx, ingestionJobID, result)
+	}
 	if l == nil || l.Ingestions == nil || ingestionJobID == uuid.Nil {
 		return nil
 	}
@@ -58,9 +79,11 @@ func (l *IngestionLifecycleAdapter) MarkIngestionSucceeded(ctx context.Context, 
 	}
 	documentCount := ingestion.DocumentCount
 	if documentCount == 0 && l.Documents != nil {
-		if docs, err := l.Documents.ListActiveByKnowledgeBase(ctx, ingestion.KnowledgeBaseID); err == nil {
-			documentCount = len(docs)
+		docs, err := l.Documents.ListActiveByKnowledgeBase(ctx, ingestion.KnowledgeBaseID)
+		if err != nil {
+			return err
 		}
+		documentCount = len(docs)
 	}
 	artifactDir := ""
 	manifestPath := ""
@@ -72,18 +95,23 @@ func (l *IngestionLifecycleAdapter) MarkIngestionSucceeded(ctx context.Context, 
 		if err := l.Versions.MarkReady(ctx, *ingestion.IndexVersionID, artifactDir, manifestPath, documentCount, 0, finishedAt); err != nil {
 			return err
 		}
-		_ = l.Versions.ArchiveOldVersions(ctx, ingestion.KnowledgeBaseID, *ingestion.IndexVersionID)
 	}
 	if l.Bases != nil && ingestion.IndexVersionID != nil {
 		if err := l.Bases.UpdateCurrentIndexVersion(ctx, ingestion.KnowledgeBaseID, *ingestion.IndexVersionID); err != nil {
 			return err
 		}
 	}
-	l.markDocuments(ctx, ingestion.KnowledgeBaseID, KnowledgeDocumentStatusIndexed, "")
-	return nil
+	return l.markDocuments(ctx, ingestion.KnowledgeBaseID, KnowledgeDocumentStatusIndexed, "")
 }
 
 func (l *IngestionLifecycleAdapter) MarkIngestionFailed(ctx context.Context, ingestionJobID uuid.UUID, err error) error {
+	if l != nil && l.buildStore != nil {
+		message := ""
+		if err != nil {
+			message = err.Error()
+		}
+		return l.buildStore.FailBuild(ctx, ingestionJobID, message, false)
+	}
 	if l == nil || l.Ingestions == nil || ingestionJobID == uuid.Nil {
 		return nil
 	}
@@ -100,16 +128,22 @@ func (l *IngestionLifecycleAdapter) MarkIngestionFailed(ctx context.Context, ing
 		return markErr
 	}
 	if l.Versions != nil && ingestion.IndexVersionID != nil {
-		_ = l.Versions.MarkFailed(ctx, *ingestion.IndexVersionID, errMsg, failedAt)
+		if markErr := l.Versions.MarkFailed(ctx, *ingestion.IndexVersionID, errMsg, failedAt); markErr != nil {
+			return markErr
+		}
 	}
 	if l.Bases != nil {
-		_ = l.Bases.UpdateStatus(ctx, ingestion.KnowledgeBaseID, KnowledgeBaseStatusFailed)
+		if markErr := l.Bases.UpdateStatus(ctx, ingestion.KnowledgeBaseID, KnowledgeBaseStatusFailed); markErr != nil {
+			return markErr
+		}
 	}
-	l.markDocuments(ctx, ingestion.KnowledgeBaseID, KnowledgeDocumentStatusUploaded, "")
-	return nil
+	return l.markDocuments(ctx, ingestion.KnowledgeBaseID, KnowledgeDocumentStatusUploaded, "")
 }
 
 func (l *IngestionLifecycleAdapter) MarkIngestionCanceled(ctx context.Context, ingestionJobID uuid.UUID) error {
+	if l != nil && l.buildStore != nil {
+		return l.buildStore.FailBuild(ctx, ingestionJobID, "canceled", true)
+	}
 	if l == nil || l.Ingestions == nil || ingestionJobID == uuid.Nil {
 		return nil
 	}
@@ -122,27 +156,30 @@ func (l *IngestionLifecycleAdapter) MarkIngestionCanceled(ctx context.Context, i
 		return err
 	}
 	if l.Versions != nil && ingestion.IndexVersionID != nil {
-		_ = l.Versions.MarkFailed(ctx, *ingestion.IndexVersionID, "canceled", finishedAt)
+		if err := l.Versions.MarkFailed(ctx, *ingestion.IndexVersionID, "canceled", finishedAt); err != nil {
+			return err
+		}
 	}
 	if l.Bases != nil {
-		_ = l.Bases.UpdateStatus(ctx, ingestion.KnowledgeBaseID, KnowledgeBaseStatusStale)
+		if err := l.Bases.UpdateStatus(ctx, ingestion.KnowledgeBaseID, KnowledgeBaseStatusStale); err != nil {
+			return err
+		}
 	}
-	l.markDocuments(ctx, ingestion.KnowledgeBaseID, KnowledgeDocumentStatusUploaded, "")
-	return nil
+	return l.markDocuments(ctx, ingestion.KnowledgeBaseID, KnowledgeDocumentStatusUploaded, "")
 }
 
-func (l *IngestionLifecycleAdapter) markDocuments(ctx context.Context, kbID uuid.UUID, status string, errMsg string) {
+func (l *IngestionLifecycleAdapter) markDocuments(ctx context.Context, kbID uuid.UUID, status string, errMsg string) error {
 	if l == nil || l.Documents == nil || kbID == uuid.Nil {
-		return
+		return nil
 	}
 	docs, err := l.Documents.ListActiveByKnowledgeBase(ctx, kbID)
 	if err != nil {
-		l.Logger.Warn("list knowledge documents for lifecycle failed", zap.String("knowledge_base_id", kbID.String()), zap.Error(err))
-		return
+		return err
 	}
 	for _, doc := range docs {
 		if err := l.Documents.MarkStatus(ctx, doc.ID, status, errMsg); err != nil {
-			l.Logger.Warn("mark knowledge document status failed", zap.String("document_id", doc.ID.String()), zap.String("status", status), zap.Error(err))
+			return err
 		}
 	}
+	return nil
 }

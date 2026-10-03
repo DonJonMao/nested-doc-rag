@@ -17,6 +17,7 @@ from nested_doc_rag.artifacts import validate_step15_artifacts
 from nested_doc_rag.cli import build_parser, resolve_step15_retrieval_plan
 from nested_doc_rag.config import load_app_config
 from nested_doc_rag.evaluation.step15_engine import Step15RetrievalResult
+from nested_doc_rag.form.input_snapshot import build_form_input_snapshot, persist_form_input_snapshot
 from nested_doc_rag.io import read_jsonl, write_jsonl
 from nested_doc_rag.schemas.eval import FieldPrediction
 
@@ -132,7 +133,7 @@ def test_risky_answered_overlay_blocks_writeback_without_mutating() -> None:
     assert "risky_answered_requires_review" in overlay.reasons
 
 
-def test_default_mas_applies_grounding_field_binding_gate(tmp_path: Path) -> None:
+def test_equivalent_mas_applies_grounding_field_binding_gate(tmp_path: Path) -> None:
     runner = make_runner(
         tmp_path,
         answer_caller=oil_mode_answer_caller,
@@ -212,7 +213,7 @@ def test_predictions_json_is_raw(tmp_path: Path) -> None:
     assert agent_view[0]["agent_overlay"]["suggested_status"] == "partial_clue"
 
 
-def test_dense_default_artifact_contract_unchanged(tmp_path: Path) -> None:
+def test_legacy_dense_artifact_contract_unchanged(tmp_path: Path) -> None:
     runner = make_runner(tmp_path, answer_caller=answered_answer_caller)
 
     runner.run([make_item(4)])
@@ -742,8 +743,10 @@ def test_resume_skips_completed_rows(tmp_path: Path) -> None:
         method_name="step15_agent",
     )
     write_jsonl(tmp_path / "predictions.checkpoint.jsonl", [completed.to_dict()])
+    write_jsonl(tmp_path / "retrieval_evidence.checkpoint.jsonl", [{"field_id": completed.field_id, "top_hits": []}])
     calls: list[str] = []
     runner = make_runner(tmp_path, answer_caller=answered_answer_caller, retrieval_fn=recording_retrieval(calls), resume=True)
+    persist_form_input_snapshot(tmp_path, build_form_input_snapshot([make_item(4), make_item(5)], target_namespace="xixian_4", global_namespace="global", room_context="西咸4号楼 301机房", acquisition_contract=runner.acquisition_contract()), resume=False)
 
     predictions = runner.run([make_item(4), make_item(5)])
 
@@ -1106,7 +1109,16 @@ def make_runner(
     parent_payload_enabled: bool | None = None,
     config_overrides: dict[str, Any] | None = None,
 ) -> Step15AgentRunner:
-    config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml", cli_overrides=config_overrides)
+    overrides: dict[str, Any] = {
+        "agentscope": {"enabled": True, "mode": "equivalent_mas"},
+        "retrieval": {"sufficiency_enabled": False},
+    }
+    for section, values in (config_overrides or {}).items():
+        if isinstance(values, dict) and isinstance(overrides.get(section), dict):
+            overrides[section].update(values)
+        else:
+            overrides[section] = values
+    config = load_app_config(project_root=tmp_path, default_config=tmp_path / "missing.yaml", cli_overrides=overrides)
     return Step15AgentRunner(
         config=config,
         target_namespace="xixian_4",
@@ -1172,6 +1184,9 @@ def make_hits() -> list[dict[str, Any]]:
             "rerank_score": 0.92,
             "file_name": "main.xlsx",
             "anchor": "row 12",
+            "sheet_name": "Sheet1",
+            "row_index": 12,
+            "raw_source_text": "市电进线情况：2路市电，来自同一变电站。",
             "raw_text": "市电进线情况：2路市电，来自同一变电站。",
             "text_for_embedding": "市电进线情况 2路市电",
             "proof_attachment_ids": ["att_1"],
@@ -1186,6 +1201,8 @@ def make_hits() -> list[dict[str, Any]]:
             "rerank_score": 0.65,
             "file_name": "intro.docx",
             "anchor": "P3",
+            "paragraph_index": 3,
+            "raw_source_text": "园区供电有双路市电规划。",
             "raw_text": "园区供电有双路市电规划。",
             "text_for_embedding": "园区供电 双路市电",
         },
@@ -1228,6 +1245,8 @@ def fake_retrieval_planned_cabinet_count(query: str) -> Step15RetrievalResult:
             "column_header": "规划数量",
             "unit": "台",
             "anchor": "row 31",
+            "row_index": 31,
+            "raw_source_text": "规划资源 / 机柜 / 规划数量：20台。",
             "raw_text": "规划资源 / 机柜 / 规划数量：20台。",
             "text_for_embedding": "规划资源 机柜 规划数量 20台",
         }
@@ -1253,6 +1272,8 @@ def fake_retrieval_built_cabinet_count(query: str) -> Step15RetrievalResult:
             "column_header": "已建设数量",
             "unit": "台",
             "anchor": "row 31",
+            "row_index": 31,
+            "raw_source_text": "现网资源 / 机柜 / 已建设数量：12台。",
             "raw_text": "现网资源 / 机柜 / 已建设数量：12台。",
             "text_for_embedding": "现网资源 机柜 已建设数量 12台",
         }
@@ -1276,6 +1297,8 @@ def fake_retrieval_ups_single_mode(query: str) -> Step15RetrievalResult:
             "row_header": "IT-UPS、动力-UPS是否为并机系统",
             "column_header": "现状",
             "anchor": "row 39",
+            "row_index": 39,
+            "raw_source_text": "IT-UPS、动力-UPS是否为并机系统：否，全部为单机系统。",
             "raw_text": "IT-UPS、动力-UPS是否为并机系统：否，全部为单机系统。",
             "text_for_embedding": "IT-UPS 动力-UPS 是否为并机系统 否 全部为单机系统",
         }
@@ -1298,6 +1321,9 @@ def fake_retrieval_chiller_combo(query: str) -> Step15RetrievalResult:
             "row_header": "冷水机组配置",
             "column_header": "类型及冗余",
             "anchor": "row 53",
+            "sheet_name": "Sheet1",
+            "row_index": 53,
+            "raw_source_text": "冷水机组配置：10kV高压离心式冷水机组，系统按N+1冗余配置。",
             "raw_text": "冷水机组配置：10kV高压离心式冷水机组，系统按N+1冗余配置。",
             "text_for_embedding": "冷水机组 配置 10kV 高压 离心式 N+1 冗余",
         }
@@ -1320,6 +1346,9 @@ def fake_retrieval_chiller_missing_redundancy(query: str) -> Step15RetrievalResu
             "row_header": "冷水机组配置",
             "column_header": "类型",
             "anchor": "row 53",
+            "sheet_name": "Sheet1",
+            "row_index": 53,
+            "raw_source_text": "冷水机组配置：10kV高压离心式冷水机组。",
             "raw_text": "冷水机组配置：10kV高压离心式冷水机组。",
             "text_for_embedding": "冷水机组 配置 10kV 高压 离心式",
         }

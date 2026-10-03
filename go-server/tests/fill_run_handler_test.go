@@ -107,7 +107,7 @@ func TestFillRunHandlerCreateGetListCancel(t *testing.T) {
 	handler := formpkg.NewHandler(&fakeFormUseCase{}, runs)
 	actorCtx := auth.ContextWithPrincipal(context.Background(), auth.Principal{UserID: uuid.New()})
 
-	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/fill-runs", strings.NewReader(`{"workspace_id":"`+workspaceID.String()+`","form_file_id":"`+uuid.New().String()+`","target_namespace":"target"}`)).WithContext(actorCtx)
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/fill-runs", strings.NewReader(`{"workspace_id":"`+workspaceID.String()+`","form_file_id":"`+uuid.New().String()+`","target_namespace":"target","global_namespace":"global"}`)).WithContext(actorCtx)
 	createRec := httptest.NewRecorder()
 	handler.CreateFillRun(createRec, createReq)
 	require.Equal(t, http.StatusOK, createRec.Code)
@@ -208,7 +208,11 @@ func (f *fakeFillRunUseCase) CreateFillRun(ctx context.Context, req formpkg.Crea
 }
 
 func (f *fakeFillRunUseCase) CreateSimpleFillRun(ctx context.Context, req formpkg.CreateSimpleFillRunRequest, actor auth.Principal) (*formpkg.FillRun, error) {
-	f.created = append(f.created, formpkg.CreateFillRunRequest{WorkspaceID: req.WorkspaceID, FormFileID: req.FormFileID, Name: req.Name, KnowledgeBaseID: &req.KnowledgeBaseID, RoomContext: req.RoomContext})
+	created := formpkg.CreateFillRunRequest{WorkspaceID: req.WorkspaceID, FormFileID: req.FormFileID, Name: req.Name, KnowledgeBaseID: &req.KnowledgeBaseID, GlobalNamespace: req.GlobalNamespace, RoomContext: req.RoomContext}
+	if req.GlobalKnowledgeBaseID != uuid.Nil {
+		created.GlobalKnowledgeBaseID = &req.GlobalKnowledgeBaseID
+	}
+	f.created = append(f.created, created)
 	return f.run, f.err
 }
 

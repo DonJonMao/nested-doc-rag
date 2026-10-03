@@ -1,0 +1,307 @@
+{
+  "schema_version": "vnext-post-audit-results-v1",
+  "recorded_at": "2026-10-02T17:37:08.780572+00:00",
+  "exact_base_commit": "030300065e0d5041f581f573e772f7756e54abd6",
+  "phase5_engineering_commit": "3a69086670e90caa17c967c793600878f8762db2",
+  "latest_engineering_commit": "4400d0587064e4409202019c6193b5c1968fe547",
+  "full_objective_complete": false,
+  "real_model_acceptance_complete": false,
+  "audit_scope": "Independent completion audit plus migration deadline correction; historical snapshots remain intact.",
+  "audit_contracts": {
+    "status_counts": {
+      "proven": 54,
+      "weak": 7,
+      "missing": 1
+    },
+    "required_phase0_4b_engineering_items": 54,
+    "unresolved_core_engineering_gap_found": false,
+    "true_model_semantic_acceptance_complete": false,
+    "overall_vnext_definition_of_done_complete": false
+  },
+  "audit_evaluation_snapshot": {
+    "engineering_evaluation_chain": "proven at explicit-stub boundary",
+    "mandatory_ui_five_fields": "proven",
+    "required_fourteen_metric_implementation": "proven",
+    "real_model_final_acceptance": "missing",
+    "old141_live": "missing",
+    "old141_independent_quality_gold": "missing and independently actionable without new model requests",
+    "required_production_fix_discovered_in_this_focus": false,
+    "contradicted_present_document_claims": 0,
+    "all_missing_work_is_only_an_interface_blocker": false,
+    "do_not_substitute": [
+      "stub",
+      "subset",
+      "historical replay",
+      "prepared real intent",
+      "scorer exit zero",
+      "selected ID presence",
+      "artifact validation success"
+    ]
+  },
+  "old141_gold_requirement_clarification": "Original spec requires reproducible old141 compatibility/baseline. Independent native evidence/status verification is required before claiming old141 quality; a new all-141 human-signoff gate is not inferred. New candidate material must never be treated as verified gold.",
+  "fix": {
+    "problem": "API and Worker migration entry could wait indefinitely on advisory lock or SQL with background context.",
+    "batch_database_deadline_seconds": 30,
+    "shorter_caller_deadline_inherited": true,
+    "filesystem_io_interruptible_claimed": false,
+    "new_real_postgres_leaf_cases": 3,
+    "targeted_terminal_test_events": {
+      "pass": 4
+    },
+    "real_postgres_suite_exit_code": 0,
+    "checks": "lock wait and slow SQL time out, rollback ledger/adoption/DDL, and retry through public entry after recovery"
+  },
+  "go": {
+    "test_events": {
+      "pass": 548,
+      "fail": 0,
+      "skip": 0
+    },
+    "leaf_test_events": {
+      "pass": 523,
+      "fail": 0,
+      "skip": 0
+    },
+    "packages_passed": 8,
+    "race_enabled": true,
+    "forced_count": 1,
+    "exit_code": 0,
+    "scope": "Final Go suite after migration-deadline audit fix; unchanged Python/frontend remain from frozen Phase5 execution",
+    "command": "GORACE=atexit_sleep_ms=0 VNEXT_TEST_POSTGRES_DSN=<isolated DSN> EVIDENCE_CONTRACT_FIXTURE_DIR=<new copied fixture> go test -race -json -count=1 ./..."
+  },
+  "unchanged_scopes": {
+    "python_frontend_config_scripts_unchanged_since_phase5": true,
+    "python": {
+      "tests": 878,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "elapsed_seconds": 155.622,
+      "compatibility_warnings": 75,
+      "exit_code": 0,
+      "command": "PYTHONPATH=src /Users/mao/miniconda3/bin/python -m pytest tests -q --junitxml=artifacts/vnext/phase5/final-python-frozen.xml",
+      "scope": "final frozen full suite including auxiliary Docker and old141 helpers"
+    },
+    "frontend": {
+      "leaf_test_statuses": {
+        "passed": 39
+      },
+      "passed": 39,
+      "failed": 0,
+      "pending": 0,
+      "todo": 0,
+      "test_files": 3,
+      "test_exit_code": 0,
+      "typecheck_exit_code": 0,
+      "build_exit_code": 0
+    },
+    "suite_results_reused_from_frozen_phase5": true
+  },
+  "fresh_docker": {
+    "state_dir": "artifacts/vnext/phase5/docker/stub-20261003-005",
+    "models_kind": "stub",
+    "runtime_kind": "docker",
+    "runner_kind": "production-api-worker-python",
+    "completed_fresh_pairs": 3,
+    "fields": 30,
+    "protected_nonempty_cells": 109,
+    "unsafe_overwrites": 0,
+    "clean_storage_precondition": true,
+    "image_ids": {
+      "api": "sha256:689d674c32d58353ca57d7a31793c1c0e6cc2ee998d4b49a64ce742f4e73cdf2",
+      "worker": "sha256:da9758a0eb1a43c5c5840d58d64017338aae87f7d9c218e50449fb669bddc6c0"
+    },
+    "image_label_revision": "3a69086",
+    "image_description": "working-tree-migration-deadline-audit-fix",
+    "clean_commit_image_claimed": false,
+    "pair_run_ids": {
+      "f1": "1f3bfe20-92d2-4dce-a7d2-54020a8ea374",
+      "f2": "0e9be8a3-8966-460d-83c4-a393eda68947",
+      "f3": "fc95b8e9-c6d6-4cfa-96c2-ed4b09959b59"
+    },
+    "quality_gates_claimed": false,
+    "independent_checks": "raw input workbook versus actual download; download receipts and two validators per pair"
+  },
+  "real_model_preflight": {
+    "models_kind": "real",
+    "passed": false,
+    "probes": [
+      {
+        "kind": "embedding",
+        "endpoint": "http://111.19.156.74:8001/v1/embeddings",
+        "requested_model": "qwen3-embedding-8b",
+        "request_sha256": "2724165c9ee192fa4b297351ea6b3c0ea5967c13a2df99495be540c4cde9c944",
+        "models_kind": "real",
+        "passed": false,
+        "error_type": "RemoteDisconnected",
+        "elapsed_seconds": 5.019
+      },
+      {
+        "kind": "rerank",
+        "endpoint": "http://111.19.156.74:8002/rerank",
+        "requested_model": null,
+        "request_sha256": "60abf4c050ce1b036127c03e72da0a45cb021c942a0e06df2e1c66d9709831f4",
+        "models_kind": "real",
+        "passed": false,
+        "error_type": "RemoteDisconnected",
+        "elapsed_seconds": 5.018
+      },
+      {
+        "kind": "chat",
+        "endpoint": "http://111.19.156.30:8006/v1/chat/completions",
+        "requested_model": "deepseek-v4-flash",
+        "request_sha256": "8a39aab5a9dad6ee37ba790d3c839a68d66e847743ff7d98167bc5d974a75d8a",
+        "models_kind": "real",
+        "passed": false,
+        "error_type": "RemoteDisconnected",
+        "elapsed_seconds": 5.018
+      }
+    ],
+    "requests_attempted": true,
+    "usage": "unknown",
+    "cost": "unknown; service pricing is not declared",
+    "service_weight_fingerprints": "unknown"
+  },
+  "workspace_preservation": {
+    "original_frozen_file_count": 103,
+    "original_untouched": true,
+    "historical_migrations_frozen_to_inherited_3a5a799": true,
+    "phase5_reported_evidence_hash_count": 27,
+    "all_phase5_reported_evidence_hashes_still_match": true
+  },
+  "cleanup": {
+    "schema_version": "vnext-owned-acceptance-cleanup-v1",
+    "recorded_at": "2026-10-02T17:34:55.983432+00:00",
+    "compose_project": "vnext-stub-20261002t172352z-836110",
+    "owned_containers_stopped": 6,
+    "all_owned_containers_stopped": true,
+    "all_eight_volumes_preserved": true,
+    "owned_stub_port": 18766,
+    "stub_sigint_pid": [
+      96603
+    ],
+    "postgres_test_container_left_running": true,
+    "global_prune_used": false,
+    "original_deployment_touched": false
+  },
+  "remaining_required_execution": [
+    "Three fresh Docker knowledge/form pairs using configured real models",
+    "Real challenge and A0-A3 plus primary-only runs and independent quality evaluation",
+    "Current-source old141 live blank and preserve compatibility/baseline runs; independent native evidence/status before old141 quality claims"
+  ],
+  "source_sha256": {
+    "go-server/internal/database/migrate.go": "407b8668dc56cf4e10909653c54f8c181c6cc2c45d76eb54c2f01a56ba3d5c05",
+    "go-server/internal/database/migrate_postgres_test.go": "72373b7e2b87eb63e5fc041cf22f2c7ee4cc2d12ba525ac6d3ba206461b348e9",
+    "docs/vnext/PHASE4B_DESIGN.md": "2f8ec225abfb87f8010ca4e2bf7134bf6400e78129a1655844579fd77b57a092"
+  },
+  "evidence_sha256": {
+    "artifacts/vnext/phase5/completion-audit-contracts.json": "8cc98bf5c6bd3ac3a342d9fbd4c7b9e83c9bc3d30d9d7acb39df4780892e63d6",
+    "artifacts/vnext/phase5/completion-audit-evaluation.json": "c879469ba72e42c0c87de7c8729253c651bdf2550d399aa58d33d4c82d62bfc4",
+    "artifacts/vnext/phase5/completion-audit-evaluation-checks.json": "87d9fbd0d9e4366e2e3edd17f6596ab14e39d63f67071e9ffb6e233ac1155e92",
+    "artifacts/vnext/phase5/migration-provenance-audit.json": "2dac795655c37d0d5119ff2d4fc8256d6b4445c1fc4f31ec06b0170f9fa1dbec",
+    "artifacts/vnext/phase5/model-preflight-audit-01.json": "b38100e0bd006c585ec87fe598a2e87c1aec4c3aa993781fa303b4b3b28c66fd",
+    "artifacts/vnext/phase5/model-preflight-audit-01.log": "e8a3960a06e3b2b3cf18b04b6d91b933eb7f0df7f73dd449763dc0a9723a0057",
+    "artifacts/vnext/phase5/migration-deadline/verification.json": "2aec3d41b535e98da3420235b871c68a8884725107044ea3d51b7ea428c4c2f2",
+    "artifacts/vnext/phase5/migration-deadline/final-targeted-go.jsonl": "b5971f8d51a7fb730da566821241a9fb414adcb67ab4328172cb54de36d28851",
+    "artifacts/vnext/phase5/migration-deadline/required-postgres.log": "df0fb8ec8c1be8d3a5e195b9b6329723df4659ba3d8a40b9958ce4d25ee1c615",
+    "artifacts/vnext/phase5/post-audit-01/full-go.jsonl": "017913d89a5066957928d76800adf4346a8f33258d94764b8f55da96b20daf47",
+    "artifacts/vnext/phase5/post-audit-01/full-go-summary.json": "dd63c6e88e79c4dc8cb0db65e0a17d14adca2b7dbb23a5d21c18ac1ec92baaf8",
+    "artifacts/vnext/phase5/post-audit-01/fresh-independent-checks.json": "75a3f95d92c5238919cb96fc2e53c577fe485beec7623cb443f9179b76a8f82c",
+    "artifacts/vnext/phase5/post-audit-01/workspace-preservation.json": "c3ca5bf3325641beedf750033c6ba154a728ef473455e3fde77b9fb43a8a9388",
+    "artifacts/vnext/phase5/post-audit-01/cleanup.json": "751b16407007862dd07cd02b2a02701a64b518d6b3e0265c1369ede976b79b3d",
+    "artifacts/vnext/phase5/post-audit-01/docker-stop.log": "8a33448c8b020fbed0bfbd56a12e54c411af1c670a3b318fbabbee2c9b5f9d1f",
+    "artifacts/vnext/phase5/post-audit-01/api-build.log": "81beeca790fa0c6d7e58456710cfe5cbdc14201f57aa8b1f4d254289f5924b77",
+    "artifacts/vnext/phase5/post-audit-01/worker-build.log": "a11898e28ad825a82d0d5705c3e416c439c62c3eaf4517f7af55dc48d4998a0c",
+    "artifacts/vnext/phase5/docker/stub-20261003-005/ledger.json": "7e445b25722540c03cc6449bfd345d8dfbca19751045f839308e51c7cb14503c",
+    "artifacts/vnext/phase5/post-audit-01/stub-model-requests.jsonl": "c2ab79ac0d5f573398e6d5525b3f8dfe5dced18f03225415371a011d397cd35a",
+    "artifacts/vnext/phase5/old141-native-gold-review-01/REVIEW.md": "5034ae520440f3d6511f375e3516c988c04f53be5e27483668f6d5d01e18709b",
+    "artifacts/vnext/phase5/old141-native-gold-review-01/artifact_hashes.json": "97375cd7b09ad5755207a26ed7fdfc6de3e66322cab6d99423fa860438f446fe",
+    "artifacts/vnext/phase5/old141-native-gold-review-01/build_review.py": "024d87714293118b0abb714200d4507063efdc0d4b2df61bc9faa7a59a28c29a",
+    "artifacts/vnext/phase5/old141-native-gold-review-01/extract_native.py": "df891ecd077ddcae6c79979469ffaf8cb4d053116c638cafef23bb6ed742bea5",
+    "artifacts/vnext/phase5/old141-native-gold-review-01/extraction_receipt.json": "658116ced17902e92d52589dfe0c31a15ee9805321a1460ab5d7ffb946209956",
+    "artifacts/vnext/phase5/old141-native-gold-review-01/fields_closed_book.jsonl": "c9503b61a852dfec073d27f4ba2dc974ca15475bc95e9ff2db499377e58607de",
+    "artifacts/vnext/phase5/old141-native-gold-review-01/native_evidence.jsonl": "586a7132a6c937b7a55143920861828e8a99155d2722e4566dd346037c975375",
+    "artifacts/vnext/phase5/old141-native-gold-review-01/review_candidates.jsonl": "9434f77f75321aa68bc81bee030fd055adb189b4513ac489d61cd3f883d90932",
+    "artifacts/vnext/phase5/old141-native-gold-review-01/review_summary.json": "6e714fa081a01b08d8a21ae303675ac836e836c81a574dfa1c4a6f0ee43322eb",
+    "artifacts/vnext/phase5/old141-native-gold-review-01/source_inventory.json": "28218ce16d3459991071773f237cfafb175a067a1a7371cc3467de81a46e6410",
+    "artifacts/vnext/phase5/old141-native-gold-review-01/validate_review.py": "9e8b6428518524b4040e7c43a439ef1d7789f85d293c86b8ef735800e3870ba7",
+    "artifacts/vnext/phase5/old141-native-gold-review-01/validation.json": "ff0b2854a1e730c4dd83c84d697b13990ba8f9210ac5c4456130055e4c8b4632"
+  },
+  "historical_snapshot_note": "Completion audits recorded earlier delivery/source snapshots. Those snapshots are preserved and are not asserted to be final-current delivery document hashes.",
+  "old141_independent_native_material": {
+    "created_at_utc": "2026-10-02T17:40:55.880687+00:00",
+    "closed_book_fields": 141,
+    "native_records": 327,
+    "source_files": 3,
+    "review_states": {
+      "candidate_material_only": 84,
+      "agent_native_review_partial": 57
+    },
+    "fields_with_native_candidates": 140,
+    "gold_verified_fields": 0,
+    "human_signed_fields": 0,
+    "model_requests": 0,
+    "evaluator_gold_exported": false,
+    "old141_live_acceptance_completed": false,
+    "quality_gold_complete": false,
+    "historical_answers_or_existing_values_read": false,
+    "requirements_interpretation": {
+      "original_spec_all_141_human_gold_required": false,
+      "original_spec_requirement": "§11.1A旧141用于兼容；§17 old141-field baseline可复现。",
+      "quality_claim_requirement": "独立语义/来源gold用于质量声明；ACCEPTANCE对heldout及gold进一步细化，不等同原规格新增全141人工签审门槛。",
+      "correction_to_prior_audit_M05": "M05的mandatory须限定为old141质量声明需独立核对，不能解释为原spec规定全141人工gold。原审计文件保留历史原样。"
+    },
+    "continued_work_without_models": [
+      "优先复核这57条agent原生判定的房间/系统/时间适用；其余84条候选需逐项领域核对",
+      "明确识别嵌入OLE来源并只读提取，图片/图纸需要可信OCR或人工读取",
+      "可将独立核准子集导出单独gold，固定分母并保持未解决项，不能把候选当可评分gold"
+    ],
+    "source_limits": [
+      "仅3份allowlisted主OOXML知识文件",
+      "所有嵌入对象与图片未解读",
+      "4号楼文件内存在2号楼文字，园区文档日期2021",
+      "native定位正确不等于语义正确或现场当前事实"
+    ],
+    "candidate_file_is_not_evaluator_gold": "vnext_evaluate缺gold_verified默认true；false也不禁止所有recall计算，因此本文件不得直接传给--gold。",
+    "validation": {
+      "passed": true,
+      "closed_book_fields": 141,
+      "native_records_rechecked": 327,
+      "review_states": {
+        "candidate_material_only": 84,
+        "agent_native_review_partial": 57
+      },
+      "quote_refs_rechecked": 997,
+      "sources_unchanged": [
+        {
+          "file_name": "西咸数据中心4号楼维护能力知识库.xlsx",
+          "sha256": "3e5730553f4cefc06bb99d2c3f32187309804c73ada00900dfe530809eb6b247",
+          "unchanged": true,
+          "records": 213
+        },
+        {
+          "file_name": "中国移动（陕西西咸）数据中心机房情况说明介绍.docx",
+          "sha256": "1f8fd6d3927193799619a1abe88e541bc080f24ddda2cccee67e88b8cfc716e1",
+          "unchanged": true,
+          "records": 103
+        },
+        {
+          "file_name": "陕西移动IDC对外服务知识库.xlsx",
+          "sha256": "b9ee4785faca338c61dfc00ae86142f953f42ba7e28894cd8f66913c288b50dd",
+          "unchanged": true,
+          "records": 11
+        }
+      ],
+      "gold_verified_fields": 0,
+      "human_signed_fields": 0,
+      "new_model_requests": 0,
+      "new_test_runs": 0,
+      "old141_live_runs": 0,
+      "no_evaluator_gold_exported": true,
+      "empty_candidate_rows": [
+        122
+      ],
+      "validation_scope": "Native re-extraction/hash/span, closed-book field coverage and review-status contracts; not semantic answer accuracy, human approval or current-site attestation."
+    }
+  }
+}

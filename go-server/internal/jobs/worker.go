@@ -26,6 +26,8 @@ type Worker struct {
 	heartbeatInterval time.Duration
 	handlers          map[string]TaskHandler
 	mu                sync.RWMutex
+	dispatchCancel    context.CancelFunc
+	dispatchDone      chan struct{}
 }
 
 type interruptedJobLister interface {
@@ -34,6 +36,10 @@ type interruptedJobLister interface {
 
 type interruptedJobHandler interface {
 	RecoverInterruptedJob(ctx context.Context, job *Job, terminalStatus string, err error)
+}
+
+type publishedJobRecoverer interface {
+	RecoverPublishedJob(context.Context, *Job) (bool, error)
 }
 
 func NewWorker(redisCfg config.RedisConfig, jobsCfg config.JobsConfig, repo Repo, service *Service, limiter *ResourceLimiter, logger *zap.Logger) *Worker {
@@ -106,20 +112,56 @@ func (w *Worker) RegisterDefaultHandlers(events RunEventWriter) {
 
 func (w *Worker) Run() error {
 	w.recoverInterruptedBeforeStart(context.Background())
+	w.startPendingDispatcher()
+	defer w.stopPendingDispatcher()
 	return w.server.Run(w.mux)
 }
 
 func (w *Worker) Start() error {
 	w.recoverInterruptedBeforeStart(context.Background())
-	return w.server.Start(w.mux)
+	if err := w.server.Start(w.mux); err != nil {
+		return err
+	}
+	w.startPendingDispatcher()
+	return nil
 }
 
 func (w *Worker) Stop() {
+	w.stopPendingDispatcher()
 	w.server.Stop()
 }
 
 func (w *Worker) Shutdown() {
+	w.stopPendingDispatcher()
 	w.server.Shutdown()
+}
+
+func (w *Worker) startPendingDispatcher() {
+	ctx, cancel := context.WithCancel(context.Background())
+	w.dispatchCancel, w.dispatchDone = cancel, make(chan struct{})
+	go func() {
+		defer close(w.dispatchDone)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			if _, err := w.service.RecoverPendingDispatch(ctx); err != nil && ctx.Err() == nil {
+				w.logger.Warn("recover committed job dispatch failed", zap.Error(err))
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+func (w *Worker) stopPendingDispatcher() {
+	if w.dispatchCancel != nil {
+		w.dispatchCancel()
+		<-w.dispatchDone
+		w.dispatchCancel = nil
+	}
 }
 
 func (w *Worker) ProcessTask(ctx context.Context, task *asynq.Task) error {
@@ -149,6 +191,13 @@ func (w *Worker) RecoverInterruptedJobs(ctx context.Context, staleAfter time.Dur
 	var recoveryErrs []error
 	for i := range candidates {
 		job := candidates[i]
+		if published, err := w.recoverPublished(ctx, &job); err != nil {
+			recoveryErrs = append(recoveryErrs, err)
+			continue
+		} else if published {
+			recovered++
+			continue
+		}
 		var terminalStatus string
 		var interruptedErr error
 		var markErr error
@@ -206,6 +255,13 @@ func (w *Worker) processTask(ctx context.Context, task *asynq.Task) error {
 	if err != nil {
 		return err
 	}
+	if job.Status != JobStatusSucceeded {
+		if published, err := w.recoverPublished(ctx, job); err != nil {
+			return err
+		} else if published {
+			return nil
+		}
+	}
 	switch job.Status {
 	case JobStatusCanceled, JobStatusSucceeded:
 		return nil
@@ -251,6 +307,11 @@ func (w *Worker) processTask(ctx context.Context, task *asynq.Task) error {
 
 	handler := w.handlerFor(job.JobType)
 	err = handler.Handle(jobCtx, job)
+	if published, recoveryErr := w.recoverPublished(context.Background(), job); recoveryErr != nil {
+		return recoveryErr
+	} else if published {
+		return nil
+	}
 	if jobCtx.Err() != nil || errors.Is(err, ErrJobCanceled) {
 		if markErr := w.service.MarkCanceled(context.Background(), *job); markErr != nil {
 			w.logger.Error("mark job canceled failed", zap.String("job_id", job.ID.String()), zap.Error(markErr))
@@ -273,6 +334,21 @@ func (w *Worker) processTask(ctx context.Context, task *asynq.Task) error {
 		return err
 	}
 	return nil
+}
+
+func (w *Worker) recoverPublished(ctx context.Context, job *Job) (bool, error) {
+	recoverer, ok := w.handlerFor(job.JobType).(publishedJobRecoverer)
+	if !ok {
+		return false, nil
+	}
+	published, err := recoverer.RecoverPublishedJob(ctx, job)
+	if err != nil || !published {
+		return false, err
+	}
+	if err := w.service.completePublishedJob(ctx, *job); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (w *Worker) heartbeat(ctx context.Context, job *Job, cancel context.CancelFunc, done chan<- struct{}) {

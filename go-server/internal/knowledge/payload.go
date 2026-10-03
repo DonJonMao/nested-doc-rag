@@ -23,6 +23,9 @@ type IngestKnowledgeJobPayload struct {
 	Resume                  bool   `json:"resume"`
 	QdrantCollection        string `json:"qdrant_collection"`
 	QdrantNamespace         string `json:"qdrant_namespace"`
+	InputSnapshotJSON       string `json:"input_snapshot_json"`
+	InputSnapshotHash       string `json:"input_snapshot_hash"`
+	StorageContract         string `json:"storage_contract"`
 }
 
 func BuildIngestKnowledgeJobPayload(job IngestionJob, kb KnowledgeBase, version KnowledgeIndexVersion, req CreateIngestionRunRequest, cfg config.Config) map[string]any {
@@ -37,6 +40,7 @@ func BuildIngestKnowledgeJobPayload(job IngestionJob, kb KnowledgeBase, version 
 		Resume:                  req.Resume,
 		QdrantCollection:        version.QdrantCollection,
 		QdrantNamespace:         version.QdrantNamespace,
+		StorageContract:         version.StorageContract,
 	}
 	if job.IndexVersionID != nil {
 		payload.IndexVersionID = *job.IndexVersionID

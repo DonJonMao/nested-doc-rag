@@ -5,13 +5,20 @@ import (
 	"fmt"
 
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/config"
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/knowledge"
 	"github.com/google/uuid"
 )
 
 type FillFormJobPayload struct {
-	FillRunID   uuid.UUID `json:"fill_run_id"`
-	WorkspaceID uuid.UUID `json:"workspace_id"`
-	FormFileID  uuid.UUID `json:"form_file_id"`
+	FillRunID                uuid.UUID             `json:"fill_run_id"`
+	WorkspaceID              uuid.UUID             `json:"workspace_id"`
+	FormFileID               uuid.UUID             `json:"form_file_id"`
+	TargetScope              *knowledge.IndexScope `json:"target_scope,omitempty"`
+	GlobalScope              *knowledge.IndexScope `json:"global_scope,omitempty"`
+	TargetActivationRevision *int64                `json:"target_activation_revision,omitempty"`
+	GlobalActivationRevision *int64                `json:"global_activation_revision,omitempty"`
+	TemplatePin              *TemplatePin          `json:"template_pin,omitempty"`
+	IndexScopesJSON          string                `json:"index_scopes_json,omitempty"`
 
 	ConfigPath      string `json:"config_path"`
 	TargetNamespace string `json:"target_namespace"`
@@ -33,22 +40,33 @@ type FillFormJobPayload struct {
 
 func BuildFillFormJobPayload(run FillRun, formFile FormFile, cfg config.Config) map[string]any {
 	payload := FillFormJobPayload{
-		FillRunID:       run.ID,
-		WorkspaceID:     run.WorkspaceID,
-		FormFileID:      formFile.ID,
-		ConfigPath:      cfg.Python.ConfigPath,
-		TargetNamespace: run.TargetNamespace,
-		GlobalNamespace: run.GlobalNamespace,
-		RoomContext:     run.RoomContext,
-		Rows:            run.RowsSpec,
-		RetrievalMode:   run.RetrievalMode,
-		PromptVersion:   run.PromptVersion,
-		Judge:           run.JudgeEnabled,
-		UseJudgeCache:   run.UseJudgeCache,
-		TemplatePath:    "",
-		Writeback:       run.WritebackEnabled,
-		Resume:          true,
-		OutDir:          run.OutDir,
+		FillRunID:                run.ID,
+		WorkspaceID:              run.WorkspaceID,
+		FormFileID:               formFile.ID,
+		TargetScope:              run.TargetScope,
+		GlobalScope:              run.GlobalScope,
+		TargetActivationRevision: run.TargetActivationRevision,
+		GlobalActivationRevision: run.GlobalActivationRevision,
+		TemplatePin:              run.TemplatePin,
+		ConfigPath:               cfg.Python.ConfigPath,
+		TargetNamespace:          run.TargetNamespace,
+		GlobalNamespace:          run.GlobalNamespace,
+		RoomContext:              run.RoomContext,
+		Rows:                     run.RowsSpec,
+		RetrievalMode:            run.RetrievalMode,
+		PromptVersion:            run.PromptVersion,
+		Judge:                    run.JudgeEnabled,
+		UseJudgeCache:            run.UseJudgeCache,
+		TemplatePath:             "",
+		Writeback:                run.WritebackEnabled,
+		Resume:                   true,
+		OutDir:                   run.OutDir,
+	}
+	if run.TargetScope != nil && run.GlobalScope != nil {
+		data, err := knowledge.CanonicalSnapshotBytes([]knowledge.IndexScope{*run.TargetScope, *run.GlobalScope})
+		if err == nil {
+			payload.IndexScopesJSON = string(data)
+		}
 	}
 	data, _ := json.Marshal(payload)
 	var out map[string]any

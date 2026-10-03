@@ -125,6 +125,7 @@ def test_step15_passes_field_id_to_chat_gateway_headers(monkeypatch, tmp_path: P
     runner = Step15AgentRunner(
         config=config,
         target_namespace="xixian_4",
+        global_namespace="global",
         out_dir=tmp_path,
         retrieval_fn=lambda query: None,
         chat_retry_backoff_seconds=0,

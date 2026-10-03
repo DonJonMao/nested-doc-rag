@@ -1,0 +1,35 @@
+{
+  "phase": "3",
+  "python": {
+    "tests": 572,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "expected_legacy_warnings": 4,
+    "elapsed_seconds": 69.78
+  },
+  "go_exit_code": 0,
+  "ruff_exit_code": 0,
+  "diff_check_exit_code": 0,
+  "external_model_calls": 0,
+  "localhost_model_substitute": true,
+  "real_model_semantic_acceptance": "not executed",
+  "added_real_cli_cases": 10,
+  "prior_runtime_form_and_addressed_evidence_cases": 29,
+  "maximum_acquisition_rounds": 2,
+  "unretried_default_plan_verified_counts": {
+    "sufficient_primary": {
+      "acquisition_rounds": 1,
+      "actual_qdrant_query_calls": 2
+    },
+    "targeted_supplement": {
+      "acquisition_rounds": 2,
+      "actual_qdrant_query_calls": 7
+    }
+  },
+  "original_workspace_files_verified": 103,
+  "original_workspace_changed_files": [],
+  "artifacts": "artifacts/vnext/phase3",
+  "fresh_docker_e2e_count": 0,
+  "offline_evidence_fixture_script_executed": false
+}

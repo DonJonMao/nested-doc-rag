@@ -42,6 +42,12 @@ func NewPGXRepo(pool *pgxpool.Pool) *PGXRepo {
 }
 
 func (r *PGXRepo) Create(ctx context.Context, job Job) error {
+	return insertJob(ctx, r.pool, job)
+}
+
+func insertJob(ctx context.Context, db interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, job Job) error {
 	if job.ID == uuid.Nil {
 		job.ID = uuid.New()
 	}
@@ -56,7 +62,7 @@ func (r *PGXRepo) Create(ctx context.Context, job Job) error {
 	if err != nil {
 		return httpx.NewAppError(httpx.CodeInvalidArgument, "invalid job payload", http.StatusBadRequest, nil, err)
 	}
-	_, err = r.pool.Exec(ctx, `
+	_, err = db.Exec(ctx, `
 		INSERT INTO jobs (
 			id, workspace_id, job_type, resource_type, resource_id, status, priority,
 			attempt, max_attempts, payload_json, error_message, cancel_requested_at,

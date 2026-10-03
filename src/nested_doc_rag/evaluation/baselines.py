@@ -8,17 +8,18 @@ from typing import Any
 
 from nested_doc_rag.config import load_app_config
 from nested_doc_rag.embedding import RerankClient
-from nested_doc_rag.gongkan_eval import (
-    build_judge_messages,
-    build_masked_query,
-    call_deepseek_json,
-    select_eval_items,
-)
 from nested_doc_rag.evaluation.step15_engine import (
     add_room_context,
     all_base_cloud_rows,
     build_qdrant_answer_messages,
     run_step15_retrieval,
+)
+from nested_doc_rag.gongkan_eval import (
+    BASE_CLOUD_FILE,
+    build_judge_messages,
+    build_masked_query,
+    call_deepseek_json,
+    select_eval_items,
 )
 from nested_doc_rag.io import display_text, md, read_jsonl, write_json, write_jsonl
 from nested_doc_rag.retrieval import QdrantRetriever
@@ -154,7 +155,7 @@ def run(
     if retrieval_mode != "layered":
         raise ValueError(f"unsupported retrieval_mode: {retrieval_mode}")
 
-    eval_items = select_eval_items(rows, form_items_path=form_items_path)
+    eval_items = select_eval_items(rows, form_items_path=form_items_path, base_cloud_file=BASE_CLOUD_FILE)
     retriever = QdrantRetriever(
         qdrant_path=qdrant_path,
         collection_name=collection_name,

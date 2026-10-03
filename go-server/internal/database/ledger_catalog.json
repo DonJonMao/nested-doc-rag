@@ -1,0 +1,151 @@
+{
+  "tables": [
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "baseline_version",
+          "not_null": true,
+          "type": "bigint"
+        },
+        {
+          "default": null,
+          "name": "binary_revision",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "id",
+          "not_null": true,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "profile",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "recorded_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "report_json",
+          "not_null": true,
+          "type": "jsonb"
+        },
+        {
+          "default": null,
+          "name": "schema_fingerprint",
+          "not_null": true,
+          "type": "text"
+        }
+      ],
+      "constraints": [
+        "PRIMARY KEY (id)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "gongkan_schema_adoptions",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "id"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "columns": [
+        {
+          "default": null,
+          "name": "adoption_id",
+          "not_null": false,
+          "type": "uuid"
+        },
+        {
+          "default": null,
+          "name": "filename",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "origin",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": "now()",
+          "name": "recorded_at",
+          "not_null": true,
+          "type": "timestamp with time zone"
+        },
+        {
+          "default": null,
+          "name": "sha256",
+          "not_null": true,
+          "type": "text"
+        },
+        {
+          "default": null,
+          "name": "version",
+          "not_null": true,
+          "type": "bigint"
+        }
+      ],
+      "constraints": [
+        "CHECK (origin = 'adopted'::text AND adoption_id IS NOT NULL OR origin = 'executed'::text AND adoption_id IS NULL)|validated=true|deferred=false/false",
+        "CHECK (origin = ANY (ARRAY['executed'::text, 'adopted'::text]))|validated=true|deferred=false/false",
+        "CHECK (sha256 ~ '^[0-9a-f]{64}$'::text)|validated=true|deferred=false/false",
+        "CHECK (version > 0)|validated=true|deferred=false/false",
+        "FOREIGN KEY (adoption_id) REFERENCES gongkan_schema_adoptions(id)|validated=true|deferred=false/false",
+        "PRIMARY KEY (version)|validated=true|deferred=false/false",
+        "UNIQUE (filename)|validated=true|deferred=false/false"
+      ],
+      "effects": false,
+      "kind": "r",
+      "name": "gongkan_schema_migrations",
+      "row_security": false,
+      "unique": [
+        {
+          "columns": [
+            "filename"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": false,
+          "ready": true,
+          "valid": true
+        },
+        {
+          "columns": [
+            "version"
+          ],
+          "expression": null,
+          "method": "btree",
+          "nulls_not_distinct": false,
+          "predicate": null,
+          "primary": true,
+          "ready": true,
+          "valid": true
+        }
+      ]
+    }
+  ],
+  "uuid_extension_valid": true
+}

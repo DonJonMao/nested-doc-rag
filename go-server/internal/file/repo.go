@@ -90,7 +90,41 @@ func (r *PGXRepo) ListByWorkspace(ctx context.Context, workspaceID uuid.UUID, ca
 }
 
 func (r *PGXRepo) SoftDelete(ctx context.Context, id uuid.UUID, deletedAt time.Time) error {
-	tag, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return mapDBError(err, "delete file conflict", "file not found")
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	// Build snapshots and fill template pins acquire the same row lock before
+	// recording their references. The loser of a delete/pin race rechecks state.
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT status FROM files WHERE id=$1 FOR UPDATE`, id).Scan(&status); err != nil {
+		return mapDBError(err, "delete file conflict", "file not found")
+	}
+	if status == FileStatusDeleted {
+		return httpx.NewAppError(httpx.CodeNotFound, "file not found", http.StatusNotFound, nil, nil)
+	}
+	var pinned bool
+	err = tx.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM knowledge_version_source_pins WHERE file_id=$1)
+		OR EXISTS(SELECT 1 FROM fill_run_template_pins WHERE file_id=$1)
+		OR EXISTS(
+			SELECT 1 FROM knowledge_documents d
+			JOIN knowledge_bases kb ON kb.id=d.knowledge_base_id
+			JOIN knowledge_index_versions v ON v.knowledge_base_id=kb.id
+			WHERE d.file_id=$1 AND v.storage_contract='legacy_unversioned'
+			AND (kb.current_index_version_id=v.id OR EXISTS(
+				SELECT 1 FROM fill_run_index_pins p WHERE p.index_version_id=v.id
+			))
+		)
+	`, id).Scan(&pinned)
+	if err != nil {
+		return mapDBError(err, "check file pins conflict", "file not found")
+	}
+	if pinned {
+		return httpx.NewAppError(httpx.CodeConflict, "file is pinned by an index version or fill run", http.StatusConflict, map[string]string{"reason": "file_pinned"}, nil)
+	}
+	tag, err := tx.Exec(ctx, `
 		UPDATE files SET status = 'deleted', deleted_at = $2 WHERE id = $1 AND status <> 'deleted'
 	`, id, deletedAt)
 	if err != nil {
@@ -99,7 +133,7 @@ func (r *PGXRepo) SoftDelete(ctx context.Context, id uuid.UUID, deletedAt time.T
 	if tag.RowsAffected() == 0 {
 		return httpx.NewAppError(httpx.CodeNotFound, "file not found", http.StatusNotFound, nil, nil)
 	}
-	return nil
+	return mapDBError(tx.Commit(ctx), "delete file commit conflict", "file not found")
 }
 
 func (r *PGXRepo) ExistsByHash(ctx context.Context, workspaceID uuid.UUID, sha256 string) (bool, error) {

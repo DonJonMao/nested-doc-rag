@@ -30,6 +30,7 @@ func TestFillFormHandlerSuccessCallsReviewImporter(t *testing.T) {
 		jobs.WithReviewImporter(importer),
 	)
 	job := fillFormWorkerTestJob(workspaceID, runID, map[string]any{"writeback": false, "out_dir": outDir})
+	handler.TemplateMaterializer = &recordingTemplateMaterializer{}
 
 	err := handler.Handle(context.Background(), &job)
 
@@ -56,6 +57,7 @@ func TestFillFormHandlerReviewImportFailureReturnsError(t *testing.T) {
 		jobs.WithReviewImporter(importer),
 	)
 	job := fillFormWorkerTestJob(workspaceID, runID, map[string]any{"writeback": false, "out_dir": outDir})
+	handler.TemplateMaterializer = &recordingTemplateMaterializer{}
 
 	err := handler.Handle(context.Background(), &job)
 
@@ -80,6 +82,7 @@ func TestFillFormHandlerNilReviewImporterStillSucceeds(t *testing.T) {
 		jobs.WithFillRunLifecycle(lifecycle),
 	)
 	job := fillFormWorkerTestJob(workspaceID, runID, map[string]any{"writeback": false, "out_dir": outDir})
+	handler.TemplateMaterializer = &recordingTemplateMaterializer{}
 
 	err := handler.Handle(context.Background(), &job)
 
@@ -105,6 +108,7 @@ func TestFillFormHandlerCompletedWithFailuresStillImportsReviews(t *testing.T) {
 		jobs.WithReviewImporter(importer),
 	)
 	job := fillFormWorkerTestJob(workspaceID, runID, map[string]any{"writeback": false, "out_dir": outDir})
+	handler.TemplateMaterializer = &recordingTemplateMaterializer{}
 
 	err := handler.Handle(context.Background(), &job)
 

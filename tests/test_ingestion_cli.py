@@ -69,6 +69,7 @@ def test_build_ingestion_records_materializes_dispimg_registry(tmp_path: Path) -
     sheet.title = "能力清单"
     sheet.append(["字段", "答案", "图片"])
     sheet.append(["机房名称", "西咸4号楼", '=_xlfn.DISPIMG("ID_TEST_IMAGE",1)'])
+    sheet.append([None, None, '=_xlfn.DISPIMG("ID_TEST_IMAGE",1)'])
     path = tmp_path / "能力清单.xlsx"
     workbook.save(path)
     with zipfile.ZipFile(path, "a") as archive:
@@ -111,6 +112,12 @@ def test_build_ingestion_records_materializes_dispimg_registry(tmp_path: Path) -
     assert row_record["proof_attachments"][0]["source_cell"] == "C2"
     assert Path(row_record["proof_attachments"][0]["image_path"]).exists()
     assert "DISPIMG" not in row_record["raw_text"]
+    photo_only = next(record for record in records if record["row_index"] == 3)
+    assert photo_only["evidence_kind"] == "table_row"
+    assert photo_only["field_value"] is None
+    assert photo_only["raw_source_text"] == '=_xlfn.DISPIMG("ID_TEST_IMAGE",1)'
+    assert photo_only["proof_attachments"][0]["source_cell"] == "C3"
+    assert Path(photo_only["proof_attachments"][0]["image_path"]).exists()
 
 
 def test_ingestion_summary_and_manifest_contract(tmp_path: Path) -> None:

@@ -2,7 +2,20 @@ from __future__ import annotations
 
 from nested_doc_rag.agent.step15_runner import AgentOverlay
 from nested_doc_rag.grounding import EvidenceStrengthEvaluator, EvidenceStrengthResult, apply_evidence_strength_to_overlay, strength_rank
+from nested_doc_rag.grounding.evidence_strength import is_exact_structured_hit
 from nested_doc_rag.schemas.eval import FieldPrediction
+
+
+def test_canonical_structured_evidence_requires_real_label_value_and_location() -> None:
+    hit = {
+        "namespace": "room", "evidence_kind": "structured_field", "corpus_layer": "fact",
+        "field_name": "UPS容量", "field_value": "500kVA", "address": {"cell_range": "A2:B2"},
+        "source_type": "uploaded_excel_row", "retrieval_layer": "target_structured_fact",
+    }
+    assert is_exact_structured_hit(hit, "room")
+    assert is_exact_structured_hit(dict(hit, field_value=0), "room")
+    for change in ({"namespace": "other"}, {"address": {}}, {"field_value": None}, {"field_name": ""}, {"corpus_layer": "intro_doc"}, {"evidence_kind": "table_row"}):
+        assert not is_exact_structured_hit(dict(hit, **change), "room")
 
 
 def test_answered_without_sources_is_e0() -> None:

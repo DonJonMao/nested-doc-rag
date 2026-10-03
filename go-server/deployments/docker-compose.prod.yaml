@@ -19,6 +19,8 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_healthy
+      knowledge-seed:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
       interval: 10s
@@ -50,6 +52,8 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_healthy
+      knowledge-seed:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import nested_doc_rag' && /app/gongkan-worker --help >/dev/null"]
       interval: 30s
@@ -139,13 +143,34 @@ services:
       "
     restart: "no"
 
+  knowledge-seed:
+    image: ${REGISTRY}/${IMAGE_NS}/gongkan-knowledge-seed:${IMAGE_TAG}
+    build:
+      context: ../..
+      dockerfile: go-server/deployments/Dockerfile.knowledge-seed
+    depends_on:
+      minio:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    env_file:
+      - .env.prod
+    volumes:
+      - worker_python_artifacts:/app/python-core/artifacts
+    restart: "no"
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
   qdrant:
     image: ${QDRANT_IMAGE}
     restart: unless-stopped
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/readyz"]
+      test: ["CMD-SHELL", "bash -lc '</dev/tcp/127.0.0.1/6333'"]
       interval: 10s
       timeout: 5s
       retries: 12

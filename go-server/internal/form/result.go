@@ -2,6 +2,7 @@ package form
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/artifact"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/auth"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/httpx"
+	pythonpkg "github.com/DonJonMao/nested-doc-rag/go-server/internal/python"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -51,24 +53,27 @@ type FillRunListItem struct {
 }
 
 type FillRunDetail struct {
-	ID                         uuid.UUID                `json:"id"`
-	WorkspaceID                uuid.UUID                `json:"workspace_id"`
-	Name                       string                   `json:"name,omitempty"`
-	RawStatus                  string                   `json:"raw_status,omitempty"`
-	Status                     string                   `json:"status"`
-	CreatedAt                  time.Time                `json:"created_at"`
-	UpdatedAt                  time.Time                `json:"updated_at"`
-	CompletedAt                *time.Time               `json:"completed_at,omitempty"`
-	TemplateFileName           string                   `json:"template_file_name,omitempty"`
-	KBName                     string                   `json:"kb_name,omitempty"`
-	ManifestStatus             string                   `json:"manifest_status"`
-	ArtifactValidationStatus   string                   `json:"artifact_validation_status"`
-	Message                    string                   `json:"message"`
-	ErrorMessage               string                   `json:"error_message,omitempty"`
-	Summary                    FillRunSummaryCounts     `json:"summary"`
-	Artifacts                  FillRunArtifactDownloads `json:"artifacts"`
-	Writeback                  FillRunWritebackBlock    `json:"writeback"`
-	ArtifactValidationWarnings []string                 `json:"artifact_validation_warnings,omitempty"`
+	ID                         uuid.UUID                  `json:"id"`
+	WorkspaceID                uuid.UUID                  `json:"workspace_id"`
+	Name                       string                     `json:"name,omitempty"`
+	RawStatus                  string                     `json:"raw_status,omitempty"`
+	Status                     string                     `json:"status"`
+	ProgressTotal              int                        `json:"progress_total"`
+	ProgressDone               int                        `json:"progress_done"`
+	CreatedAt                  time.Time                  `json:"created_at"`
+	UpdatedAt                  time.Time                  `json:"updated_at"`
+	CompletedAt                *time.Time                 `json:"completed_at,omitempty"`
+	TemplateFileName           string                     `json:"template_file_name,omitempty"`
+	KBName                     string                     `json:"kb_name,omitempty"`
+	ManifestStatus             string                     `json:"manifest_status"`
+	ArtifactValidationStatus   string                     `json:"artifact_validation_status"`
+	Message                    string                     `json:"message"`
+	ErrorMessage               string                     `json:"error_message,omitempty"`
+	Summary                    FillRunSummaryCounts       `json:"summary"`
+	Artifacts                  FillRunArtifactDownloads   `json:"artifacts"`
+	Writeback                  FillRunWritebackBlock      `json:"writeback"`
+	Evidence                   pythonpkg.ManifestEvidence `json:"evidence"`
+	ArtifactValidationWarnings []string                   `json:"artifact_validation_warnings,omitempty"`
 }
 
 type FillRunSummaryCounts struct {
@@ -145,6 +150,7 @@ type runManifestArtifact struct {
 		Summary map[string]any   `json:"summary"`
 		Fields  []map[string]any `json:"fields"`
 	} `json:"writeback"`
+	Evidence *pythonpkg.ManifestEvidence `json:"evidence"`
 }
 
 type resultContext struct {
@@ -183,6 +189,8 @@ func (s *FillRunService) GetFillRunDetail(ctx context.Context, runID uuid.UUID, 
 		Name:                       run.Name,
 		RawStatus:                  run.Status,
 		Status:                     publicFillRunStatus(run.Status),
+		ProgressTotal:              run.ProgressTotal,
+		ProgressDone:               run.ProgressDone,
 		CreatedAt:                  run.CreatedAt,
 		UpdatedAt:                  run.UpdatedAt,
 		CompletedAt:                run.FinishedAt,
@@ -190,11 +198,12 @@ func (s *FillRunService) GetFillRunDetail(ctx context.Context, runID uuid.UUID, 
 		KBName:                     s.knowledgeBaseName(ctx, run.KnowledgeBaseID),
 		ManifestStatus:             result.manifestStatus,
 		ArtifactValidationStatus:   result.artifactValidationStatus,
-		Message:                    SafeWritebackMessage,
+		Message:                    fillRunDetailMessage(run),
 		ErrorMessage:               run.ErrorMessage,
 		Summary:                    result.summary,
 		Artifacts:                  artifactDownloads(result.artifactByType),
 		Writeback:                  writebackFromManifest(result.manifest),
+		Evidence:                   evidenceFromResult(result),
 		ArtifactValidationWarnings: result.warnings,
 	}, nil
 }
@@ -299,11 +308,14 @@ func (s *FillRunService) DownloadEvidenceImage(ctx context.Context, runID uuid.U
 	if err := ensureFillRunDownloadReady(result.run); err != nil {
 		return nil, err
 	}
+	if result.manifestStatus != ManifestStatusValid || result.artifactValidationStatus != ArtifactValidationStatusValid {
+		return nil, httpx.NewAppError(httpx.CodeConflict, "evidence image manifest or artifact validation failed", http.StatusConflict, nil, nil)
+	}
 	if result.manifest == nil || !result.manifest.hasImageObjectKey(imageObjectKey) {
 		return nil, httpx.NewAppError(httpx.CodeNotFound, "evidence image is not declared by run manifest", http.StatusNotFound, nil, nil)
 	}
 	for _, item := range result.artifacts {
-		if item.ObjectKey != imageObjectKey {
+		if item.ObjectKey != imageObjectKey || item.RunID != runID || item.WorkspaceID != result.run.WorkspaceID {
 			continue
 		}
 		download, err := s.artifacts.DownloadArtifactProxy(ctx, item.ID, actor)
@@ -374,10 +386,21 @@ func (s *FillRunService) loadResultContextForRun(ctx context.Context, run *FillR
 	if err != nil {
 		return nil, err
 	}
+	ownedArtifacts := make([]artifact.RunArtifact, 0, len(artifacts))
+	var ownershipWarnings []string
+	for _, item := range artifacts {
+		if item.RunID != run.ID || item.WorkspaceID != run.WorkspaceID {
+			ownershipWarnings = append(ownershipWarnings, "artifact belonging to another fill run was ignored")
+			continue
+		}
+		ownedArtifacts = append(ownedArtifacts, item)
+	}
+	artifacts = ownedArtifacts
 	byType := latestArtifactByType(artifacts)
 	manifest, manifestStatus, manifestWarnings := s.loadManifest(ctx, byType, actor)
 	validationStatus, validationWarnings := validateManifestArtifacts(manifest, manifestStatus, byType)
-	warnings := append(manifestWarnings, validationWarnings...)
+	warnings := append(ownershipWarnings, manifestWarnings...)
+	warnings = append(warnings, validationWarnings...)
 	summary := summaryFromRun(*run)
 	if summaryArtifact, ok := byType[artifact.TypeSummary]; ok {
 		if parsed, err := s.loadSummaryCounts(ctx, summaryArtifact.ID, actor); err == nil {
@@ -411,11 +434,19 @@ func (s *FillRunService) loadManifest(ctx context.Context, artifacts map[string]
 		return nil, ManifestStatusInvalid, []string{"run_manifest artifact could not be read"}
 	}
 	defer download.Reader.Close()
+	data, err := io.ReadAll(io.LimitReader(download.Reader, (10<<20)+1))
+	if err != nil || len(data) > 10<<20 {
+		return nil, ManifestStatusInvalid, []string{"run_manifest artifact could not be read within size limit"}
+	}
 	var manifest runManifestArtifact
-	decoder := json.NewDecoder(io.LimitReader(download.Reader, 10<<20))
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	if err := decoder.Decode(&manifest); err != nil {
 		return nil, ManifestStatusInvalid, []string{"run_manifest artifact is not valid JSON"}
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, ManifestStatusInvalid, []string{"run_manifest artifact has trailing or oversized JSON"}
 	}
 	if err := manifest.validate(); err != nil {
 		return nil, ManifestStatusInvalid, []string{err.Error()}
@@ -525,6 +556,12 @@ func (m *runManifestArtifact) validate() error {
 			return fmt.Errorf("run_manifest artifact %s has unsafe path", artifactType)
 		}
 	}
+	if err := m.Evidence.Validate(); err != nil {
+		return fmt.Errorf("run_manifest %v", err)
+	}
+	if m.Evidence != nil && !m.hasArtifact(artifact.TypeEvidenceProvenance) {
+		return errors.New("run_manifest evidence_provenance artifact is required for evidence")
+	}
 	return nil
 }
 
@@ -540,12 +577,21 @@ func (m *runManifestArtifact) hasImageObjectKey(imageObjectKey string) bool {
 	if m == nil || strings.TrimSpace(imageObjectKey) == "" {
 		return false
 	}
+	if m.Evidence != nil {
+		for _, field := range m.Evidence.Fields {
+			for _, ref := range field.EvidenceRefs {
+				if ref.ImageObjectKey == imageObjectKey {
+					return true
+				}
+			}
+		}
+	}
 	for _, field := range m.Writeback.Fields {
 		refs, ok := field["evidence_refs"].([]any)
 		if !ok {
 			if typed, typedOK := field["evidence_refs"].([]map[string]any); typedOK {
 				for _, ref := range typed {
-					if strings.TrimSpace(fmt.Sprint(ref["image_object_key"])) == imageObjectKey {
+					if key, ok := ref["image_object_key"].(string); ok && strings.TrimSpace(key) == imageObjectKey {
 						return true
 					}
 				}
@@ -557,7 +603,7 @@ func (m *runManifestArtifact) hasImageObjectKey(imageObjectKey string) bool {
 			if !ok {
 				continue
 			}
-			if strings.TrimSpace(fmt.Sprint(ref["image_object_key"])) == imageObjectKey {
+			if key, ok := ref["image_object_key"].(string); ok && strings.TrimSpace(key) == imageObjectKey {
 				return true
 			}
 		}
@@ -566,8 +612,7 @@ func (m *runManifestArtifact) hasImageObjectKey(imageObjectKey string) bool {
 }
 
 func unsafeObjectKey(value string) bool {
-	value = strings.TrimSpace(value)
-	return value == "" || strings.HasPrefix(value, "/") || strings.Contains(value, "../") || strings.Contains(value, `..\`)
+	return !pythonpkg.SafeEvidenceObjectKey(value)
 }
 
 func manifestArtifactValue(raw any) (string, bool, error) {
@@ -586,14 +631,14 @@ func manifestArtifactValue(raw any) (string, bool, error) {
 }
 
 func safeManifestRelativePath(value string) bool {
-	if strings.ContainsRune(value, 0) || filepath.IsAbs(value) {
-		return false
+	return pythonpkg.SafeManifestRelativePath(value)
+}
+
+func evidenceFromResult(result *resultContext) pythonpkg.ManifestEvidence {
+	if result.manifestStatus != ManifestStatusValid || result.artifactValidationStatus != ArtifactValidationStatusValid || result.manifest == nil {
+		return pythonpkg.EvidenceForDisplay(nil)
 	}
-	clean := filepath.Clean(value)
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return false
-	}
-	return filepath.IsLocal(value)
+	return pythonpkg.EvidenceForDisplay(result.manifest.Evidence)
 }
 
 func summaryFromRun(run FillRun) FillRunSummaryCounts {
@@ -872,6 +917,23 @@ func publicFillRunStatus(status string) string {
 		return "cancelled"
 	default:
 		return status
+	}
+}
+
+func fillRunDetailMessage(run *FillRun) string {
+	if run == nil {
+		return SafeWritebackMessage
+	}
+	switch run.Status {
+	case FillRunStatusFailed:
+		if strings.TrimSpace(run.ErrorMessage) != "" {
+			return "任务失败：" + run.ErrorMessage
+		}
+		return "任务失败，未生成可下载结果。"
+	case FillRunStatusCanceled:
+		return "任务已取消，未生成可下载结果。"
+	default:
+		return SafeWritebackMessage
 	}
 }
 

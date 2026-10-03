@@ -43,6 +43,108 @@ func TestFillFormPythonHandlerSuccessCallsRunnerAndArchiver(t *testing.T) {
 	requireEventTypes(t, eventsRepo, runevent.EventPythonStarted, runevent.EventPythonFinished, runevent.EventArtifactValidationSucceeded, runevent.EventArtifactsRegistered)
 }
 
+func TestFillFormPythonHandlerReadsCheckpointTraceProgress(t *testing.T) {
+	runDir, manifest := manifestWithArtifacts(t)
+	runID := uuid.New()
+	baseRunner := &pythonpkg.FakeRunner{Step15Result: &pythonpkg.Step15RunResult{
+		RunID:      runID,
+		OutDir:     runDir,
+		Manifest:   manifest,
+		Validation: &pythonpkg.ArtifactValidationResult{RunDir: runDir, OK: true},
+	}}
+	runner := &checkpointTraceRunner{FakeRunner: baseRunner}
+	lifecycle := &recordingFillRunLifecycle{}
+	eventRepo := &fakeRunEventRepo{}
+	handler := jobs.NewFillFormPythonHandler(
+		runner,
+		pythonpkg.NewArtifactArchiver(&fakeArtifactRegistrar{}, zap.NewNop()),
+		runevent.NewService(eventRepo, nil),
+		zap.NewNop(),
+		jobs.WithFillRunLifecycle(lifecycle),
+	)
+	job := fillFormJob(runDir)
+	job.ResourceID = runID
+	job.Payload["fill_run_id"] = runID.String()
+	job.Payload["rows"] = "4-5"
+
+	err := handler.Handle(context.Background(), &job)
+
+	require.NoError(t, err)
+	require.Contains(t, lifecycle.progress, fillRunProgressRecord{runID: runID, done: 0, total: 2})
+	require.Contains(t, lifecycle.progress, fillRunProgressRecord{runID: runID, done: 1, total: 2})
+	requireEventTypes(t, eventRepo, runevent.EventProgress)
+}
+
+func TestFillFormPythonHandlerProgressUsesResourceIDWithoutEventWriter(t *testing.T) {
+	runDir, manifest := manifestWithArtifacts(t)
+	runID := uuid.New()
+	baseRunner := &pythonpkg.FakeRunner{Step15Result: &pythonpkg.Step15RunResult{
+		RunID:      runID,
+		OutDir:     runDir,
+		Manifest:   manifest,
+		Validation: &pythonpkg.ArtifactValidationResult{RunDir: runDir, OK: true},
+	}}
+	lifecycle := &recordingFillRunLifecycle{}
+	handler := jobs.NewFillFormPythonHandler(
+		&checkpointTraceRunner{FakeRunner: baseRunner},
+		pythonpkg.NewArtifactArchiver(&fakeArtifactRegistrar{}, zap.NewNop()),
+		nil,
+		zap.NewNop(),
+		jobs.WithFillRunLifecycle(lifecycle),
+	)
+	job := fillFormJob(runDir)
+	job.ResourceID = runID
+	delete(job.Payload, "fill_run_id")
+	job.Payload["rows"] = "4-5"
+
+	err := handler.Handle(context.Background(), &job)
+
+	require.NoError(t, err)
+	require.Contains(t, lifecycle.progress, fillRunProgressRecord{runID: runID, done: 0, total: 2})
+	require.Contains(t, lifecycle.progress, fillRunProgressRecord{runID: runID, done: 1, total: 2})
+}
+
+func TestFillFormPythonHandlerProgressUsesParsedFieldCount(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		rows    string
+		payload string
+	}{{"all fields", "all", `"fields_total":3`},
+		{"selected count takes precedence", "4-5", `"fields_total":9,"selected_field_count":3`}} {
+		t.Run(test.name, func(t *testing.T) {
+			runDir, manifest := manifestWithArtifacts(t)
+			runID := uuid.New()
+			lifecycle := &recordingFillRunLifecycle{}
+			events := &fakeRunEventRepo{}
+			trace := `{"step":"run_started","payload":{` + test.payload + `}}` + "\n" +
+				`{"field_id":"sheet-a-field","step":"field_completed","payload":{"final_prediction":{"row_index":4}}}` + "\n" +
+				`{"field_id":"sheet-b-field","step":"field_completed","payload":{"final_prediction":{"row_index":4}}}` + "\n"
+			runner := &checkpointTraceRunner{
+				FakeRunner: &pythonpkg.FakeRunner{Step15Result: &pythonpkg.Step15RunResult{RunID: runID, OutDir: runDir, Manifest: manifest}},
+				trace:      trace, duplicateFinalTrace: true,
+			}
+			handler := jobs.NewFillFormPythonHandler(runner, pythonpkg.NewArtifactArchiver(&fakeArtifactRegistrar{}, nil), runevent.NewService(events, nil), zap.NewNop(), jobs.WithFillRunLifecycle(lifecycle))
+			job := fillFormJob(runDir)
+			job.ResourceID = runID
+			job.Payload["rows"] = test.rows
+
+			err := handler.Handle(context.Background(), &job)
+
+			require.NoError(t, err)
+			require.Contains(t, lifecycle.progress, fillRunProgressRecord{runID: runID, done: 0, total: 3})
+			require.Contains(t, lifecycle.progress, fillRunProgressRecord{runID: runID, done: 1, total: 3})
+			require.Contains(t, lifecycle.progress, fillRunProgressRecord{runID: runID, done: 2, total: 3})
+			completedEvents := 0
+			for _, event := range events.events {
+				if event.EventType == runevent.EventProgress && event.Payload["row_index"] != nil {
+					completedEvents++
+				}
+			}
+			require.Equal(t, 2, completedEvents, "checkpoint and final trace must not double-count fields")
+		})
+	}
+}
+
 func TestFillFormPythonHandlerRunnerErrorReturnsError(t *testing.T) {
 	runDir := t.TempDir()
 	runner := &pythonpkg.FakeRunner{Err: errors.New("python failed")}
@@ -239,6 +341,28 @@ func fillFormJob(runDir string) jobs.Job {
 			"out_dir":          runDir,
 		},
 	}
+}
+
+type checkpointTraceRunner struct {
+	*pythonpkg.FakeRunner
+	trace               string
+	duplicateFinalTrace bool
+}
+
+func (r *checkpointTraceRunner) RunStep15Agent(ctx context.Context, req pythonpkg.Step15RunRequest) (*pythonpkg.Step15RunResult, error) {
+	line := `{"field_id":"field-1","step":"field_completed","payload":{"final_prediction":{"row_index":4,"answer_status":"answered","answer_value":"ok"}}}` + "\n"
+	if r.trace != "" {
+		line = r.trace
+	}
+	if err := os.WriteFile(filepath.Join(req.OutDir, "trace.checkpoint.jsonl"), []byte(line), 0o644); err != nil {
+		return nil, err
+	}
+	if r.duplicateFinalTrace {
+		if err := os.WriteFile(filepath.Join(req.OutDir, "trace.jsonl"), []byte(line), 0o644); err != nil {
+			return nil, err
+		}
+	}
+	return r.FakeRunner.RunStep15Agent(ctx, req)
 }
 
 func manifestWithArtifacts(t *testing.T) (string, *pythonpkg.RunManifest) {

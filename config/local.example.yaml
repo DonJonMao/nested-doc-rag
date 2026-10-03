@@ -15,7 +15,7 @@ services:
   chat_endpoint: http://111.19.156.30:8006/v1/chat/completions
   chat_model: deepseek-v4-flash
   chat_api_key_env: DEEPSEEK_API_KEY
-  timeout_seconds: 120
+  timeout_seconds: 0
 
 qdrant:
   collection_name: datacenter_chunks_v1
@@ -26,10 +26,14 @@ qdrant:
   timeout: 60
 
 retrieval:
-  target_namespace: xixian_4
-  global_namespace: global
+  # Frontend fill runs pass these from the selected knowledge bases.
+  # CLI-only runs should set them explicitly with --target-namespace/--global-namespace.
+  target_namespace: ""
+  global_namespace: ""
   query_layers: [fact, evidence, intro_doc, raw_text, meta]
   plan: layered
+  sufficiency_enabled: true
+  schema_first_enabled: false
   vector_top_k: 40
   rerank_top_n: 10
   layer_top_k: 8
@@ -41,39 +45,44 @@ retrieval:
   parent_payload_neighbor_window: 1
   parent_payload_include_raw_parent_text: true
   layered_plan:
-    - layer_name: target_main_fact
-      description: 目标机房主知识库事实行，优先作为可填答案来源。
+    - layer_name: target_structured_fact
+      description: 目标机房字段和值明确的结构化事实，仍需字段与范围校验。
       namespaces: target
-      corpus_layers: [fact, evidence]
-      source_types: [main_excel_capability]
+      corpus_layers: ["fact", "evidence"]
+      evidence_kinds: ["structured_field"]
+      source_types: ["main_excel_capability"]
       vector_top_k: 16
       rerank_top_n: 5
-    - layer_name: target_structured_detail
-      description: 目标机房下钻出来的结构化表格内容，用于补充主表不足。
+    - layer_name: target_table_detail
+      description: 目标机房表格行，保留真实来源，不自动视为字段事实。
       namespaces: target
-      corpus_layers: [fact]
-      source_types: [embedded_word_table]
+      corpus_layers: ["fact", "raw_text"]
+      evidence_kinds: ["table_row"]
+      source_types: ["embedded_word_table", "embedded_raw_segment", "uploaded_excel_row", "uploaded_docx_table_row"]
       vector_top_k: 12
       rerank_top_n: 3
-    - layer_name: target_raw_detail
-      description: 目标机房下钻原文段落或表格行，只做补充线索。
+    - layer_name: target_text_detail
+      description: 目标机房原文段落与文本块，依据语义与范围判断支持程度。
       namespaces: target
-      corpus_layers: [raw_text]
-      source_types: [embedded_raw_segment]
+      corpus_layers: ["fact", "raw_text"]
+      evidence_kinds: ["paragraph", "document_chunk"]
+      source_types: ["embedded_raw_segment", "uploaded_docx_paragraph", "uploaded_text_chunk"]
       vector_top_k: 12
       rerank_top_n: 3
     - layer_name: global_intro
       description: 全局介绍文档，用于解释园区级背景，不应无理由覆盖目标机房主表。
       namespaces: global
-      corpus_layers: [intro_doc]
-      source_types: [intro_doc_paragraph, intro_doc_table_row]
+      corpus_layers: ["intro_doc"]
+      evidence_kinds: ["document_intro"]
+      source_types: ["intro_doc_paragraph"]
       vector_top_k: 10
       rerank_top_n: 3
     - layer_name: global_detail
-      description: 全局下钻结构化或原文材料，只做低优先级补充。
+      description: 全局结构化、表格与原文材料，只做低优先级补充。
       namespaces: global
-      corpus_layers: [fact, raw_text]
-      source_types: [embedded_word_table, embedded_raw_segment]
+      corpus_layers: ["fact", "evidence", "raw_text", "intro_doc"]
+      evidence_kinds: ["structured_field", "table_row", "paragraph", "document_chunk"]
+      source_types: ["main_excel_capability", "embedded_word_table", "embedded_raw_segment", "intro_doc_table_row", "uploaded_excel_row", "uploaded_docx_paragraph", "uploaded_docx_table_row", "uploaded_text_chunk"]
       vector_top_k: 10
       rerank_top_n: 2
 
@@ -93,7 +102,7 @@ grounding:
 
 evaluation:
   default_rows: [4, 5, 13, 16, 25, 26, 31, 36, 53, 117]
-  timeout_seconds: 120
+  timeout_seconds: 0
   resume: false
   judge_model: deepseek-v4-flash
   metrics_output: artifacts/15_vector_store/base_cloud_closed_book_eval/summary.json
@@ -106,11 +115,12 @@ excel:
   preserve_styles: true
 
 writeback:
+  existing_value_policy: preserve
   allow_uncertain: false
   uncertain_style: red_fill
   uncertain_comment_prefix: "[UNCERTAIN]"
   embed_evidence_images: true
-  evidence_image_mode: adjacent_columns
+  evidence_image_mode: append_sheet
   max_evidence_images_per_field: 3
   max_comment_chars: 2000
   evidence_image_max_width_px: 360
@@ -127,3 +137,10 @@ agent:
   skip_generation_when_no_evidence: true
   human_review_on_conflict: true
   llm_json_repair: true
+
+agentscope:
+  enabled: false
+  mode: "off"
+
+agentic_mas:
+  enabled: false

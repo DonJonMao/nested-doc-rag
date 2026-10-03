@@ -7,6 +7,8 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
+from nested_doc_rag.evidence_record import normalize_evidence_record
+from nested_doc_rag.evidence_resolver import resolve_evidence_refs
 from nested_doc_rag.excel.comments import format_source_comment
 from nested_doc_rag.excel.writeback import patch_workbook, prepare_writeback_item
 from nested_doc_rag.io import read_json, read_jsonl, write_jsonl
@@ -28,6 +30,26 @@ def make_prediction(
     reference_docs: list[dict] | None = None,
     evidence_ids: list[str] | None = None,
 ) -> FieldPrediction:
+    validation = dict(validation or {})
+    refs = []
+    if status == "answered":
+        # Layout tests provide an explicit, independent authoritative hit. A
+        # chunk ID by itself no longer grants permission to write confirmed.
+        source = dict((reference_docs or [{}])[0])
+        hit = normalize_evidence_record({
+            **source, "chunk_id": "chunk_1", "knowledge_base_id": "kb_fixture", "namespace": "fixture_room",
+            "evidence_kind": "structured_field", "corpus_layer": "fact", "source_type": "uploaded_excel_row",
+            "file_name": source.get("file_name") or "fixture_能力清单.xlsx",
+            "relative_path": source.get("relative_path") or source.get("file_name") or "fixture_能力清单.xlsx",
+            "sheet_name": source.get("sheet_name") or "能力", "row_index": 2,
+            "cell_range": source.get("cell_range") or source.get("cell") or "B2:C2",
+            "raw_source_text": source.get("text_preview") or "固定证据：测试原文",
+            "raw_text": source.get("text_preview") or "固定证据：测试原文",
+        })
+        resolution = resolve_evidence_refs(["chunk_1"], [hit])
+        assert resolution.resolvable, resolution.errors
+        refs = resolution.refs
+        validation["fixture_retrieval_hits"] = [hit]
     return FieldPrediction(
         field_id=field_id,
         row_index=4,
@@ -36,11 +58,19 @@ def make_prediction(
         answer_status=status,
         confidence=confidence,
         source_chunk_ids=["chunk_1"],
-        evidence_attachment_ids=["img_1"] if evidence_ids is None else evidence_ids,
+        evidence_refs=refs,
+        evidence_attachment_ids=(["img_1"] if status != "answered" else []) if evidence_ids is None else evidence_ids,
         reference_source_documents=reference_docs or [],
         reference_chunk_ids=[str(doc.get("chunk_id")) for doc in reference_docs or [] if doc.get("chunk_id")],
-        validation=validation or {},
+        validation=validation,
     )
+
+
+def patch_fixture_workbook(template: Path, predictions: list[FieldPrediction], output: Path, **kwargs):
+    """Keep the explicit old image-layout coverage with new source authority."""
+    config = {"evidence_image_mode": "adjacent_columns", **kwargs.pop("writeback_config", {})}
+    authority = {prediction.field_id: prediction.validation.get("fixture_retrieval_hits", []) for prediction in predictions}
+    return patch_workbook(template, predictions, output, retrieval_hits_by_field_id=authority, writeback_config=config, **kwargs)
 
 
 def make_template(path: Path) -> None:
@@ -91,7 +121,8 @@ def test_write_answered_cell(tmp_path: Path) -> None:
     output = tmp_path / "filled_form.xlsx"
     make_template(template)
 
-    summary = patch_workbook(template, [make_prediction("field_1", "C4", "new answer")], output)
+    summary = patch_fixture_workbook(template, [make_prediction("field_1", "C4", "new answer")], output,
+                                     writeback_config={"existing_value_policy": "overwrite_confirmed"})
 
     workbook = load_workbook(output)
     assert workbook["Sheet1"]["C4"].value == "new answer"
@@ -106,15 +137,15 @@ def test_skip_not_found(tmp_path: Path) -> None:
     output = tmp_path / "filled_form.xlsx"
     make_template(template)
 
-    summary = patch_workbook(template, [make_prediction("field_1", "C5", "未找到", status="not_found")], output)
+    summary = patch_fixture_workbook(template, [make_prediction("field_1", "C5", "未找到", status="not_found")], output)
 
     workbook = load_workbook(output)
     assert workbook["Sheet1"]["C5"].value == "keep me"
     assert summary.written_count == 0
     audit = read_jsonl(tmp_path / "writeback_audit.jsonl")
     review_items = read_jsonl(tmp_path / "review_items.jsonl")
-    assert audit[0]["reason"] == "skipped_status"
-    assert review_items[0]["reason"] == "skipped_status"
+    assert audit[0]["reason"] == "target_non_empty"
+    assert review_items[0]["reason"] == "target_non_empty"
 
 
 def test_preserve_style(tmp_path: Path) -> None:
@@ -122,7 +153,8 @@ def test_preserve_style(tmp_path: Path) -> None:
     output = tmp_path / "filled_form.xlsx"
     make_template(template)
 
-    patch_workbook(template, [make_prediction("field_1", "C4", "new answer")], output)
+    patch_fixture_workbook(template, [make_prediction("field_1", "C4", "new answer")], output,
+                           writeback_config={"existing_value_policy": "overwrite_confirmed"})
 
     workbook = load_workbook(output)
     worksheet = workbook["Sheet1"]
@@ -142,7 +174,7 @@ def test_comment_contains_evidence(tmp_path: Path) -> None:
     output = tmp_path / "filled_form.xlsx"
     make_template(template)
 
-    patch_workbook(
+    patch_fixture_workbook(
         template,
         [
             make_prediction(
@@ -161,6 +193,7 @@ def test_comment_contains_evidence(tmp_path: Path) -> None:
         ],
         output,
         trace_by_field={"field_1": "trace_001"},
+        writeback_config={"existing_value_policy": "overwrite_confirmed"},
     )
 
     workbook = load_workbook(output)
@@ -180,7 +213,7 @@ def test_skip_formula_cell(tmp_path: Path) -> None:
     output = tmp_path / "filled_form.xlsx"
     make_template(template)
 
-    summary = patch_workbook(template, [make_prediction("field_1", "D4", "3")], output)
+    summary = patch_fixture_workbook(template, [make_prediction("field_1", "D4", "3")], output)
 
     workbook = load_workbook(output, data_only=False)
     assert workbook["Sheet1"]["D4"].value == "=SUM(A1:A2)"
@@ -194,7 +227,7 @@ def test_duplicate_target_cell_conflict(tmp_path: Path) -> None:
     output = tmp_path / "filled_form.xlsx"
     make_template(template)
 
-    summary = patch_workbook(
+    summary = patch_fixture_workbook(
         template,
         [
             make_prediction("field_1", "C4", "first"),
@@ -216,7 +249,7 @@ def test_invalid_target_cell_audit(tmp_path: Path) -> None:
     output = tmp_path / "filled_form.xlsx"
     make_template(template)
 
-    summary = patch_workbook(template, [make_prediction("field_1", "Missing!C4", "new answer")], output)
+    summary = patch_fixture_workbook(template, [make_prediction("field_1", "Missing!C4", "new answer")], output)
 
     workbook = load_workbook(output)
     assert workbook["Sheet1"]["C4"].value == "old answer"
@@ -251,7 +284,7 @@ def test_uncertain_default_off_goes_to_review_only(tmp_path: Path) -> None:
         ],
     )
 
-    summary = patch_workbook(
+    summary = patch_fixture_workbook(
         template,
         [prediction],
         output,
@@ -292,7 +325,7 @@ def test_uncertain_allowed_writes_red_comment_and_evidence(tmp_path: Path) -> No
         evidence_ids=[],
     )
 
-    summary = patch_workbook(
+    summary = patch_fixture_workbook(
         template,
         [prediction],
         output,
@@ -347,7 +380,7 @@ def test_uncertain_comment_is_truncated_to_configured_limit(tmp_path: Path) -> N
         evidence_ids=[],
     )
 
-    patch_workbook(
+    patch_fixture_workbook(
         template,
         [prediction],
         output,
@@ -371,7 +404,7 @@ def test_flagged_does_not_write(tmp_path: Path) -> None:
     output = tmp_path / "filled_form.xlsx"
     make_template(template)
 
-    patch_workbook(
+    patch_fixture_workbook(
         template,
         [make_prediction("field_1", "C5", "未找到", status="not_found")],
         output,
@@ -383,7 +416,8 @@ def test_flagged_does_not_write(tmp_path: Path) -> None:
     assert workbook["Sheet1"]["C5"].value == "keep me"
     audit = read_jsonl(tmp_path / "writeback_audit.jsonl")
     assert audit[0]["status"] == "flagged"
-    assert audit[0]["writeback_action"] == "review_only"
+    assert audit[0]["writeback_action"] == "skipped_non_empty_cell"
+    assert audit[0]["error_code"] == "WB_TARGET_NON_EMPTY"
 
 
 def test_proof_attachment_ids_generate_image_evidence_artifact(tmp_path: Path) -> None:
@@ -407,7 +441,7 @@ def test_proof_attachment_ids_generate_image_evidence_artifact(tmp_path: Path) -
         evidence_ids=[],
     )
 
-    summary = patch_workbook(
+    summary = patch_fixture_workbook(
         template,
         [prediction],
         output,
@@ -459,7 +493,7 @@ def test_adjacent_columns_append_local_image_proof(tmp_path: Path) -> None:
         evidence_ids=[],
     )
 
-    patch_workbook(
+    patch_fixture_workbook(
         template,
         [prediction],
         output,
@@ -505,7 +539,7 @@ def test_adjacent_columns_extracts_xlsx_media_image(tmp_path: Path) -> None:
         evidence_ids=[],
     )
 
-    patch_workbook(
+    patch_fixture_workbook(
         template,
         [prediction],
         output,
@@ -576,7 +610,7 @@ def test_adjacent_columns_resolves_dispimg_media_from_attachment_id(tmp_path: Pa
         evidence_ids=[],
     )
 
-    patch_workbook(
+    patch_fixture_workbook(
         template,
         [prediction],
         output,
@@ -588,6 +622,79 @@ def test_adjacent_columns_resolves_dispimg_media_from_attachment_id(tmp_path: Pa
     workbook = load_workbook(output)
     assert_adjacent_evidence_layout(workbook, image_count=1)
     assert "A3:L3" in workbook["Sheet1"]["D6"].value
+
+
+def test_adjacent_columns_resolves_seeded_worker_source_workbook(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    artifacts_dir = tmp_path / "artifacts"
+    source_workbook = artifacts_dir / "seed_knowledge" / "data" / "source.xlsx"
+    output = artifacts_dir / "runs" / "run_1" / "filled_form.xlsx"
+    make_template(template)
+    source_workbook.parent.mkdir(parents=True)
+
+    source = Workbook()
+    source_sheet = source.active
+    source_sheet.title = "Source"
+    source_sheet["E3"] = '=_xlfn.DISPIMG("ID_TEST_IMAGE",1)'
+    source.save(source_workbook)
+    with zipfile.ZipFile(source_workbook, "a") as archive:
+        archive.writestr("xl/media/proof.png", base64.b64decode(TINY_PNG))
+        archive.writestr(
+            "xl/cellimages.xml",
+            """
+            <etc:cellImages xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+              xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+              xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+              xmlns:etc="http://www.wps.cn/officeDocument/2017/etCustomData">
+              <etc:cellImage>
+                <xdr:pic>
+                  <xdr:nvPicPr><xdr:cNvPr id="1" name="ID_TEST_IMAGE"/></xdr:nvPicPr>
+                  <xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill>
+                </xdr:pic>
+              </etc:cellImage>
+            </etc:cellImages>
+            """,
+        )
+        archive.writestr(
+            "xl/_rels/cellimages.xml.rels",
+            """
+            <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+              <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/proof.png"/>
+            </Relationships>
+            """,
+        )
+
+    prediction = make_prediction(
+        "field_1",
+        "C6",
+        "双路市电",
+        status="partial_clue",
+        reference_docs=[
+            {
+                "chunk_id": "chunk_1",
+                "file_name": "source.xlsx",
+                "relative_path": "source.xlsx",
+                "sheet_name": "Source",
+                "cell": "A3:L3",
+                "text_preview": "供电采用双路市电。",
+                "proof_attachment_ids": ["att_file_abc_E3_dispimg"],
+            }
+        ],
+        evidence_ids=[],
+    )
+
+    patch_fixture_workbook(
+        template,
+        [prediction],
+        output,
+        overlays_by_field_id={"field_1": {"writeback_allowed": False, "critic_flags": [], "review_required": True}},
+        writeback_config={"allow_uncertain": True},
+        run_id="run_1",
+    )
+
+    workbook = load_workbook(output)
+    assert_adjacent_evidence_layout(workbook, image_count=1)
+    assert "source.xlsx" in workbook["Sheet1"]["D6"].value
 
 
 def test_adjacent_columns_uses_proof_attachment_registry_for_attachment_only_prediction(tmp_path: Path) -> None:
@@ -618,7 +725,7 @@ def test_adjacent_columns_uses_proof_attachment_registry_for_attachment_only_pre
         evidence_ids=["att_registry_img"],
     )
 
-    patch_workbook(
+    patch_fixture_workbook(
         template,
         [prediction],
         output,
@@ -691,7 +798,7 @@ def test_adjacent_columns_resolves_attachment_only_dispimg_from_manifest(tmp_pat
         evidence_ids=["att_file_abc_E3_dispimg"],
     )
 
-    patch_workbook(
+    patch_fixture_workbook(
         template,
         [prediction],
         output,

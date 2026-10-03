@@ -43,6 +43,7 @@ type ArtifactService interface {
 
 type KnowledgeBaseReader interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*knowledgepkg.KnowledgeBase, error)
+	ListReadyOptionsByWorkspace(ctx context.Context, workspaceID uuid.UUID, limit int, offset int) ([]knowledgepkg.KnowledgeBase, error)
 }
 
 type FormFileService struct {
@@ -143,6 +144,7 @@ type FillRunService struct {
 	logger     *zap.Logger
 	cfg        config.Config
 	kbs        KnowledgeBaseReader
+	pinned     PinnedFillRunStore
 }
 
 func NewFillRunService(repo FillRunRepo, forms FormFileRepo, jobs JobService, artifacts ArtifactService, authorizer WorkspaceAuthorizer, auditSvc *audit.Service, logger *zap.Logger, cfg config.Config) *FillRunService {
@@ -156,7 +158,19 @@ func (s *FillRunService) SetKnowledgeBaseReader(reader KnowledgeBaseReader) {
 	s.kbs = reader
 }
 
+func (s *FillRunService) SetPinnedStore(store PinnedFillRunStore) {
+	s.pinned = store
+}
+
 func (s *FillRunService) CreateFillRun(ctx context.Context, req CreateFillRunRequest, actor auth.Principal) (*FillRun, error) {
+	if s.pinned != nil {
+		return s.createPinnedFillRun(ctx, req, actor)
+	}
+	// The pool-backed production repository must never use the legacy sequence
+	// of independent writes. In-memory implementations retain the old contract.
+	if _, production := s.repo.(*PGXFillRunRepo); production {
+		return nil, httpx.NewAppError(httpx.CodeInternal, "pinned fill store is not configured", http.StatusInternalServerError, nil, nil)
+	}
 	formFile, err := s.forms.GetByID(ctx, req.FormFileID)
 	if err != nil {
 		return nil, err
@@ -173,8 +187,26 @@ func (s *FillRunService) CreateFillRun(ctx context.Context, req CreateFillRunReq
 	if err := s.productizeNonAdminFillRequest(ctx, &req, actor); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(req.TargetNamespace) == "" {
+	if req.GlobalKnowledgeBaseID != nil && *req.GlobalKnowledgeBaseID != uuid.Nil {
+		globalNamespace, err := s.resolveGlobalNamespace(ctx, req.WorkspaceID, req.GlobalKnowledgeBaseID, req.GlobalNamespace)
+		if err != nil {
+			return nil, err
+		}
+		req.GlobalNamespace = globalNamespace
+	}
+	targetNamespace := strings.TrimSpace(req.TargetNamespace)
+	if targetNamespace == "" {
 		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "target_namespace is required", http.StatusBadRequest, nil, nil)
+	}
+	if isGlobalNamespace(targetNamespace) {
+		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "global knowledge base cannot be used as target namespace", http.StatusBadRequest, nil, nil)
+	}
+	globalNamespace := strings.TrimSpace(req.GlobalNamespace)
+	if globalNamespace == "" {
+		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "global_namespace is required", http.StatusBadRequest, nil, nil)
+	}
+	if strings.EqualFold(targetNamespace, globalNamespace) {
+		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "global namespace must differ from target namespace", http.StatusBadRequest, nil, nil)
 	}
 	runName, err := normalizeFillRunName(req.Name, formFile.Filename)
 	if err != nil {
@@ -192,8 +224,8 @@ func (s *FillRunService) CreateFillRun(ctx context.Context, req CreateFillRunReq
 		Name:             runName,
 		KnowledgeBaseID:  req.KnowledgeBaseID,
 		IndexVersionID:   req.IndexVersionID,
-		TargetNamespace:  strings.TrimSpace(req.TargetNamespace),
-		GlobalNamespace:  defaultString(req.GlobalNamespace, "global"),
+		TargetNamespace:  targetNamespace,
+		GlobalNamespace:  globalNamespace,
 		RoomContext:      strings.TrimSpace(req.RoomContext),
 		RowsSpec:         defaultString(req.Rows, s.cfg.Python.Step15DefaultRows),
 		RetrievalMode:    defaultString(req.RetrievalMode, s.cfg.Python.Step15DefaultRetrievalMode),
@@ -240,21 +272,9 @@ func (s *FillRunService) productizeNonAdminFillRequest(ctx context.Context, req 
 	if s.kbs == nil {
 		return httpx.NewAppError(httpx.CodeInternal, "knowledge base reader is not configured", http.StatusInternalServerError, nil, nil)
 	}
-	kb, err := s.kbs.GetByID(ctx, *req.KnowledgeBaseID)
+	kb, err := s.resolveReadyKnowledgeBase(ctx, *req.KnowledgeBaseID, req.WorkspaceID, "knowledge base")
 	if err != nil {
 		return err
-	}
-	if kb.WorkspaceID != req.WorkspaceID {
-		return httpx.NewAppError(httpx.CodeForbidden, "knowledge base workspace mismatch", http.StatusForbidden, nil, nil)
-	}
-	if kb.Status != knowledgepkg.KnowledgeBaseStatusReady {
-		return httpx.NewAppError(httpx.CodeConflict, "knowledge base is not ready", http.StatusConflict, map[string]string{"status": kb.Status}, nil)
-	}
-	if kb.CurrentIndexVersionID == nil {
-		return httpx.NewAppError(httpx.CodeConflict, "knowledge base has no current index version", http.StatusConflict, nil, nil)
-	}
-	if strings.TrimSpace(kb.Namespace) == "" {
-		return httpx.NewAppError(httpx.CodeConflict, "knowledge base namespace is empty", http.StatusConflict, nil, nil)
 	}
 	if req.IndexVersionID != nil && *req.IndexVersionID != *kb.CurrentIndexVersionID {
 		return httpx.NewAppError(httpx.CodeConflict, "index version is not current for knowledge base", http.StatusConflict, nil, nil)
@@ -263,10 +283,17 @@ func (s *FillRunService) productizeNonAdminFillRequest(ctx context.Context, req 
 		return httpx.NewAppError(httpx.CodeConflict, "target namespace does not match knowledge base", http.StatusConflict, nil, nil)
 	}
 	writeback := true
+	globalNamespace, err := s.resolveGlobalNamespace(ctx, req.WorkspaceID, req.GlobalKnowledgeBaseID, req.GlobalNamespace)
+	if err != nil {
+		return err
+	}
+	if strings.EqualFold(kb.Namespace, globalNamespace) {
+		return httpx.NewAppError(httpx.CodeInvalidArgument, "global namespace must differ from target namespace", http.StatusBadRequest, nil, nil)
+	}
 	req.KnowledgeBaseID = &kb.ID
 	req.IndexVersionID = kb.CurrentIndexVersionID
 	req.TargetNamespace = kb.Namespace
-	req.GlobalNamespace = "global"
+	req.GlobalNamespace = globalNamespace
 	req.Rows = s.cfg.Python.Step15DefaultRows
 	req.RetrievalMode = s.cfg.Python.Step15DefaultRetrievalMode
 	req.PromptVersion = s.cfg.Python.Step15DefaultPromptVersion
@@ -280,41 +307,68 @@ func (s *FillRunService) CreateSimpleFillRun(ctx context.Context, req CreateSimp
 	if req.KnowledgeBaseID == uuid.Nil {
 		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "knowledge_base_id is required", http.StatusBadRequest, nil, nil)
 	}
+	if s.pinned != nil {
+		var globalID *uuid.UUID
+		if req.GlobalKnowledgeBaseID != uuid.Nil {
+			globalID = &req.GlobalKnowledgeBaseID
+		}
+		writeback := true
+		return s.CreateFillRun(ctx, CreateFillRunRequest{
+			WorkspaceID: req.WorkspaceID, FormFileID: req.FormFileID, Name: req.Name,
+			KnowledgeBaseID: &req.KnowledgeBaseID, GlobalKnowledgeBaseID: globalID,
+			GlobalNamespace: req.GlobalNamespace, RoomContext: req.RoomContext,
+			Rows: s.cfg.Python.Step15DefaultRows, RetrievalMode: s.cfg.Python.Step15DefaultRetrievalMode,
+			PromptVersion: s.cfg.Python.Step15DefaultPromptVersion, Writeback: &writeback,
+		}, actor)
+	}
 	if s.kbs == nil {
 		return nil, httpx.NewAppError(httpx.CodeInternal, "knowledge base reader is not configured", http.StatusInternalServerError, nil, nil)
 	}
-	kb, err := s.kbs.GetByID(ctx, req.KnowledgeBaseID)
+	kb, err := s.resolveReadyKnowledgeBase(ctx, req.KnowledgeBaseID, req.WorkspaceID, "knowledge base")
 	if err != nil {
 		return nil, err
 	}
-	if kb.WorkspaceID != req.WorkspaceID {
-		return nil, httpx.NewAppError(httpx.CodeForbidden, "knowledge base workspace mismatch", http.StatusForbidden, nil, nil)
-	}
-	if kb.Status != knowledgepkg.KnowledgeBaseStatusReady {
-		return nil, httpx.NewAppError(httpx.CodeConflict, "knowledge base is not ready", http.StatusConflict, map[string]string{"status": kb.Status}, nil)
-	}
-	if kb.CurrentIndexVersionID == nil {
-		return nil, httpx.NewAppError(httpx.CodeConflict, "knowledge base has no current index version", http.StatusConflict, nil, nil)
-	}
-	if strings.TrimSpace(kb.Namespace) == "" {
-		return nil, httpx.NewAppError(httpx.CodeConflict, "knowledge base namespace is empty", http.StatusConflict, nil, nil)
-	}
 	writeback := true
+	var globalKnowledgeBaseID *uuid.UUID
+	globalNamespace := strings.TrimSpace(req.GlobalNamespace)
+	if req.GlobalKnowledgeBaseID != uuid.Nil {
+		globalKnowledgeBaseID = &req.GlobalKnowledgeBaseID
+		globalNamespace, err = s.resolveGlobalNamespace(ctx, req.WorkspaceID, globalKnowledgeBaseID, globalNamespace)
+		if err != nil {
+			return nil, err
+		}
+	} else if globalNamespace == "" {
+		globalKB, resolveErr := s.resolveAutomaticGlobalKnowledgeBase(ctx, req.WorkspaceID)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		globalKnowledgeBaseID = &globalKB.ID
+		globalNamespace = strings.TrimSpace(globalKB.Namespace)
+	} else {
+		globalNamespace, err = s.resolveGlobalNamespace(ctx, req.WorkspaceID, nil, globalNamespace)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if strings.EqualFold(kb.Namespace, globalNamespace) {
+		return nil, httpx.NewAppError(httpx.CodeInvalidArgument, "global namespace must differ from target namespace", http.StatusBadRequest, nil, nil)
+	}
 	return s.CreateFillRun(ctx, CreateFillRunRequest{
-		WorkspaceID:     req.WorkspaceID,
-		FormFileID:      req.FormFileID,
-		KnowledgeBaseID: &kb.ID,
-		IndexVersionID:  kb.CurrentIndexVersionID,
-		Name:            req.Name,
-		TargetNamespace: kb.Namespace,
-		GlobalNamespace: "global",
-		RoomContext:     req.RoomContext,
-		Rows:            s.cfg.Python.Step15DefaultRows,
-		RetrievalMode:   s.cfg.Python.Step15DefaultRetrievalMode,
-		PromptVersion:   s.cfg.Python.Step15DefaultPromptVersion,
-		Judge:           false,
-		UseJudgeCache:   false,
-		Writeback:       &writeback,
+		WorkspaceID:           req.WorkspaceID,
+		FormFileID:            req.FormFileID,
+		KnowledgeBaseID:       &kb.ID,
+		IndexVersionID:        kb.CurrentIndexVersionID,
+		GlobalKnowledgeBaseID: globalKnowledgeBaseID,
+		Name:                  req.Name,
+		TargetNamespace:       kb.Namespace,
+		GlobalNamespace:       globalNamespace,
+		RoomContext:           req.RoomContext,
+		Rows:                  s.cfg.Python.Step15DefaultRows,
+		RetrievalMode:         s.cfg.Python.Step15DefaultRetrievalMode,
+		PromptVersion:         s.cfg.Python.Step15DefaultPromptVersion,
+		Judge:                 false,
+		UseJudgeCache:         false,
+		Writeback:             &writeback,
 	}, actor)
 }
 
@@ -397,6 +451,73 @@ func defaultString(value string, fallback string) string {
 		return value
 	}
 	return strings.TrimSpace(fallback)
+}
+
+func (s *FillRunService) resolveReadyKnowledgeBase(ctx context.Context, id uuid.UUID, workspaceID uuid.UUID, label string) (*knowledgepkg.KnowledgeBase, error) {
+	if s.kbs == nil {
+		return nil, httpx.NewAppError(httpx.CodeInternal, "knowledge base reader is not configured", http.StatusInternalServerError, nil, nil)
+	}
+	kb, err := s.kbs.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if kb.WorkspaceID != workspaceID {
+		return nil, httpx.NewAppError(httpx.CodeForbidden, label+" workspace mismatch", http.StatusForbidden, nil, nil)
+	}
+	if kb.Status != knowledgepkg.KnowledgeBaseStatusReady {
+		return nil, httpx.NewAppError(httpx.CodeConflict, label+" is not ready", http.StatusConflict, map[string]string{"status": kb.Status}, nil)
+	}
+	if kb.CurrentIndexVersionID == nil {
+		return nil, httpx.NewAppError(httpx.CodeConflict, label+" has no current index version", http.StatusConflict, nil, nil)
+	}
+	if strings.TrimSpace(kb.Namespace) == "" {
+		return nil, httpx.NewAppError(httpx.CodeConflict, label+" namespace is empty", http.StatusConflict, nil, nil)
+	}
+	return kb, nil
+}
+
+func (s *FillRunService) resolveGlobalNamespace(ctx context.Context, workspaceID uuid.UUID, globalKnowledgeBaseID *uuid.UUID, requested string) (string, error) {
+	if globalKnowledgeBaseID == nil || *globalKnowledgeBaseID == uuid.Nil {
+		if requested = strings.TrimSpace(requested); requested != "" {
+			return requested, nil
+		}
+		return "", httpx.NewAppError(httpx.CodeInvalidArgument, "global_namespace is required", http.StatusBadRequest, nil, nil)
+	}
+	kb, err := s.resolveReadyKnowledgeBase(ctx, *globalKnowledgeBaseID, workspaceID, "global knowledge base")
+	if err != nil {
+		return "", err
+	}
+	namespace := strings.TrimSpace(kb.Namespace)
+	if requested = strings.TrimSpace(requested); requested != "" && requested != namespace {
+		return "", httpx.NewAppError(httpx.CodeConflict, "global namespace does not match knowledge base", http.StatusConflict, nil, nil)
+	}
+	return namespace, nil
+}
+
+func (s *FillRunService) resolveAutomaticGlobalKnowledgeBase(ctx context.Context, workspaceID uuid.UUID) (*knowledgepkg.KnowledgeBase, error) {
+	if s.kbs == nil {
+		return nil, httpx.NewAppError(httpx.CodeInternal, "knowledge base reader is not configured", http.StatusInternalServerError, nil, nil)
+	}
+	options, err := s.kbs.ListReadyOptionsByWorkspace(ctx, workspaceID, 200, 0)
+	if err != nil {
+		return nil, err
+	}
+	for index := range options {
+		if isGlobalNamespace(options[index].Namespace) && options[index].CurrentIndexVersionID != nil {
+			return &options[index], nil
+		}
+	}
+	return nil, httpx.NewAppError(
+		httpx.CodeConflict,
+		"global knowledge base is not ready or missing",
+		http.StatusConflict,
+		map[string]string{"namespace": "global"},
+		nil,
+	)
+}
+
+func isGlobalNamespace(namespace string) bool {
+	return strings.EqualFold(strings.TrimSpace(namespace), "global")
 }
 
 func normalizeFillRunName(value string, fallbackFilename string) (string, error) {

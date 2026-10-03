@@ -1,0 +1,37 @@
+# Run profile for the writeback37 gate settings plus agentic MAS workflows.
+grounding:
+  field_binding_agent_enabled: false
+  slot_decomposition_enabled: false
+  pre_writeback_consistency_enabled: false
+  relaxed_writeback_gate_enabled: true
+
+agentscope:
+  enabled: true
+  mode: agentic_mas
+
+agentic_mas:
+  enabled: true
+  max_rounds: 3
+  max_actions_per_round: 2
+  min_new_evidence: 1
+  stop_on_no_novel_chunks: true
+  prompt_version: agentic_v1
+  workflows:
+    missing_info:
+      enabled: true
+    wrong_answer_risk:
+      enabled: true
+    not_found_recovery:
+      enabled: true
+    uncertainty_conflict:
+      enabled: true
+  retrieval_actions:
+    allow_slot_targeted: true
+    allow_alias_retrieval: true
+    allow_layer_expansion: true
+    allow_source_specific: true
+    allow_contrastive: true
+    allow_disambiguation: true
+  trace:
+    write_agentic_trace: true
+    write_round_states: true

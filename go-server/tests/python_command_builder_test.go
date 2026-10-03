@@ -61,7 +61,7 @@ func TestPythonCommandBuilderNoJudgeAndNoWritebackTemplate(t *testing.T) {
 
 	require.Contains(t, spec.Args, "--no-judge")
 	require.NotContains(t, spec.Args, "--writeback")
-	require.NotContains(t, spec.Args, "--template")
+	require.Equal(t, "/tmp/template.xlsx", argValue(t, spec.Args, "--template"))
 	require.Contains(t, spec.Args, "config/local.yaml")
 }
 

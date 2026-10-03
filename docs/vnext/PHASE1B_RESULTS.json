@@ -1,0 +1,20 @@
+{
+  "phase": "1B",
+  "python": {
+    "tests": 362,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "go_exit_code": 0,
+  "ruff_exit_code": 0,
+  "external_model_calls": 0,
+  "localhost_model_substitute": true,
+  "real_cli_integration_cases": 22,
+  "native_legacy_template_fields": 141,
+  "regression_B": "passed: actual CLI uses fresh uploaded template without historical Step12 fields",
+  "original_workspace_files_verified": 103,
+  "original_workspace_changed_files": [],
+  "artifacts": "artifacts/vnext/phase1b",
+  "fresh_docker_e2e_count": 0
+}

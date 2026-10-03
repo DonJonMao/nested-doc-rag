@@ -1,0 +1,25 @@
+ARG REGISTRY=ghcr.io
+ARG IMAGE_NS=donjonmao/nested-doc-rag
+ARG IMAGE_TAG=writeback-37-livebase-4mode-qdrantfix-nojudge-noasynqtimeout-progressfix-20260710
+
+FROM minio/mc:RELEASE.2024-10-08T09-37-26Z AS minio-mc
+
+FROM ${REGISTRY}/${IMAGE_NS}/gongkan-worker:${IMAGE_TAG}
+
+USER root
+
+RUN mkdir -p /seed/bin /seed/manifest /seed/qdrant /seed/knowledge /seed/form_analysis /seed/format_probe
+
+COPY --from=minio-mc /usr/bin/mc /usr/bin/mc
+
+COPY artifacts/15_vector_store/qdrant/ /seed/qdrant/
+COPY artifacts/12_gongkan_form_analysis/ /seed/form_analysis/12_gongkan_form_analysis/
+COPY artifacts/03_format_probe/ /seed/format_probe/03_format_probe/
+COPY data/ /seed/knowledge/data/
+COPY go-server/deployments/knowledge-seed/object-manifest.tsv /seed/manifest/object-manifest.tsv
+COPY go-server/deployments/knowledge-seed/seed.sh /seed/bin/seed.sh
+COPY go-server/deployments/knowledge-seed/seed_qdrant_http.py /seed/bin/seed_qdrant_http.py
+
+RUN chmod +x /seed/bin/seed.sh /seed/bin/seed_qdrant_http.py
+
+ENTRYPOINT ["/seed/bin/seed.sh"]

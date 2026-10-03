@@ -1,8 +1,16 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import dayjs from 'dayjs'
 import type { RunEvent } from '@/api/types'
 
-defineProps<{ events: RunEvent[] }>()
+const props = defineProps<{ events: RunEvent[] }>()
+
+const visibleEvents = computed(() => props.events.filter((event) => event.event_type !== 'heartbeat'))
+
+function title(event: RunEvent) {
+  if (event.event_type === 'progress') return '行处理完成'
+  return event.event_type
+}
 
 function message(event: RunEvent) {
   return String(event.payload?.message || event.payload?.status || event.event_type)
@@ -12,12 +20,12 @@ function message(event: RunEvent) {
 <template>
   <div class="timeline gk-card">
     <h2 class="gk-card-title">运行事件</h2>
-    <div v-if="events.length === 0" class="timeline__empty">暂无事件</div>
+    <div v-if="visibleEvents.length === 0" class="timeline__empty">暂无事件</div>
     <div v-else class="timeline__list">
-      <div v-for="event in events" :key="`${event.run_id}-${event.sequence}`" class="timeline__item">
+      <div v-for="event in visibleEvents" :key="`${event.run_id}-${event.sequence}`" class="timeline__item">
         <div class="timeline__dot" />
         <div>
-          <div class="timeline__title">{{ event.event_type }}</div>
+          <div class="timeline__title">{{ title(event) }}</div>
           <div class="timeline__message">{{ message(event) }}</div>
           <div class="gk-caption">{{ dayjs(event.created_at).format('YYYY-MM-DD HH:mm:ss') }} · #{{ event.sequence }}</div>
         </div>

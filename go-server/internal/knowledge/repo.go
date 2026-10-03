@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/DonJonMao/nested-doc-rag/go-server/internal/database"
 	"github.com/DonJonMao/nested-doc-rag/go-server/internal/httpx"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -132,7 +133,15 @@ func (r *PGXKnowledgeBaseRepo) ListReadyOptionsByWorkspace(ctx context.Context, 
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := r.pool.Query(ctx, selectKnowledgeBaseSQL()+` WHERE workspace_id = $1 AND status = $2 ORDER BY name ASC LIMIT $3 OFFSET $4`, workspaceID, KnowledgeBaseStatusReady, limit, offset)
+	rows, err := r.pool.Query(ctx, selectKnowledgeBaseSQL()+` WHERE workspace_id = $1 AND status<>'archived' AND EXISTS (
+	 SELECT 1 FROM knowledge_index_versions v WHERE v.id=knowledge_bases.current_index_version_id
+	 AND v.knowledge_base_id=knowledge_bases.id AND v.workspace_id=knowledge_bases.workspace_id
+	 AND v.qdrant_namespace=knowledge_bases.namespace AND v.qdrant_collection=knowledge_bases.qdrant_collection
+	 AND btrim(v.qdrant_namespace)<>'' AND btrim(v.qdrant_collection)<>'' AND v.id<>'00000000-0000-0000-0000-000000000000'
+	 AND v.knowledge_base_id<>'00000000-0000-0000-0000-000000000000' AND v.workspace_id<>'00000000-0000-0000-0000-000000000000'
+	 AND v.status='ready' AND ((v.storage_contract='versioned_v1' AND v.validation_state='validated')
+	 OR (v.storage_contract='legacy_unversioned' AND v.validation_state='legacy_declared_ready'))
+	) ORDER BY name ASC LIMIT $2 OFFSET $3`, workspaceID, limit, offset)
 	if err != nil {
 		return nil, mapDBError(err, "list ready knowledge base options conflict", "knowledge bases not found")
 	}
@@ -149,16 +158,11 @@ func (r *PGXKnowledgeBaseRepo) ListReadyOptionsByWorkspace(ctx context.Context, 
 }
 
 func (r *PGXKnowledgeBaseRepo) UpdateCurrentIndexVersion(ctx context.Context, kbID uuid.UUID, versionID uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE knowledge_bases SET current_index_version_id = $2, status = $3, last_ingested_at = now(), updated_at = now() WHERE id = $1
-	`, kbID, versionID, KnowledgeBaseStatusReady)
+	kb, err := r.GetByID(ctx, kbID)
 	if err != nil {
-		return mapDBError(err, "update current index version conflict", "knowledge base not found")
+		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return httpx.NewAppError(httpx.CodeNotFound, "knowledge base not found", http.StatusNotFound, nil, nil)
-	}
-	return nil
+	return NewPGXBuildStore(r.pool).ActivateVersion(ctx, kb.ID, kb.WorkspaceID, versionID, kb.CurrentIndexVersionID, kb.ActivationRevision)
 }
 
 func (r *PGXKnowledgeBaseRepo) UpdateStatus(ctx context.Context, kbID uuid.UUID, status string) error {
@@ -211,14 +215,14 @@ func selectKnowledgeBaseSQL() string {
 				WHERE knowledge_documents.knowledge_base_id = knowledge_bases.id
 					AND knowledge_documents.status <> 'deleted'
 			)::INT AS document_count,
-			last_ingested_at, created_by, created_at, updated_at
+			last_ingested_at, created_by, created_at, updated_at, source_revision,source_dirty,activation_revision
 		FROM knowledge_bases`
 }
 
 func scanKnowledgeBase(row pgx.Row) (*KnowledgeBase, error) {
 	var kb KnowledgeBase
 	err := row.Scan(&kb.ID, &kb.WorkspaceID, &kb.Name, &kb.Namespace, &kb.Description, &kb.QdrantCollection, &kb.CurrentIndexVersionID,
-		&kb.Status, &kb.DocumentCount, &kb.LastIngestedAt, &kb.CreatedBy, &kb.CreatedAt, &kb.UpdatedAt)
+		&kb.Status, &kb.DocumentCount, &kb.LastIngestedAt, &kb.CreatedBy, &kb.CreatedAt, &kb.UpdatedAt, &kb.SourceRevision, &kb.SourceDirty, &kb.ActivationRevision)
 	if err != nil {
 		return nil, mapDBError(err, "knowledge base conflict", "knowledge base not found")
 	}
@@ -241,13 +245,36 @@ func (r *PGXKnowledgeDocumentRepo) Create(ctx context.Context, doc KnowledgeDocu
 	if doc.UpdatedAt.IsZero() {
 		doc.UpdatedAt = now
 	}
-	_, err := r.pool.Exec(ctx, `
+	err := database.NewTxManager(r.pool).WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		var workspaceID uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT workspace_id FROM knowledge_bases WHERE id=$1 FOR UPDATE`, doc.KnowledgeBaseID).Scan(&workspaceID); err != nil {
+			return err
+		}
+		if workspaceID != doc.WorkspaceID {
+			return buildConflict("source document owner mismatch")
+		}
+		var fileWorkspace uuid.UUID
+		var fileStatus, fileCategory string
+		var deletedAt *time.Time
+		if err := tx.QueryRow(ctx, `SELECT workspace_id,status,file_category,deleted_at FROM files WHERE id=$1 FOR UPDATE`, doc.FileID).Scan(&fileWorkspace, &fileStatus, &fileCategory, &deletedAt); err != nil {
+			return err
+		}
+		if fileWorkspace != workspaceID || fileStatus != "active" || fileCategory != "knowledge_document" || deletedAt != nil {
+			return buildConflict("source document file is not available")
+		}
+		_, err := tx.Exec(ctx, `
 		INSERT INTO knowledge_documents (
 			id, knowledge_base_id, workspace_id, file_id, filename, document_role, namespace,
 			status, created_by, created_at, updated_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`, doc.ID, doc.KnowledgeBaseID, doc.WorkspaceID, doc.FileID, doc.Filename, doc.DocumentRole, doc.Namespace, doc.Status, doc.CreatedBy, doc.CreatedAt, doc.UpdatedAt)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE knowledge_bases SET source_revision=source_revision+1,source_dirty=true,status='stale',updated_at=now() WHERE id=$1`, doc.KnowledgeBaseID)
+		return err
+	})
 	return mapDBError(err, "knowledge document already exists", "knowledge document not found")
 }
 
@@ -295,18 +322,29 @@ func (r *PGXKnowledgeDocumentRepo) MarkStatus(ctx context.Context, id uuid.UUID,
 }
 
 func (r *PGXKnowledgeDocumentRepo) SoftDelete(ctx context.Context, id uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, `
+	err := database.NewTxManager(r.pool).WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		var kbID uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT knowledge_base_id FROM knowledge_documents WHERE id=$1`, id).Scan(&kbID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `SELECT id FROM knowledge_bases WHERE id=$1 FOR UPDATE`, kbID); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, `
 		UPDATE knowledge_documents
 		SET status = $2, deleted_at = COALESCE(deleted_at, now()), updated_at = now()
-		WHERE id = $1
+		WHERE id = $1 AND deleted_at IS NULL AND status<>'deleted'
 	`, id, KnowledgeDocumentStatusDeleted)
-	if err != nil {
-		return mapDBError(err, "delete knowledge document conflict", "knowledge document not found")
-	}
-	if tag.RowsAffected() == 0 {
-		return httpx.NewAppError(httpx.CodeNotFound, "knowledge document not found", http.StatusNotFound, nil, nil)
-	}
-	return nil
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return nil
+		}
+		_, err = tx.Exec(ctx, `UPDATE knowledge_bases SET source_revision=source_revision+1,source_dirty=true,status='stale',updated_at=now() WHERE id=$1`, kbID)
+		return err
+	})
+	return mapDBError(err, "delete knowledge document conflict", "knowledge document not found")
 }
 
 func selectKnowledgeDocumentSQL() string {
@@ -441,7 +479,7 @@ func selectKnowledgeIndexVersionSQL() string {
 	return `
 		SELECT id, knowledge_base_id, workspace_id, version, qdrant_collection, COALESCE(qdrant_namespace, ''),
 			COALESCE(artifact_dir, ''), COALESCE(manifest_path, ''), status, document_count, chunk_count,
-			created_by, created_at, ready_at, failed_at, COALESCE(error_message, '')
+			created_by, created_at, ready_at, failed_at, COALESCE(error_message, ''),storage_contract,validation_state,COALESCE(input_snapshot_hash,''),source_revision,expected_active_version_id,expected_activation_revision,publication_state
 		FROM knowledge_index_versions`
 }
 
@@ -449,7 +487,7 @@ func scanKnowledgeIndexVersion(row pgx.Row) (*KnowledgeIndexVersion, error) {
 	var version KnowledgeIndexVersion
 	err := row.Scan(&version.ID, &version.KnowledgeBaseID, &version.WorkspaceID, &version.Version, &version.QdrantCollection, &version.QdrantNamespace,
 		&version.ArtifactDir, &version.ManifestPath, &version.Status, &version.DocumentCount, &version.ChunkCount,
-		&version.CreatedBy, &version.CreatedAt, &version.ReadyAt, &version.FailedAt, &version.ErrorMessage)
+		&version.CreatedBy, &version.CreatedAt, &version.ReadyAt, &version.FailedAt, &version.ErrorMessage, &version.StorageContract, &version.ValidationState, &version.InputSnapshotHash, &version.SourceRevision, &version.ExpectedActiveVersionID, &version.ExpectedActivationRevision, &version.PublicationState)
 	if err != nil {
 		return nil, mapDBError(err, "knowledge index version conflict", "knowledge index version not found")
 	}

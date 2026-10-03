@@ -103,6 +103,14 @@ func NewPGXFillRunRepo(pool *pgxpool.Pool) *PGXFillRunRepo {
 }
 
 func (r *PGXFillRunRepo) Create(ctx context.Context, run FillRun) error {
+	return createFillRun(ctx, r.pool, run)
+}
+
+type fillRunExecutor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+func createFillRun(ctx context.Context, executor fillRunExecutor, run FillRun) error {
 	now := time.Now().UTC()
 	if run.CreatedAt.IsZero() {
 		run.CreatedAt = now
@@ -110,7 +118,7 @@ func (r *PGXFillRunRepo) Create(ctx context.Context, run FillRun) error {
 	if run.UpdatedAt.IsZero() {
 		run.UpdatedAt = now
 	}
-	_, err := r.pool.Exec(ctx, `
+	_, err := executor.Exec(ctx, `
 		INSERT INTO fill_runs (
 			id, workspace_id, form_file_id, job_id, name, knowledge_base_id, index_version_id,
 			target_namespace, global_namespace, room_context, rows_spec, retrieval_mode, prompt_version,
@@ -118,12 +126,14 @@ func (r *PGXFillRunRepo) Create(ctx context.Context, run FillRun) error {
 			out_dir, run_manifest_path, summary_path, filled_form_artifact_id,
 			answered_count, partial_clue_count, not_found_count, conflict_unresolved_count,
 			review_required_count, writeback_allowed_count, failed_count, error_message,
-			created_by, created_at, queued_at, started_at, finished_at, updated_at
+			created_by, created_at, queued_at, started_at, finished_at, updated_at,
+			target_scope_json, global_scope_json, target_activation_revision, global_activation_revision
 		)
 		VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
 			$13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
-			$23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37
+			$23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37,
+			$38, $39, $40, $41
 		)
 	`, run.ID, run.WorkspaceID, run.FormFileID, run.JobID, run.Name, run.KnowledgeBaseID, run.IndexVersionID,
 		run.TargetNamespace, run.GlobalNamespace, run.RoomContext, run.RowsSpec, run.RetrievalMode, run.PromptVersion,
@@ -131,7 +141,8 @@ func (r *PGXFillRunRepo) Create(ctx context.Context, run FillRun) error {
 		run.OutDir, run.RunManifestPath, run.SummaryPath, run.FilledFormArtifactID,
 		run.AnsweredCount, run.PartialClueCount, run.NotFoundCount, run.ConflictUnresolvedCount,
 		run.ReviewRequiredCount, run.WritebackAllowedCount, run.FailedCount, run.ErrorMessage,
-		run.CreatedBy, run.CreatedAt, run.QueuedAt, run.StartedAt, run.FinishedAt, run.UpdatedAt)
+		run.CreatedBy, run.CreatedAt, run.QueuedAt, run.StartedAt, run.FinishedAt, run.UpdatedAt,
+		run.TargetScope, run.GlobalScope, run.TargetActivationRevision, run.GlobalActivationRevision)
 	return mapDBError(err, "fill run already exists", "fill run not found")
 }
 
@@ -277,7 +288,9 @@ func selectFillRunSQL() string {
 			COALESCE(out_dir, ''), COALESCE(run_manifest_path, ''), COALESCE(summary_path, ''), filled_form_artifact_id,
 			answered_count, partial_clue_count, not_found_count, conflict_unresolved_count,
 			review_required_count, writeback_allowed_count, failed_count, COALESCE(error_message, ''),
-			created_by, created_at, queued_at, started_at, finished_at, updated_at
+			created_by, created_at, queued_at, started_at, finished_at, updated_at,
+			target_scope_json, global_scope_json, target_activation_revision, global_activation_revision,
+			(SELECT to_jsonb(pin) FROM fill_run_template_pins pin WHERE pin.run_id = fill_runs.id)
 		FROM fill_runs`
 }
 
@@ -291,6 +304,7 @@ func scanFillRun(row pgx.Row) (*FillRun, error) {
 		&run.AnsweredCount, &run.PartialClueCount, &run.NotFoundCount, &run.ConflictUnresolvedCount,
 		&run.ReviewRequiredCount, &run.WritebackAllowedCount, &run.FailedCount, &run.ErrorMessage,
 		&run.CreatedBy, &run.CreatedAt, &run.QueuedAt, &run.StartedAt, &run.FinishedAt, &run.UpdatedAt,
+		&run.TargetScope, &run.GlobalScope, &run.TargetActivationRevision, &run.GlobalActivationRevision, &run.TemplatePin,
 	)
 	if err != nil {
 		return nil, mapDBError(err, "fill run conflict", "fill run not found")

@@ -1,0 +1,104 @@
+{
+  "phase": "4B",
+  "base_commit": "030300065e0d5041f581f573e772f7756e54abd6",
+  "previous_phase_commit": "3d2eb9b",
+  "python": {
+    "tests": 801,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "elapsed_seconds": 149.326,
+    "compatibility_warnings": 72,
+    "exit_code": 0,
+    "command": "PYTHONPATH=src /Users/mao/miniconda3/bin/python -m pytest -q --junitxml=artifacts/vnext/phase4b/final-python.xml"
+  },
+  "go": {
+    "race_enabled": true,
+    "exit_code": 0,
+    "test_events": {
+      "pass": 541,
+      "fail": 0,
+      "skip": 0
+    },
+    "leaf_test_events": {
+      "pass": 517,
+      "fail": 0,
+      "skip": 0
+    },
+    "packages_passed": 8,
+    "packages_without_tests": 19,
+    "command": "GORACE=atexit_sleep_ms=0 VNEXT_TEST_POSTGRES_DSN='<isolated local PostgreSQL DSN>' EVIDENCE_CONTRACT_FIXTURE_DIR='/Users/mao/projects/datacenter-vnext/artifacts/vnext/phase4b/evidence-fixture' go test -race -json ./...",
+    "race_exit_sleep_note": "Removes the Go race runtime default one-second process-exit sleep; race checking remains enabled."
+  },
+  "required_postgres": {
+    "exit_code": 0,
+    "race_enabled": true,
+    "forced_count": 1,
+    "suites": [
+      "internal/database",
+      "internal/knowledge",
+      "tests"
+    ],
+    "command": "GORACE=atexit_sleep_ms=0 VNEXT_TEST_POSTGRES_DSN='<isolated local PostgreSQL DSN>' make test-postgres",
+    "missing_dsn_make_exit_code": 2,
+    "database_image": "postgres:16.4",
+    "database_container": "datacenter-vnext-pg",
+    "storage": "independent tmpfs; random databases created/dropped by tests"
+  },
+  "checks": {
+    "ruff_exit_code": 0,
+    "diff_check_exit_code": 0,
+    "gofmt_exit_code": 0,
+    "go_vet_exit_code": 0
+  },
+  "earlier_attempts": [
+    {
+      "log": "full-go.jsonl",
+      "result": "Race runtime exit sleep exceeded two existing one-second helper timeouts."
+    },
+    {
+      "log": "final-go.jsonl",
+      "result": "Four PostgreSQL fixture leaf tests used invalid document role target; fixture corrected to knowledge_base without weakening role validation."
+    }
+  ],
+  "protocols": {
+    "build_input": "kb-build-input-v1",
+    "validation_receipt": "kb-index-validation-v1",
+    "scope": "pinned-index-scopes-v1",
+    "new_manifest_version": "1.3"
+  },
+  "defaults": {
+    "retrieval.sufficiency_enabled": true,
+    "retrieval.schema_first_enabled": false,
+    "agentscope.enabled": false,
+    "agentscope.mode": "off",
+    "agentic_mas.enabled": false,
+    "writeback.existing_value_policy": "preserve"
+  },
+  "limitations": [
+    "No event outbox/exactly-once event claim.",
+    "No GC; previous ready versions and pinned source/template objects retained.",
+    "Mixed old/new binary rolling deployment unsupported; stop old API/worker first.",
+    "Standalone legacy writeback is not a serving-version resolver.",
+    "Pinned target/global scopes require one shared Qdrant collection."
+  ],
+  "external_model_calls": 0,
+  "fresh_docker_e2e_count": 0,
+  "real_model_acceptance": "not executed in Phase 4B",
+  "native_python_qdrant": "real disk-Qdrant/CLI with explicit local model substitutes",
+  "go_postgres_receipts": "explicit protocol fixtures",
+  "worker_runner": "FakeRunner contract cases",
+  "original_workspace": {
+    "checked_files": 103,
+    "changed_files": []
+  },
+  "artifacts": "artifacts/vnext/phase4b",
+  "evidence_sha256": {
+    "final-python.xml": "926c8d436042c49398d4f97f1c17ed8c2eddb7c9f20a89a802f7c3ad92ff7c80",
+    "final-python.log": "947a716494932037656c0f37a0ea61ef8d92f13385d0b87a04fb2b0ba2ddc093",
+    "final-go-verified.jsonl": "20b430486ad7e844d4695139512bc4e49d1771bc0d98335cef179931b43220cb",
+    "final-required-postgres.txt": "a95bad26340f324d5759badc2db234b5717f19db16f661fb4b1c1a2ca9a26e75",
+    "postgres-required-missing-dsn.txt": "d116a120bd0f4eb1acbb3145c4ed6ca91db1bde75ca120e866a7877147ff038d",
+    "original-workspace-check.json": "aab2d234d2a61ad5d00d19433c54971bb91ec4bbf4baf48634d79b90301aa5bd"
+  }
+}

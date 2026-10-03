@@ -150,15 +150,67 @@ export interface FillRunEvidenceRef {
   object_version_id?: string
   qdrant_point_id?: string
   source_type?: string
+  evidence_kind?: string
   source_anchor?: string
   page?: number | string | null
   sheet_name?: string
   cell?: string
+  cell_range?: string
+  row_index?: number | null
+  column_index?: number | null
+  table_index?: number | null
+  paragraph_index?: number | null
   image_object_key?: string
   bbox?: unknown
   caption?: string
   file_name?: string
   text_preview?: string
+  provenance?: FillRunEvidenceProvenance
+}
+
+export interface FillRunEvidenceProvenance {
+  match_status: 'exact' | 'ambiguous' | 'unmatched' | 'unavailable' | string
+  reason?: string
+  quote?: string
+  start?: number | null
+  end?: number | null
+  source_text?: string
+  source_text_hash?: string
+  text_space?: 'raw_source_text' | 'raw_text' | 'unavailable' | string
+  index_version?: string
+}
+
+export interface FillRunEvidenceField {
+  field_id?: string
+  field_key?: string
+  question_text?: string
+  answer_value?: unknown
+  answer_status?: string
+  target_cell?: string
+  sheet_name?: string
+  row_index?: number
+  writeback_status?: string
+  writeback_action?: string
+  writeback_allowed?: boolean
+  reasons?: string[]
+  error_code?: string
+  evidence_refs?: FillRunEvidenceRef[]
+  acquisition?: {
+    strategy?: string
+    acquisition_rounds?: number
+    qdrant_query_calls?: number | null
+    rounds?: { retrieval_round: number; missing_facts?: string[]; hit_count?: number; evidence_gain?: number }[]
+    final_sufficiency?: { sufficient: boolean; missing_facts?: string[]; reason?: string }
+  }
+  old_value?: unknown
+  new_value?: unknown
+  existing_value_policy?: string
+}
+
+export interface FillRunEvidenceBlock {
+  // Counts refer to individual references, not fields or correct answers.
+  summary: { exact: number; ambiguous: number; unmatched: number; unavailable: number }
+  fields: FillRunEvidenceField[]
 }
 
 export interface FillRunWritebackField {
@@ -193,6 +245,8 @@ export interface FillRunListItem {
   name?: string
   raw_status?: string
   status: string
+  progress_total: number
+  progress_done: number
   created_at: string
   updated_at: string
   completed_at?: string
@@ -208,6 +262,8 @@ export interface FillRunDetail {
   name?: string
   raw_status?: string
   status: string
+  progress_total: number
+  progress_done: number
   created_at: string
   updated_at: string
   completed_at?: string
@@ -220,6 +276,7 @@ export interface FillRunDetail {
   summary: FillRunSummaryCounts
   artifacts: FillRunArtifactDownloads
   writeback?: FillRunWritebackBlock
+  evidence?: FillRunEvidenceBlock
   artifact_validation_warnings?: string[]
 }
 

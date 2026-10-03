@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-
 KIND_CHAT = "chat"
 KIND_EMBEDDING = "embedding"
 KIND_RERANK = "rerank"

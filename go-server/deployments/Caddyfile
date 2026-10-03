@@ -1,37 +1,56 @@
 {$DOMAIN} {
-  encode gzip
-  root * /srv/web
+	encode gzip
+	root * /srv/web
 
-  request_body {
-    max_size 200MB
-  }
+	request_body {
+		max_size 2048MB
+	}
 
-  header {
-    X-Content-Type-Options nosniff
-    X-Frame-Options DENY
-    Referrer-Policy no-referrer-when-downgrade
-  }
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer-when-downgrade
+	}
 
-  handle /api/* {
-    reverse_proxy api:8080 {
-      flush_interval -1
-    }
-  }
+	handle /api/* {
+		reverse_proxy api:8080 {
+			flush_interval -1
+			transport http {
+				read_timeout 30m
+				write_timeout 30m
+			}
+		}
+	}
 
-  handle /healthz {
-    reverse_proxy api:8080
-  }
+	handle /healthz {
+		reverse_proxy api:8080 {
+			transport http {
+				read_timeout 30m
+				write_timeout 30m
+			}
+		}
+	}
 
-  handle /readyz {
-    reverse_proxy api:8080
-  }
+	handle /readyz {
+		reverse_proxy api:8080 {
+			transport http {
+				read_timeout 30m
+				write_timeout 30m
+			}
+		}
+	}
 
-  handle /metrics {
-    reverse_proxy api:8080
-  }
+	handle /metrics {
+		reverse_proxy api:8080 {
+			transport http {
+				read_timeout 30m
+				write_timeout 30m
+			}
+		}
+	}
 
-  handle {
-    try_files {path} /index.html
-    file_server
-  }
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
 }

@@ -146,7 +146,7 @@ class LayeredQdrantEvidenceRetriever:
         *,
         qdrant_retriever: QdrantRetriever,
         layered_plan: list[dict[str, Any]],
-        global_namespace: str = "global",
+        global_namespace: str,
         enable_rerank: bool = False,
         rerank_client: RerankClient | None = None,
         vector_top_k: int = 20,
@@ -181,12 +181,18 @@ class LayeredQdrantEvidenceRetriever:
                 if any(namespace != query_plan.target_namespace for namespace in namespaces):
                     fallback_used = True
                 namespaces_queried.extend(namespaces)
+                canonical_options: dict[str, Any] = {}
+                if "evidence_kinds" in spec:
+                    canonical_options["evidence_kinds"] = list(spec["evidence_kinds"])
+                if "required_source_types" in spec:
+                    canonical_options["required_source_types"] = list(spec["required_source_types"])
                 raw_hits = self.qdrant_retriever.search(
                     query,
                     namespaces=namespaces,
                     layers=[str(item) for item in spec.get("corpus_layers") or DEFAULT_QUERY_LAYERS],
                     source_types=[str(item) for item in spec.get("source_types") or []] or None,
                     top_k=int(spec.get("vector_top_k") or self.vector_top_k),
+                    **canonical_options,
                 )
                 vector_hit_count += len(raw_hits)
                 normalized = [
@@ -270,7 +276,7 @@ class LLMAnswerGenerator:
         chat_endpoint: str,
         chat_model: str,
         api_key: str | None = None,
-        timeout_seconds: int = 120,
+        timeout_seconds: int = 0,
         temperature: float = 0.0,
         max_tokens: int = 1024,
         http_client: CurlJsonClient | None = None,
@@ -369,6 +375,7 @@ def normalize_hit(hit: dict[str, Any]) -> dict[str, Any]:
     text_for_embedding = payload.get("text_for_embedding") or raw_text
     chunk_id = payload.get("chunk_id") or hit.get("chunk_id") or point_id or stable_chunk_id(payload, raw_text)
     return {
+        **payload,
         **{key: value for key, value in hit.items() if key not in {"payload"}},
         "chunk_id": str(chunk_id),
         "namespace": payload.get("namespace") or hit.get("namespace") or "",

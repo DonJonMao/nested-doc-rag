@@ -3,8 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import warnings
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from nested_doc_rag.agent.backends import (
     DeterministicAnswerGenerator,
@@ -16,15 +19,79 @@ from nested_doc_rag.agent.backends import (
 from nested_doc_rag.agent.step15_runner import Step15AgentRunner, parse_rows_arg, validate_step15_agent_config
 from nested_doc_rag.artifacts import ArtifactValidationError, validate_step15_artifacts
 from nested_doc_rag.embedding import RerankClient
-from nested_doc_rag.gongkan_eval import select_eval_items
+from nested_doc_rag.form.input_snapshot import (
+    build_acquisition_contract,
+    build_form_input_snapshot,
+    persist_form_input_snapshot,
+    serialized_form_items,
+    validate_form_input_snapshot,
+)
+from nested_doc_rag.gongkan_eval import BASE_CLOUD_FILE, select_form_items
 from nested_doc_rag.ingestion import IngestionOptions, dumps_summary, run_knowledge_ingestion
+from nested_doc_rag.io import read_jsonl, write_json
 from nested_doc_rag.retrieval import QdrantRetriever
 
 from .agent.runner import FieldFillingAgent, load_corpus, load_fields
-from .config import load_app_config
+from .config import load_app_config, normalize_existing_value_policy
 from .evaluation.experiment_runner import run_baseline_experiment
 from .evaluation.field_metrics import evaluate_fields_from_files
 from .excel.writeback import writeback_from_files
+
+
+def require_namespace(parser: argparse.ArgumentParser, value: str | None, option_name: str) -> str:
+    namespace = (value or "").strip()
+    if not namespace:
+        parser.error(f"{option_name} is required")
+    return namespace
+
+
+class LegacyFormItemsFallbackWarning(UserWarning):
+    """A replay run used historical Step12 fields instead of an uploaded form."""
+
+
+def prepare_step15_form_input(args: argparse.Namespace, config: Any, target_namespace: str, global_namespace: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if args.form_items is not None:
+        if not args.form_items.is_file():
+            raise RuntimeError(f"form items file does not exist: {args.form_items}")
+        all_items = read_jsonl(args.form_items)
+        report = {"parser_name": "explicit-form-items", "parser_version": "form-items-v1", "input_mode": "explicit_items"}
+    elif args.template is not None:
+        from nested_doc_rag.form.template_parser import parse_form_template
+
+        result = parse_form_template(args.template, include_heldout_answers=bool(args.judge))
+        all_items, report = result.items, dict(result.report)
+        report["input_mode"] = "template"
+    else:
+        warnings.warn("No template or explicit form items supplied; using historical Step12 fields for compatibility.", LegacyFormItemsFallbackWarning, stacklevel=2)
+        legacy_path = config.paths.artifacts_dir / "12_gongkan_form_analysis" / "form_items.jsonl"
+        if not legacy_path.is_file():
+            raise RuntimeError(f"legacy form items file does not exist: {legacy_path}; provide --template or --form-items")
+        all_items = [item for item in read_jsonl(legacy_path) if item.get("file_name") == BASE_CLOUD_FILE]
+        report = {"parser_name": "legacy-step12", "parser_version": "legacy-form-items-v1", "input_mode": "legacy"}
+    all_items = select_form_items(all_items, None)
+    selected = select_form_items(all_items, parse_rows_arg(args.rows))
+    snapshot = build_form_input_snapshot(
+        all_items, selected_items=selected, template_path=args.template,
+        input_mode=report["input_mode"], parser_name=report["parser_name"], parser_version=report["parser_version"],
+        rows_spec=args.rows, target_namespace=target_namespace, global_namespace=global_namespace,
+        room_context=args.room_context,
+        acquisition_contract=build_acquisition_contract(
+            config, prompt_version=args.prompt_version or "step15_compat",
+            collection_name=args.qdrant_collection or config.qdrant.collection_name,
+            overwrite_all_cli=getattr(args, "existing_value_policy", None) == "overwrite_all",
+            index_scopes=getattr(args, "normalized_index_scopes", None),
+        ),
+    )
+    if report.get("template_sha256") and str(report["template_sha256"]).removeprefix("sha256:") != snapshot["template_sha256"]:
+        raise RuntimeError("template changed during parsing; start again with a stable uploaded file")
+    validate_form_input_snapshot(args.out_dir, snapshot, resume=bool(args.resume))
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    (args.out_dir / "form_items.jsonl").write_text(serialized_form_items(all_items), encoding="utf-8")
+    report["detected_fields"] = len(all_items)
+    report["selected_field_count"] = len(selected)
+    write_json(args.out_dir / "form_parse_report.json", report)
+    persist_form_input_snapshot(args.out_dir, snapshot, resume=bool(args.resume))
+    return selected, snapshot
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,6 +101,11 @@ def build_parser() -> argparse.ArgumentParser:
     show_parser = subparsers.add_parser("show-config", help="Print the merged application configuration.")
     show_parser.add_argument("--config", type=Path, default=None, help="Optional local YAML config path.")
     show_parser.add_argument("--json", action="store_true", help="Print JSON. This is currently the default output.")
+
+    form_parser = subparsers.add_parser("parse-form-template", help="Parse an uploaded workbook into runtime form fields.")
+    form_parser.add_argument("--template", type=Path, required=True)
+    form_parser.add_argument("--out", type=Path, required=True, help="Output form_items.jsonl path.")
+    form_parser.add_argument("--report", type=Path, default=None, help="Optional diagnostics JSON path.")
 
     eval_parser = subparsers.add_parser("eval-fields", help="Evaluate field-level gongkan predictions.")
     eval_parser.add_argument("--gold", type=Path, required=True, help="Gold field JSONL path.")
@@ -53,7 +125,9 @@ def build_parser() -> argparse.ArgumentParser:
     writeback_parser.add_argument("--out", type=Path, required=True, help="Filled Excel output path.")
     writeback_parser.add_argument("--trace", type=Path, default=None, help="Optional trace JSONL path.")
     writeback_parser.add_argument("--evidence-map", type=Path, default=None, help="Optional input evidence map JSON path.")
+    writeback_parser.add_argument("--retrieval-evidence", type=Path, default=None, help="Retrieved authority JSONL; defaults beside predictions.")
     writeback_parser.add_argument("--mode", choices=["safe", "overwrite"], default="safe", help="Write mode.")
+    writeback_parser.add_argument("--existing-value-policy", choices=["preserve", "overwrite_confirmed", "overwrite_all"], default="preserve", help="Existing-cell policy; all policies protect formulas and evidence gates.")
     writeback_parser.add_argument("--no-comments", action="store_true", help="Disable Excel cell comments.")
 
     artifacts_parser = subparsers.add_parser("validate-artifacts", help="Validate a frozen Step15AgentRunner artifact directory.")
@@ -73,7 +147,10 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_parser.add_argument("--qdrant-collection", default=None, help="Qdrant collection override.")
     ingest_parser.add_argument("--qdrant-namespace", default=None, help="Qdrant namespace override. Defaults to --namespace.")
     ingest_parser.add_argument("--batch-size", type=int, default=16, help="Embedding/upsert batch size.")
-    ingest_parser.add_argument("--resume", action="store_true", help="Accepted for worker compatibility; namespace rebuild is still deterministic.")
+    ingest_parser.add_argument("--index-version-id", default=None, help="Immutable candidate index UUID.")
+    ingest_parser.add_argument("--input-snapshot", type=Path, default=None, help="Frozen candidate source manifest.")
+    ingest_parser.add_argument("--input-snapshot-hash", default=None, help="SHA256 of the exact input snapshot bytes.")
+    ingest_parser.add_argument("--resume", action="store_true", help="Retry an immutable candidate; only its exact scope can be rebuilt.")
 
     agent_parser = subparsers.add_parser("run-agent", help="Run the lightweight field-filling agent with mini or real backends.")
     agent_parser.add_argument("--config", type=Path, default=None, help="Optional local YAML config path.")
@@ -114,6 +191,12 @@ def build_parser() -> argparse.ArgumentParser:
     step15_agent_parser.add_argument("--rows", default="all", help="Rows to run: all, 4-144, or 34,38,42.")
     step15_agent_parser.add_argument("--form-items", type=Path, default=None, help="Optional form_items.jsonl override.")
     step15_agent_parser.add_argument("--retrieval-plan", choices=["layered"], default=None, help="Step 15 retrieval plan. Production uses layered.")
+    sufficiency_group = step15_agent_parser.add_mutually_exclusive_group()
+    sufficiency_group.add_argument("--sufficiency-enabled", dest="sufficiency_enabled", action="store_true", default=None, help="Use semantic sufficiency and at most one targeted supplement.")
+    sufficiency_group.add_argument("--no-sufficiency-enabled", dest="sufficiency_enabled", action="store_false", help="Explicit legacy layered retrieval for compatibility or ablation.")
+    schema_group = step15_agent_parser.add_mutually_exclusive_group()
+    schema_group.add_argument("--schema-first-enabled", dest="schema_first_enabled", action="store_true", default=None, help="Select field schemas before retrieving Excel values (A4).")
+    schema_group.add_argument("--no-schema-first-enabled", dest="schema_first_enabled", action="store_false", help="Disable the independent schema-to-value retrieval variant.")
     grounding_group = step15_agent_parser.add_mutually_exclusive_group()
     grounding_group.add_argument("--grounding-enabled", dest="grounding_enabled", action="store_true", default=None, help="Enable evidence strength overlay gate.")
     grounding_group.add_argument("--no-grounding-enabled", dest="grounding_enabled", action="store_false", help="Disable evidence strength overlay gate.")
@@ -125,10 +208,16 @@ def build_parser() -> argparse.ArgumentParser:
     parent_payload_group.add_argument("--no-parent-payload-enabled", dest="parent_payload_enabled", action="store_false", help="Disable Prompt 3 compact parent payload evidence context.")
     step15_agent_parser.add_argument(
         "--prompt-version",
-        choices=["step15_compat", "agent_v2"],
+        choices=["step15_compat", "agent_v2", "agentic_v1"],
         default="step15_compat",
         help="Answer prompt version. step15_compat preserves the Step 15 effect prompt.",
     )
+    step15_agent_parser.add_argument("--agentic-mas", action="store_true", help="Run Step 15 with agentic evidence-replanning MAS.")
+    step15_agent_parser.add_argument("--agentic-max-rounds", type=int, default=None, help="Override agentic_mas.max_rounds.")
+    step15_agent_parser.add_argument("--disable-missing-info", action="store_true", help="Disable the missing_info agentic workflow.")
+    step15_agent_parser.add_argument("--disable-wrong-answer-risk", action="store_true", help="Disable the wrong_answer_risk agentic workflow.")
+    step15_agent_parser.add_argument("--disable-not-found-recovery", action="store_true", help="Disable the not_found_recovery agentic workflow.")
+    step15_agent_parser.add_argument("--disable-uncertainty-conflict", action="store_true", help="Disable the uncertainty_conflict agentic workflow.")
     step15_agent_parser.add_argument("--vector-top-k", type=int, default=None, help="Vector retrieval top-k.")
     step15_agent_parser.add_argument("--rerank-top-n", type=int, default=None, help="Rerank top-n.")
     judge_group = step15_agent_parser.add_mutually_exclusive_group()
@@ -136,11 +225,13 @@ def build_parser() -> argparse.ArgumentParser:
     judge_group.add_argument("--no-judge", dest="judge", action="store_false", help="Disable judge. This is production mode.")
     step15_agent_parser.add_argument("--resume", action="store_true", help="Resume from field-level checkpoints in out-dir.")
     step15_agent_parser.add_argument("--checkpoint-every", type=int, default=1, help="Write checkpoint every N fields.")
-    step15_agent_parser.add_argument("--template", type=Path, default=None, help="Optional Excel template for safe writeback.")
+    step15_agent_parser.add_argument("--template", type=Path, default=None, help="Uploaded Excel template used to parse runtime fields and optional writeback.")
     step15_agent_parser.add_argument("--writeback", action="store_true", help="Enable safe Excel writeback.")
     step15_agent_parser.add_argument("--out-dir", type=Path, required=True, help="Run output directory.")
+    step15_agent_parser.add_argument("--existing-value-policy", choices=["preserve", "overwrite_confirmed", "overwrite_all"], default=None, help="Explicit existing-cell policy; overwrite_all is available only through this CLI option.")
     step15_agent_parser.add_argument("--qdrant-path", type=Path, default=None, help="Qdrant local path.")
     step15_agent_parser.add_argument("--qdrant-collection", default=None, help="Qdrant collection name.")
+    step15_agent_parser.add_argument("--index-scopes", type=Path, default=None, help="JSON file fixing one KB/version per requested namespace.")
     step15_agent_parser.add_argument("--embedding-endpoint", default=None, help="Embedding service endpoint.")
     step15_agent_parser.add_argument("--embedding-model", default=None, help="Embedding model name.")
     step15_agent_parser.add_argument("--rerank-endpoint", default=None, help="Rerank service endpoint.")
@@ -166,6 +257,20 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.command == "show-config":
         config = load_app_config(args.config)
         print(json.dumps(config.to_dict(), ensure_ascii=False, indent=2))
+    elif args.command == "parse-form-template":
+        from nested_doc_rag.form.template_parser import parse_form_template
+
+        report_path = args.report or args.out.parent / "form_parse_report.json"
+        try:
+            result = parse_form_template(args.template)
+        except (RuntimeError, ValueError) as exc:
+            if getattr(exc, "report", None) is not None:
+                write_json(report_path, exc.report)
+            parser.error(str(exc))
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(serialized_form_items(result.items), encoding="utf-8")
+        write_json(report_path, result.report)
+        print(json.dumps({"detected_fields": len(result.items), "form_items": str(args.out), "report": str(report_path)}, ensure_ascii=False))
     elif args.command == "eval-fields":
         result = evaluate_fields_from_files(
             gold_path=args.gold,
@@ -192,7 +297,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             output_path=args.out,
             trace_path=args.trace,
             evidence_map_path=args.evidence_map,
+            retrieval_evidence_path=args.retrieval_evidence,
             mode=args.mode,
+            writeback_config={"existing_value_policy": args.existing_value_policy},
+            overwrite_all_cli=args.existing_value_policy == "overwrite_all",
             write_comments=not args.no_comments,
         )
         print(json.dumps(summary.to_dict(), ensure_ascii=False))
@@ -216,6 +324,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                     qdrant_namespace=args.qdrant_namespace,
                     batch_size=args.batch_size,
                     resume=bool(args.resume),
+                    index_version_id=args.index_version_id,
+                    input_snapshot_path=args.input_snapshot,
+                    input_snapshot_hash=args.input_snapshot_hash,
                 )
             )
         except RuntimeError as exc:
@@ -245,7 +356,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         retrieval_backend = args.retrieval_backend or config.agent.retrieval_backend
         generation_backend = args.generation_backend or config.agent.generation_backend
         retrieval_plan = args.retrieval_plan or (config.retrieval.plan if retrieval_backend == "qdrant" else "flat")
-        target_namespace = args.target_namespace or config.retrieval.target_namespace
+        target_namespace = require_namespace(parser, args.target_namespace or config.retrieval.target_namespace, "--target-namespace")
         enable_rerank = bool(args.enable_rerank or config.agent.enable_rerank)
         vector_top_k = args.vector_top_k or config.retrieval.vector_top_k
         rerank_top_n = args.rerank_top_n or config.retrieval.rerank_top_n
@@ -294,15 +405,24 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
         )
     elif args.command == "run-step15-agent":
-        config = load_app_config(args.config)
-        step12_dir = config.paths.artifacts_dir / "12_gongkan_form_analysis"
-        form_items_path = args.form_items or (step12_dir / "form_items.jsonl")
+        config = load_app_config(args.config, cli_overrides=step15_agentic_cli_overrides(args))
         try:
-            rows = parse_rows_arg(args.rows, step12_dir=step12_dir)
-            target_namespace = args.target_namespace or config.retrieval.target_namespace
-            global_namespace = args.global_namespace or config.retrieval.global_namespace
+            if args.existing_value_policy is not None:
+                policy = normalize_existing_value_policy(args.existing_value_policy, allow_overwrite_all=True)
+                config = replace(config, writeback=replace(config.writeback, existing_value_policy=policy))
+            target_namespace = require_namespace(parser, args.target_namespace or config.retrieval.target_namespace, "--target-namespace")
+            global_namespace = require_namespace(parser, args.global_namespace or config.retrieval.global_namespace, "--global-namespace")
+            if target_namespace == global_namespace:
+                parser.error("--global-namespace must differ from --target-namespace")
             qdrant_path = args.qdrant_path or config.paths.qdrant_path
             collection_name = args.qdrant_collection or config.qdrant.collection_name
+            from nested_doc_rag.retrieval.version_scope import normalize_index_scopes
+            args.normalized_index_scopes = normalize_index_scopes(
+                json.loads(args.index_scopes.read_text(encoding="utf-8")) if args.index_scopes is not None else None,
+                collection_name=collection_name, namespaces=[target_namespace, global_namespace],
+            )
+            if args.normalized_index_scopes is not None and {scope["namespace"] for scope in args.normalized_index_scopes} != {target_namespace, global_namespace}:
+                raise ValueError("fill index scopes must contain exactly the target and global namespaces")
             embedding_endpoint = args.embedding_endpoint or config.services.embedding_endpoint
             embedding_model = args.embedding_model or config.services.embedding_model
             rerank_endpoint = args.rerank_endpoint or config.services.rerank_endpoint
@@ -318,11 +438,18 @@ def main(argv: Sequence[str] | None = None) -> None:
                 chat_endpoint=chat_endpoint,
                 chat_model=chat_model,
             )
-            items = select_eval_items(rows, form_items_path=form_items_path)
+            items, form_input_snapshot = prepare_step15_form_input(args, config, target_namespace, global_namespace)
         except (RuntimeError, ValueError) as exc:
+            if getattr(exc, "report", None) is not None and not args.resume:
+                write_json(args.out_dir / "form_parse_report.json", exc.report)
             parser.error(str(exc))
         api_key_env = args.deepseek_api_key_env or args.chat_api_key_env or config.services.chat_api_key_env
         retrieval_plan = resolve_step15_retrieval_plan(args.retrieval_plan, config)
+        prompt_version = args.prompt_version or (
+            config.agentic_mas.prompt_version
+            if config.agentscope.mode == "agentic_mas"
+            else "step15_compat"
+        )
         runner = Step15AgentRunner(
             config=config,
             target_namespace=target_namespace,
@@ -334,18 +461,21 @@ def main(argv: Sequence[str] | None = None) -> None:
             rerank_top_n=args.rerank_top_n or config.retrieval.rerank_top_n,
             judge_enabled=bool(args.judge),
             writeback_enabled=bool(args.writeback),
+            overwrite_all_cli=args.existing_value_policy == "overwrite_all",
             template_path=args.template,
             checkpoint_every=args.checkpoint_every,
             resume=args.resume,
+            form_input_snapshot=form_input_snapshot,
             timeout_seconds=args.timeout or config.services.timeout_seconds,
             chat_max_retries=args.chat_max_retries,
             chat_retry_backoff_seconds=args.chat_retry_backoff_seconds,
-            prompt_version=args.prompt_version,
+            prompt_version=prompt_version,
             judge_cache_path=args.judge_cache or (config.paths.artifacts_dir / "cache" / "judge_cache.jsonl"),
             use_judge_cache=bool(args.use_judge_cache),
             deepseek_api_key_env=api_key_env,
             qdrant_path=qdrant_path,
             collection_name=collection_name,
+            index_scopes=args.normalized_index_scopes,
             embedding_endpoint=embedding_endpoint,
             embedding_model=embedding_model,
             rerank_endpoint=rerank_endpoint,
@@ -369,6 +499,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "judge": bool(args.judge),
                     "writeback": runner.writeback_status,
                     "retrieval_plan": retrieval_plan,
+                    "agentscope_mode": runner.mas_mode,
                 },
                 ensure_ascii=False,
             )
@@ -445,6 +576,36 @@ def build_agent_retriever(
         vector_top_k=vector_top_k,
         query_layers=config.retrieval.query_layers,
     )
+
+
+def step15_agentic_cli_overrides(args: argparse.Namespace) -> dict[str, object]:
+    overrides: dict[str, object] = {}
+    if getattr(args, "sufficiency_enabled", None) is not None:
+        overrides["retrieval"] = {"sufficiency_enabled": args.sufficiency_enabled}
+    if getattr(args, "schema_first_enabled", None) is not None:
+        overrides.setdefault("retrieval", {})["schema_first_enabled"] = args.schema_first_enabled
+    if getattr(args, "agentic_mas", False):
+        overrides["agentscope"] = {"enabled": True, "mode": "agentic_mas"}
+        if getattr(args, "sufficiency_enabled", None) is None:
+            overrides.setdefault("retrieval", {})["sufficiency_enabled"] = False
+        overrides["agentic_mas"] = {"enabled": True}
+    agentic_overrides: dict[str, object] = dict(overrides.get("agentic_mas") or {})
+    if getattr(args, "agentic_max_rounds", None) is not None:
+        agentic_overrides["max_rounds"] = args.agentic_max_rounds
+    workflow_overrides: dict[str, object] = {}
+    if getattr(args, "disable_missing_info", False):
+        workflow_overrides["missing_info"] = {"enabled": False}
+    if getattr(args, "disable_wrong_answer_risk", False):
+        workflow_overrides["wrong_answer_risk"] = {"enabled": False}
+    if getattr(args, "disable_not_found_recovery", False):
+        workflow_overrides["not_found_recovery"] = {"enabled": False}
+    if getattr(args, "disable_uncertainty_conflict", False):
+        workflow_overrides["uncertainty_conflict"] = {"enabled": False}
+    if workflow_overrides:
+        agentic_overrides["workflows"] = workflow_overrides
+    if agentic_overrides:
+        overrides["agentic_mas"] = agentic_overrides
+    return overrides
 
 
 def build_agent_generator(args: argparse.Namespace, config, generation_backend: str):

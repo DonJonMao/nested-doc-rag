@@ -34,14 +34,15 @@ type Metrics interface {
 }
 
 type Service struct {
-	repo        Repo
-	events      RunEventWriter
-	queue       Queue
-	authorizer  WorkspaceAuthorizer
-	audit       *audit.Service
-	logger      *zap.Logger
-	maxAttempts int
-	metrics     Metrics
+	repo              Repo
+	events            RunEventWriter
+	queue             Queue
+	authorizer        WorkspaceAuthorizer
+	audit             *audit.Service
+	logger            *zap.Logger
+	maxAttempts       int
+	metrics           Metrics
+	ingestionCanceler IngestionJobCanceler
 }
 
 func NewService(repo Repo, events RunEventWriter, queue Queue, authorizer WorkspaceAuthorizer, auditSvc *audit.Service, logger *zap.Logger, maxAttempts int, metrics ...Metrics) *Service {
@@ -184,6 +185,35 @@ func (s *Service) CancelJob(ctx context.Context, jobID uuid.UUID, actor auth.Pri
 		return nil, err
 	}
 	now := time.Now().UTC()
+	if s.ingestionCanceler != nil && job.JobType == JobTypeIngestKnowledge {
+		updated, err := s.ingestionCanceler.CancelWorkerJob(ctx, job.ID, actor.UserID)
+		if err != nil {
+			return nil, err
+		}
+		if updated != nil {
+			if err := s.NotifyCommittedCancellation(ctx, updated.ID); err != nil {
+				s.logger.Warn("notify committed cancellation failed", zap.Error(err))
+			}
+			s.record(ctx, audit.AuditLog{WorkspaceID: &updated.WorkspaceID, UserID: &actor.UserID, Action: "job.cancel_requested", ResourceType: "job", ResourceID: updated.ID.String(), Payload: map[string]any{"status": updated.Status}})
+			return updated, nil
+		}
+	}
+	if canceler, ok := s.repo.(publicationAwareCanceler); ok && job.JobType == JobTypeIngestKnowledge {
+		updated, err := canceler.CancelUnpublishedJob(ctx, job.ID, now)
+		if err != nil {
+			return nil, err
+		}
+		if updated.Status == JobStatusCanceled {
+			s.emit(ctx, *updated, runevent.EventCanceled, nil)
+		} else if updated.Status == JobStatusCancelRequested {
+			s.emit(ctx, *updated, runevent.EventCancelRequested, nil)
+			if s.metrics != nil {
+				s.metrics.ObserveJobCancelRequested(updated.JobType)
+			}
+		}
+		s.record(ctx, audit.AuditLog{WorkspaceID: &updated.WorkspaceID, UserID: &actor.UserID, Action: "job.cancel_requested", ResourceType: "job", ResourceID: updated.ID.String(), Payload: map[string]any{"status": updated.Status}})
+		return updated, nil
+	}
 	switch job.Status {
 	case JobStatusCreated, JobStatusQueued:
 		if err := s.repo.MarkCanceled(ctx, job.ID, now); err != nil {

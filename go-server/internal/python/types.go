@@ -1,6 +1,7 @@
 package python
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,22 +12,24 @@ type Step15RunRequest struct {
 	JobID       uuid.UUID
 	RunID       uuid.UUID
 
-	ConfigPath      string
-	TargetNamespace string
-	GlobalNamespace string
-	RoomContext     string
-	Rows            string
-	RetrievalMode   string
-	PromptVersion   string
-	Judge           bool
-	UseJudgeCache   bool
-	JudgeCachePath  string
-	TemplatePath    string
-	Writeback       bool
-	Resume          bool
-	OutDir          string
-	Timeout         time.Duration
-	Env             map[string]string
+	ConfigPath       string
+	TargetNamespace  string
+	GlobalNamespace  string
+	IndexScopesPath  string
+	QdrantCollection string
+	RoomContext      string
+	Rows             string
+	RetrievalMode    string
+	PromptVersion    string
+	Judge            bool
+	UseJudgeCache    bool
+	JudgeCachePath   string
+	TemplatePath     string
+	Writeback        bool
+	Resume           bool
+	OutDir           string
+	Timeout          time.Duration
+	Env              map[string]string
 }
 
 type Step15RunResult struct {
@@ -46,27 +49,32 @@ type IngestionRequest struct {
 	JobID       uuid.UUID
 	IngestionID uuid.UUID
 
-	ConfigPath       string
-	InputDir         string
-	Namespace        string
-	KnowledgeBaseID  string
-	QdrantCollection string
-	QdrantNamespace  string
-	OutDir           string
-	Resume           bool
-	Timeout          time.Duration
-	Env              map[string]string
+	ConfigPath        string
+	InputDir          string
+	Namespace         string
+	KnowledgeBaseID   string
+	QdrantCollection  string
+	QdrantNamespace   string
+	IndexVersionID    string
+	InputSnapshotPath string
+	InputSnapshotHash string
+	OutDir            string
+	Resume            bool
+	Timeout           time.Duration
+	Env               map[string]string
 }
 
 type IngestionResult struct {
-	IngestionID  uuid.UUID
-	OutDir       string
-	ManifestPath string
-	StdoutTail   string
-	StderrTail   string
-	ExitCode     int
-	StartedAt    time.Time
-	FinishedAt   time.Time
+	IngestionID           uuid.UUID
+	OutDir                string
+	ManifestPath          string
+	ValidationReceiptPath string
+	ValidationReceiptJSON json.RawMessage
+	StdoutTail            string
+	StderrTail            string
+	ExitCode              int
+	StartedAt             time.Time
+	FinishedAt            time.Time
 }
 
 type ArtifactValidationResult struct {

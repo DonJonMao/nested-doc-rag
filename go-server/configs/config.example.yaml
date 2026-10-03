@@ -1,7 +1,7 @@
 server:
   addr: ":8080"
-  read_timeout: 10s
-  write_timeout: 30s
+  read_timeout: 30m
+  write_timeout: 30m
   idle_timeout: 60s
   shutdown_timeout: 15s
 
@@ -36,7 +36,7 @@ auth:
     password_env: "GONGKAN_BOOTSTRAP_ADMIN_PASSWORD"
 
 files:
-  max_upload_size: "200MB"
+  max_upload_size: "2048MB"
   temp_dir: "./runtime/tmp/uploads"
   allowed_extensions:
     - ".xlsx"
@@ -76,7 +76,7 @@ python:
   stderr_log_max_bytes: 1048576
   step15_default_retrieval_mode: "layered"
   step15_default_prompt_version: "step15_compat"
-  step15_default_rows: "4-144"
+  step15_default_rows: "all"
   ingest_command_enabled: true
 
 jobs:
@@ -133,7 +133,7 @@ security:
   rate_limit_rps: 20
   rate_limit_burst: 40
   body_limit_enabled: true
-  max_body_size: "256MB"
+  max_body_size: "2048MB"
   trusted_proxies: []
   cors_allow_credentials: false
   hsts_enabled: false
@@ -151,8 +151,8 @@ model_gateway:
   require_internal_token: true
   internal_token_env: "NDR_MODEL_GATEWAY_TOKEN"
   defaults:
-    request_timeout_seconds: 180
-    queue_timeout_seconds: 300
+    request_timeout_seconds: 0
+    queue_timeout_seconds: 0
     max_request_body_bytes: 10485760
     max_response_body_bytes: 10485760
     retry_max_attempts: 3
@@ -169,7 +169,7 @@ model_gateway:
     qps: 1
     rpm: 60
     per_run_max_inflight: 1
-    timeout_seconds: 180
+    timeout_seconds: 0
   embedding:
     enabled: true
     upstream_url: "http://111.19.156.74/v1/embeddings"
@@ -179,7 +179,7 @@ model_gateway:
     qps: 4
     rpm: 240
     per_run_max_inflight: 2
-    timeout_seconds: 120
+    timeout_seconds: 0
   rerank:
     enabled: true
     upstream_url: "http://111.19.156.74/v1/rerank"
@@ -189,7 +189,7 @@ model_gateway:
     qps: 2
     rpm: 120
     per_run_max_inflight: 2
-    timeout_seconds: 120
+    timeout_seconds: 0
   redis_limiter:
     enabled: false
     key_prefix: "ndr:model-gateway"

@@ -11,6 +11,11 @@ test:
 test-race:
 	go test -race ./...
 
+.PHONY: test-postgres
+test-postgres:
+	@test -n "$$VNEXT_TEST_POSTGRES_DSN" || (echo "VNEXT_TEST_POSTGRES_DSN is required; PostgreSQL integration cannot be skipped" >&2; exit 1)
+	go test -race ./internal/database ./internal/knowledge ./tests -run Postgres -count=1
+
 fmt:
 	gofmt -w $$(find . -name "*.go" -not -path "./vendor/*")
 

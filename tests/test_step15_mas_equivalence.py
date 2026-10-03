@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from nested_doc_rag.artifacts import validate_step15_artifacts
 from nested_doc_rag.agent.step15_runner import Step15AgentRunner
+from nested_doc_rag.artifacts import validate_step15_artifacts
 from nested_doc_rag.config import AgentScopeConfig, load_app_config
 from nested_doc_rag.evaluation.step15_engine import Step15RetrievalResult
+from nested_doc_rag.form.input_snapshot import build_form_input_snapshot, persist_form_input_snapshot
 from nested_doc_rag.io import read_json, read_jsonl, write_jsonl
-from nested_doc_rag.schemas.eval import FieldPrediction
 
 
 def test_off_mode_writes_original_core_artifacts_without_mas_trace(tmp_path: Path) -> None:
@@ -51,18 +52,16 @@ def test_equivalent_mas_core_artifacts_match_off_mode(tmp_path: Path) -> None:
     assert validate_step15_artifacts(mas_dir)["valid"] is True
 
 
-def test_default_config_runs_agentscope_equivalent_mas(tmp_path: Path) -> None:
-    off_dir = tmp_path / "off"
-    default_dir = tmp_path / "default"
+def test_default_config_uses_fixed_sufficiency_without_mas(tmp_path: Path) -> None:
+    runner = make_default_runner(tmp_path / "default")
 
-    make_runner(off_dir, mode="off").run([make_item(4)])
-    make_default_runner(default_dir).run([make_item(4)])
-
-    assert_core_artifacts_equal(off_dir, default_dir)
-    events = read_jsonl(default_dir / "agentscope_events.jsonl")
-    assert events[0]["mode"] == "equivalent_mas"
-    assert events[0]["agentscope_available"] is True
-    assert any(event.get("role") == "query_planner" for event in events)
+    assert runner.config.retrieval.sufficiency_enabled is True
+    assert runner.config.agentscope.enabled is False
+    assert runner.config.agentscope.mode == "off"
+    assert runner.config.agentic_mas.enabled is False
+    assert runner.sufficiency_enabled is True
+    assert runner.mas_mode == "off"
+    assert runner.mas_controller is None
 
 
 def test_trace_only_core_artifacts_match_off_mode_except_optional_trace(tmp_path: Path) -> None:
@@ -95,16 +94,12 @@ def test_equivalent_mas_preserves_critic_overlay_and_source_validation(tmp_path:
 
 
 def test_equivalent_mas_resume_skips_completed_checkpoint(tmp_path: Path) -> None:
-    completed = FieldPrediction(
-        field_id="item_4",
-        row_index=4,
-        target_cell="D4",
-        answer_value="已完成",
-        answer_status="answered",
-        confidence=0.9,
-        method_name="step15_agent",
-    )
-    write_jsonl(tmp_path / "predictions.checkpoint.jsonl", [completed.to_dict()])
+    seed = make_runner(tmp_path, mode="equivalent_mas")
+    completed = seed.process_item(make_item(4))
+    write_jsonl(tmp_path / "predictions.checkpoint.jsonl", [completed.prediction.to_dict()])
+    write_jsonl(tmp_path / "retrieval_evidence.checkpoint.jsonl", [{"field_id": completed.prediction.field_id, "top_hits": completed.top_hits}])
+    write_jsonl(seed.overlay_checkpoint_path(), [completed.overlay.to_dict()])
+    persist_form_input_snapshot(tmp_path, build_form_input_snapshot([make_item(4), make_item(5)], target_namespace="xixian_4", global_namespace="global", room_context="西咸4号楼 301机房", acquisition_contract=seed.acquisition_contract()), resume=False)
     calls: list[str] = []
 
     runner = make_runner(tmp_path, mode="equivalent_mas", retrieval_fn=recording_retrieval(calls), resume=True)
@@ -145,7 +140,11 @@ def make_runner(
     retrieval_fn: Callable[[str], Step15RetrievalResult] | None = None,
     resume: bool = False,
 ) -> Step15AgentRunner:
-    config = load_app_config(project_root=out_dir, default_config=out_dir / "missing.yaml")
+    config = load_app_config(
+        project_root=out_dir,
+        default_config=out_dir / "missing.yaml",
+        cli_overrides={"retrieval": {"sufficiency_enabled": False}},
+    )
     config = replace(config, agentscope=AgentScopeConfig(enabled=mode != "off", mode=mode))
     return Step15AgentRunner(
         config=config,
@@ -200,13 +199,21 @@ def make_hits() -> list[dict[str, Any]]:
             "chunk_id": "chunk_main",
             "namespace": "xixian_4",
             "source_type": "main_excel_capability",
+            "evidence_kind": "structured_field",
+            "knowledge_base_id": "fixture-main-kb",
             "corpus_layer": "fact",
             "retrieval_layer": "target_main_fact",
             "layer_priority": 1,
             "rerank_score": 0.92,
             "file_name": "main.xlsx",
             "anchor": "row 12",
+            "sheet_name": "能力清单",
+            "row_index": 12,
+            "cell_range": "A12:C12",
             "raw_text": "市电进线情况：2路市电，来自同一变电站。",
+            "raw_source_text": "市电进线情况：2路市电，来自同一变电站。",
+            "field_name": "市电进线情况",
+            "field_value": "2路市电，来自同一变电站",
             "text_for_embedding": "市电进线情况 2路市电",
             "proof_attachment_ids": ["att_1"],
         },
@@ -214,13 +221,17 @@ def make_hits() -> list[dict[str, Any]]:
             "chunk_id": "chunk_global",
             "namespace": "global",
             "source_type": "intro_doc_paragraph",
+            "evidence_kind": "document_intro",
+            "knowledge_base_id": "fixture-global-kb",
             "corpus_layer": "intro_doc",
             "retrieval_layer": "global_intro",
             "layer_priority": 4,
             "rerank_score": 0.65,
             "file_name": "intro.docx",
             "anchor": "P3",
+            "paragraph_index": 3,
             "raw_text": "园区供电有双路市电规划。",
+            "raw_source_text": "园区供电有双路市电规划。",
             "text_for_embedding": "园区供电 双路市电",
         },
     ]

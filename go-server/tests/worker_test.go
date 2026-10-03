@@ -76,6 +76,29 @@ func TestWorkerRetryableFailureReturnsErrorForAsynqRetry(t *testing.T) {
 	require.Equal(t, 1, updated.Attempt)
 }
 
+func TestWorkerDeadlineDoesNotMarkFailed(t *testing.T) {
+	repo := newFakeJobRepo()
+	eventRepo := &fakeRunEventRepo{}
+	service := jobs.NewService(repo, runevent.NewService(eventRepo, nil), nil, &fakeAuthorizer{}, nil, zap.NewNop(), 1)
+	cfg := workerTestConfig()
+	worker := jobs.NewWorker(config.RedisConfig{Addr: "localhost:6379"}, cfg, repo, service, jobs.NewResourceLimiter(cfg), zap.NewNop())
+	worker.RegisterHandler(jobs.JobTypeNoop, deadlineTaskHandler{})
+	job := jobs.Job{ID: uuid.New(), WorkspaceID: uuid.New(), JobType: jobs.JobTypeNoop, ResourceType: jobs.ResourceTypeNoop, ResourceID: uuid.New(), Status: jobs.JobStatusQueued, MaxAttempts: 1, Payload: map[string]any{}}
+	repo.add(job)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+
+	err := worker.ProcessTask(ctx, asynq.NewTask(jobs.TaskType(cfg.RedisNamespace, jobs.JobTypeNoop), mustTaskPayload(t, job.ID)))
+
+	require.NoError(t, err)
+	updated, getErr := repo.GetByID(context.Background(), job.ID)
+	require.NoError(t, getErr)
+	require.Equal(t, jobs.JobStatusCanceled, updated.Status)
+	require.Empty(t, updated.ErrorMessage)
+	require.Contains(t, eventTypes(eventRepo.events), runevent.EventCanceled)
+	require.NotContains(t, eventTypes(eventRepo.events), runevent.EventFailed)
+}
+
 func TestWorkerCanceledJobSkippedAndFailureDoesNotKillNextJob(t *testing.T) {
 	repo := newFakeJobRepo()
 	service := jobs.NewService(repo, runevent.NewService(&fakeRunEventRepo{}, nil), nil, &fakeAuthorizer{}, nil, zap.NewNop(), 1)
@@ -139,6 +162,13 @@ type failingTaskHandler struct{}
 
 func (failingTaskHandler) Handle(ctx context.Context, job *jobs.Job) error {
 	return errors.New("transient failure")
+}
+
+type deadlineTaskHandler struct{}
+
+func (deadlineTaskHandler) Handle(ctx context.Context, job *jobs.Job) error {
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 type recordingRecoveryHandler struct {
